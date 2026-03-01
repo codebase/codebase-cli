@@ -188,6 +188,99 @@ func init() {
 		},
 	},
 	{
+		name:    "diagnostics",
+		aliases: []string{"diag"},
+		desc:    "Toggle language diagnostics (usage: /diagnostics on|off)",
+		handler: func(m *chatModel, args string) tea.Cmd {
+			if m.agent == nil {
+				m.segments = append(m.segments, segment{
+					kind: "text",
+					text: styleMuted.Render("  No active agent — diagnostics start with your first task.\n"),
+				})
+				m.rebuildViewport()
+				return nil
+			}
+			switch strings.ToLower(args) {
+			case "on":
+				m.agent.diag.Enabled = true
+				m.segments = append(m.segments, segment{
+					kind: "text",
+					text: styleOK.Render("  ✓ ") + styleMuted.Render("Diagnostics enabled.\n"),
+				})
+			case "off":
+				m.agent.diag.Enabled = false
+				m.segments = append(m.segments, segment{
+					kind: "text",
+					text: styleOK.Render("  ✓ ") + styleMuted.Render("Diagnostics disabled.\n"),
+				})
+			default:
+				status := "off"
+				if m.agent.diag.Enabled {
+					status = "on"
+				}
+				checkers := m.agent.diag.DetectedCheckers()
+				var sb strings.Builder
+				sb.WriteString(styleMuted.Render("  Diagnostics: ") + styleAccentText.Render(status) + "\n")
+				if len(checkers) > 0 {
+					sb.WriteString(styleMuted.Render("  Detected: ") + styleDim.Render(strings.Join(checkers, ", ")) + "\n")
+				} else {
+					sb.WriteString(styleDim.Render("  No language checkers detected for this project.\n"))
+				}
+				sb.WriteString(styleMuted.Render("  Usage: /diagnostics on | /diagnostics off\n"))
+				m.segments = append(m.segments, segment{kind: "text", text: sb.String()})
+			}
+			m.rebuildViewport()
+			return nil
+		},
+	},
+	{
+		name: "trust",
+		desc: "Set permission level (usage: /trust ask|all|reset)",
+		handler: func(m *chatModel, args string) tea.Cmd {
+			if m.agent == nil {
+				m.segments = append(m.segments, segment{
+					kind: "text",
+					text: styleMuted.Render("  No active agent — permission state is set when you start a task.\n"),
+				})
+				m.rebuildViewport()
+				return nil
+			}
+			switch strings.ToLower(args) {
+			case "all":
+				m.agent.permState.Level = PermTrustAll
+				m.segments = append(m.segments, segment{
+					kind: "text",
+					text: styleOK.Render("  ✓ ") + styleMuted.Render("Trust all — auto-approving all tools this session.\n"),
+				})
+			case "ask", "reset":
+				m.agent.permState.Level = PermAsk
+				m.agent.permState.TrustedTools = map[string]bool{}
+				m.segments = append(m.segments, segment{
+					kind: "text",
+					text: styleOK.Render("  ✓ ") + styleMuted.Render("Reset — will ask before each mutation.\n"),
+				})
+			default:
+				current := "ask (prompt before mutations)"
+				if m.agent.permState.Level == PermTrustAll {
+					current = "all (auto-approve everything)"
+				}
+				trusted := []string{}
+				for t := range m.agent.permState.TrustedTools {
+					trusted = append(trusted, t)
+				}
+				var sb strings.Builder
+				sb.WriteString(styleMuted.Render("  Permission level: ") + styleAccentText.Render(current) + "\n")
+				if len(trusted) > 0 {
+					sb.WriteString(styleMuted.Render("  Trusted tools: ") + styleDim.Render(strings.Join(trusted, ", ")) + "\n")
+				}
+				sb.WriteString(styleMuted.Render("  Usage: /trust all | /trust ask | /trust reset\n"))
+				m.segments = append(m.segments, segment{kind: "text", text: sb.String()})
+			}
+			m.rebuildViewport()
+			return nil
+		},
+	},
+	{
 		name:    "quit",
 		aliases: []string{"exit", "q"},
 		desc:    "Exit codebase",

@@ -1,0 +1,289 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// ──────────────────────────────────────────────────────────────
+//  Diagnostics engine — run language checkers after file edits
+// ──────────────────────────────────────────────────────────────
+
+// Diagnostic represents a single error/warning from a checker.
+type Diagnostic struct {
+	File     string
+	Line     int
+	Column   int
+	Severity string // "error", "warning"
+	Message  string
+}
+
+// LanguageChecker defines how to check files for a language.
+type LanguageChecker struct {
+	Name       string
+	Extensions []string
+	Command    func(workDir string) (string, []string)
+	Parse      func(output string) []Diagnostic
+	Detect     func(workDir string) bool
+}
+
+// DiagnosticsEngine manages language detection and checker execution.
+type DiagnosticsEngine struct {
+	workDir  string
+	checkers []LanguageChecker
+	Enabled  bool
+}
+
+// defaultCheckers defines supported language checkers.
+var defaultCheckers = []LanguageChecker{
+	{
+		Name:       "Go",
+		Extensions: []string{".go"},
+		Detect: func(workDir string) bool {
+			_, err := os.Stat(filepath.Join(workDir, "go.mod"))
+			return err == nil
+		},
+		Command: func(workDir string) (string, []string) {
+			return "go", []string{"vet", "./..."}
+		},
+		Parse: parseGoVetOutput,
+	},
+	{
+		Name:       "TypeScript",
+		Extensions: []string{".ts", ".tsx"},
+		Detect: func(workDir string) bool {
+			if _, err := os.Stat(filepath.Join(workDir, "tsconfig.json")); err == nil {
+				return true
+			}
+			return false
+		},
+		Command: func(workDir string) (string, []string) {
+			// Prefer project-local tsc
+			if _, err := os.Stat(filepath.Join(workDir, "node_modules", ".bin", "tsc")); err == nil {
+				return "npx", []string{"tsc", "--noEmit", "--pretty", "false"}
+			}
+			if _, err := exec.LookPath("tsc"); err == nil {
+				return "tsc", []string{"--noEmit", "--pretty", "false"}
+			}
+			return "", nil
+		},
+		Parse: parseTscOutput,
+	},
+	{
+		Name:       "Python",
+		Extensions: []string{".py"},
+		Detect: func(workDir string) bool {
+			_, err := exec.LookPath("pyright")
+			return err == nil
+		},
+		Command: func(workDir string) (string, []string) {
+			return "pyright", []string{"--outputjson"}
+		},
+		Parse: parsePyrightOutput,
+	},
+}
+
+// NewDiagnosticsEngine creates and initializes a diagnostics engine.
+func NewDiagnosticsEngine(workDir string) *DiagnosticsEngine {
+	de := &DiagnosticsEngine{
+		workDir: workDir,
+		Enabled: true,
+	}
+
+	// Auto-detect available checkers
+	for _, checker := range defaultCheckers {
+		if checker.Detect(workDir) {
+			de.checkers = append(de.checkers, checker)
+		}
+	}
+
+	return de
+}
+
+// CheckFiles runs relevant checkers for the given files.
+// Returns diagnostics, or nil on timeout/no checker.
+func (de *DiagnosticsEngine) CheckFiles(files []string) []Diagnostic {
+	if !de.Enabled || len(de.checkers) == 0 {
+		return nil
+	}
+
+	// Find matching checker by file extension
+	var checker *LanguageChecker
+	for _, f := range files {
+		ext := filepath.Ext(f)
+		for i := range de.checkers {
+			for _, cExt := range de.checkers[i].Extensions {
+				if ext == cExt {
+					checker = &de.checkers[i]
+					break
+				}
+			}
+			if checker != nil {
+				break
+			}
+		}
+		if checker != nil {
+			break
+		}
+	}
+
+	if checker == nil {
+		return nil
+	}
+
+	cmdName, cmdArgs := checker.Command(de.workDir)
+	if cmdName == "" {
+		return nil
+	}
+
+	cmd := exec.Command(cmdName, cmdArgs...)
+	cmd.Dir = de.workDir
+	cmd.Env = append(os.Environ(), "NO_COLOR=1")
+
+	done := make(chan []byte, 1)
+	go func() {
+		out, _ := cmd.CombinedOutput()
+		done <- out
+	}()
+
+	select {
+	case out := <-done:
+		return checker.Parse(string(out))
+	case <-time.After(15 * time.Second):
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		return nil
+	}
+}
+
+// DetectedCheckers returns the names of auto-detected checkers.
+func (de *DiagnosticsEngine) DetectedCheckers() []string {
+	names := make([]string, len(de.checkers))
+	for i, c := range de.checkers {
+		names[i] = c.Name
+	}
+	return names
+}
+
+// ── Parsers ──────────────────────────────────────────────────
+
+var goVetRegex = regexp.MustCompile(`^(.+\.go):(\d+):(\d+):\s*(.+)$`)
+
+// parseGoVetOutput parses "file.go:line:col: message" format.
+func parseGoVetOutput(output string) []Diagnostic {
+	var diags []Diagnostic
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if m := goVetRegex.FindStringSubmatch(line); m != nil {
+			lineNo, _ := strconv.Atoi(m[2])
+			colNo, _ := strconv.Atoi(m[3])
+			diags = append(diags, Diagnostic{
+				File:     m[1],
+				Line:     lineNo,
+				Column:   colNo,
+				Severity: "error",
+				Message:  m[4],
+			})
+		}
+	}
+	return diags
+}
+
+var tscRegex = regexp.MustCompile(`^(.+)\((\d+),(\d+)\):\s*(error|warning)\s+\w+:\s*(.+)$`)
+
+// parseTscOutput parses "file(line,col): error TSxxxx: message" format.
+func parseTscOutput(output string) []Diagnostic {
+	var diags []Diagnostic
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if m := tscRegex.FindStringSubmatch(line); m != nil {
+			lineNo, _ := strconv.Atoi(m[2])
+			colNo, _ := strconv.Atoi(m[3])
+			diags = append(diags, Diagnostic{
+				File:     m[1],
+				Line:     lineNo,
+				Column:   colNo,
+				Severity: m[4],
+				Message:  m[5],
+			})
+		}
+	}
+	return diags
+}
+
+// parsePyrightOutput parses pyright --outputjson format.
+func parsePyrightOutput(output string) []Diagnostic {
+	var result struct {
+		GeneralDiagnostics []struct {
+			File     string `json:"file"`
+			Range    struct {
+				Start struct {
+					Line      int `json:"line"`
+					Character int `json:"character"`
+				} `json:"start"`
+			} `json:"range"`
+			Severity string `json:"severity"`
+			Message  string `json:"message"`
+		} `json:"generalDiagnostics"`
+	}
+
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		return nil
+	}
+
+	var diags []Diagnostic
+	for _, d := range result.GeneralDiagnostics {
+		severity := "warning"
+		if d.Severity == "error" {
+			severity = "error"
+		}
+		diags = append(diags, Diagnostic{
+			File:     d.File,
+			Line:     d.Range.Start.Line + 1, // pyright uses 0-based lines
+			Column:   d.Range.Start.Character + 1,
+			Severity: severity,
+			Message:  d.Message,
+		})
+	}
+	return diags
+}
+
+// ── Formatting ───────────────────────────────────────────────
+
+// formatDiagnosticsMessage creates a concise message for the agent.
+func formatDiagnosticsMessage(diags []Diagnostic) string {
+	var sb strings.Builder
+	sb.WriteString("## Language Diagnostics\n\n")
+	sb.WriteString("The following issues were detected after your recent edits:\n\n")
+
+	// Group by file
+	byFile := make(map[string][]Diagnostic)
+	order := []string{}
+	for _, d := range diags {
+		if _, seen := byFile[d.File]; !seen {
+			order = append(order, d.File)
+		}
+		byFile[d.File] = append(byFile[d.File], d)
+	}
+
+	for _, file := range order {
+		fileDiags := byFile[file]
+		sb.WriteString(fmt.Sprintf("### %s\n", file))
+		for _, d := range fileDiags {
+			sb.WriteString(fmt.Sprintf("- Line %d:%d [%s]: %s\n",
+				d.Line, d.Column, d.Severity, d.Message))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("Please fix these issues before continuing.")
+	return sb.String()
+}

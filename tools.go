@@ -335,6 +335,16 @@ func ExecuteTool(name string, argsJSON string, workDir string) (string, bool) {
 		return "Error: dispatch_agent must be called through the agent loop", false
 	case "shell":
 		return toolShell(args, workDir)
+	case "git_status":
+		return toolGitStatus(args, workDir)
+	case "git_diff":
+		return toolGitDiff(args, workDir)
+	case "git_log":
+		return toolGitLog(args, workDir)
+	case "git_commit":
+		return toolGitCommit(args, workDir)
+	case "git_branch":
+		return toolGitBranch(args, workDir)
 	default:
 		return fmt.Sprintf("Error: unknown tool %q", name), false
 	}

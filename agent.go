@@ -24,6 +24,7 @@ const (
 	EventTurnStart                   // new agentic turn
 	EventDone                        // agent finished all turns
 	EventError                       // error occurred
+	EventPermission                  // permission request for TUI
 )
 
 type TokenUsage struct {
@@ -37,11 +38,12 @@ type AgentEvent struct {
 	Tool    string         // EventToolStart / EventToolResult — tool name
 	ToolID  string         // EventToolStart / EventToolResult — tool call ID
 	Args    map[string]any // EventToolStart — parsed arguments
-	Output  string         // EventToolResult — tool output
-	Success bool           // EventToolResult
-	Tokens  TokenUsage     // EventUsage
-	Turn    int            // EventTurnStart
-	Error   error          // EventError
+	Output     string             // EventToolResult — tool output
+	Success    bool               // EventToolResult
+	Tokens     TokenUsage         // EventUsage
+	Turn       int                // EventTurnStart
+	Error      error              // EventError
+	Permission *PermissionRequest // EventPermission
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -64,7 +66,12 @@ Available tools:
 - search_files: Regex search across files (powered by ripgrep). Find definitions, usages, etc.
 - web_search: Search the web. Use for current info, docs, versions, error solutions, or anything not in local files.
 - dispatch_agent: Spawn a read-only research subagent to investigate questions in isolated context.
-- shell: Run any shell command. Use for builds, tests, git, package management.
+- shell: Run any shell command. Use for builds, tests, package management.
+- git_status: Show working tree status (staged, unstaged, untracked files).
+- git_diff: Show file diffs (staged, unstaged, or between refs).
+- git_log: Show recent commit history.
+- git_commit: Stage files and create a commit.
+- git_branch: List, create, or switch branches.
 
 Guidelines:
 - You can call multiple tools in parallel — read_file, list_files, search_files, web_search, and dispatch_agent all run concurrently
@@ -72,16 +79,21 @@ Guidelines:
 - Read files before editing them — understand existing code first
 - Make targeted, minimal changes — don't rewrite entire files unnecessarily
 - For multiple related edits, prefer multi_edit over separate edit_file calls
+- Use git tools instead of shell for git operations — they provide structured output
+- After you edit files, the system may report diagnostics (errors, warnings) from language tools. If diagnostics appear, fix the issues before moving on.
 - If a tool fails, read the error and try a different approach
 - When finished, briefly summarize what you changed and why`
 
 type Agent struct {
-	client   *LLMClient
-	workDir  string
-	history  []ChatMessage
-	events   chan<- AgentEvent
-	stopCh   <-chan struct{}
-	files    int // count of files created/modified
+	client    *LLMClient
+	workDir   string
+	history   []ChatMessage
+	events    chan<- AgentEvent
+	stopCh    <-chan struct{}
+	files     int // count of files created/modified
+	permCh    chan PermissionResponse
+	permState *PermissionState
+	diag      *DiagnosticsEngine
 }
 
 func NewAgent(client *LLMClient, workDir string, events chan<- AgentEvent, stopCh <-chan struct{}) *Agent {
@@ -94,6 +106,9 @@ func NewAgent(client *LLMClient, workDir string, events chan<- AgentEvent, stopC
 		history: []ChatMessage{
 			{Role: "system", Content: strPtr(sysContent)},
 		},
+		permCh:    make(chan PermissionResponse, 1),
+		permState: &PermissionState{TrustedTools: map[string]bool{}},
+		diag:      NewDiagnosticsEngine(workDir),
 	}
 }
 
@@ -412,6 +427,32 @@ func (a *Agent) executeToolCalls(toolCalls []ToolCall, consecutiveErrors *int) {
 			argsMap = map[string]any{"_raw": tc.Function.Arguments}
 		}
 
+		// Check permission before executing
+		if !a.checkPermission(tc.Function.Name, argsMap) {
+			output := "Skipped: permission denied by user"
+			a.events <- AgentEvent{
+				Type:   EventToolStart,
+				Tool:   tc.Function.Name,
+				ToolID: tc.ID,
+				Args:   argsMap,
+			}
+			a.events <- AgentEvent{
+				Type:    EventToolResult,
+				Tool:    tc.Function.Name,
+				ToolID:  tc.ID,
+				Args:    argsMap,
+				Output:  output,
+				Success: false,
+			}
+			a.history = append(a.history, ChatMessage{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Name:       tc.Function.Name,
+				Content:    strPtr(output),
+			})
+			continue
+		}
+
 		a.events <- AgentEvent{
 			Type:   EventToolStart,
 			Tool:   tc.Function.Name,
@@ -442,6 +483,7 @@ func (a *Agent) executeToolCalls(toolCalls []ToolCall, consecutiveErrors *int) {
 			allErrors = false
 			if tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" || tc.Function.Name == "multi_edit" {
 				a.files++
+				a.maybeInjectDiagnostics(tc.Function.Name, argsMap)
 			}
 		}
 
@@ -472,4 +514,89 @@ func (a *Agent) executeToolCalls(toolCalls []ToolCall, consecutiveErrors *int) {
 // FilesChanged returns how many files the agent has created/modified.
 func (a *Agent) FilesChanged() int {
 	return a.files
+}
+
+// maybeInjectDiagnostics runs language checkers after file modifications
+// and injects a system message with errors if found.
+func (a *Agent) maybeInjectDiagnostics(toolName string, args map[string]any) {
+	if a.diag == nil || !a.diag.Enabled {
+		return
+	}
+
+	// Determine which files were modified
+	var files []string
+	switch toolName {
+	case "write_file", "edit_file":
+		if p, ok := args["path"].(string); ok {
+			files = []string{p}
+		}
+	case "multi_edit":
+		if edits, ok := args["edits"]; ok {
+			if arr, ok := edits.([]interface{}); ok {
+				seen := map[string]bool{}
+				for _, e := range arr {
+					if m, ok := e.(map[string]interface{}); ok {
+						if p, ok := m["path"].(string); ok && !seen[p] {
+							files = append(files, p)
+							seen[p] = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(files) == 0 {
+		return
+	}
+
+	diags := a.diag.CheckFiles(files)
+	if len(diags) == 0 {
+		return
+	}
+
+	// Inject as system message so the LLM sees errors
+	msg := formatDiagnosticsMessage(diags)
+	a.history = append(a.history, ChatMessage{
+		Role:    "system",
+		Content: strPtr(msg),
+	})
+}
+
+// checkPermission asks the TUI for permission if needed.
+// Returns true if the tool should execute, false to skip.
+func (a *Agent) checkPermission(toolName string, args map[string]any) bool {
+	// Check session-level trust
+	if a.permState.Level == PermTrustAll {
+		return true
+	}
+	if a.permState.TrustedTools[toolName] {
+		return true
+	}
+
+	// Check if this tool needs permission
+	if !NeedsPermission(toolName, args) {
+		return true
+	}
+
+	// Send permission request to TUI
+	req := &PermissionRequest{
+		Tool:    toolName,
+		Args:    args,
+		Summary: PermissionSummary(toolName, args),
+	}
+	a.events <- AgentEvent{Type: EventPermission, Permission: req}
+
+	// Block waiting for TUI response (or stop signal)
+	select {
+	case resp := <-a.permCh:
+		if resp.TrustLevel == PermTrustTool {
+			a.permState.TrustedTools[toolName] = true
+		} else if resp.TrustLevel == PermTrustAll {
+			a.permState.Level = PermTrustAll
+		}
+		return resp.Allowed
+	case <-a.stopCh:
+		return false
+	}
 }

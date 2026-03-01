@@ -50,6 +50,24 @@ func renderToolBlock(toolName string, args map[string]any, output string, state 
 				}
 			}
 		}
+		if toolName == "git_commit" {
+			if m, ok := args["message"]; ok {
+				if s, ok := m.(string); ok {
+					msg := s
+					if len(msg) > 40 {
+						msg = msg[:37] + "..."
+					}
+					pathStr = " " + styleFilePath.Render(msg)
+				}
+			}
+		}
+		if toolName == "git_branch" {
+			if n, ok := args["name"]; ok {
+				if s, ok := n.(string); ok && s != "" {
+					pathStr = " " + styleFilePath.Render(s)
+				}
+			}
+		}
 	}
 
 	// Build body content
@@ -71,6 +89,8 @@ func renderToolBlock(toolName string, args map[string]any, output string, state 
 		body = renderSubagentResult(args, output, state, innerW)
 	case "shell":
 		body = renderShellResult(args, output, state, innerW)
+	case "git_status", "git_diff", "git_log", "git_commit", "git_branch":
+		body = renderGitResult(toolName, args, output, state, innerW)
 	default:
 		if output != "" && state != "pending" {
 			body = truncateLines(output, 5, innerW)
@@ -343,4 +363,27 @@ func wrapText(s string, width int) string {
 		result.WriteString("\n")
 	}
 	return strings.TrimRight(result.String(), "\n")
+}
+
+// ── Git tool rendering ──────────────────────────────────────
+
+func renderGitResult(toolName string, args map[string]any, output string, state string, width int) string {
+	if state == "pending" {
+		switch toolName {
+		case "git_commit":
+			msg, _ := args["message"].(string)
+			if len(msg) > 50 {
+				msg = msg[:47] + "..."
+			}
+			return styleMuted.Render(fmt.Sprintf(` "%s"`, msg))
+		case "git_branch":
+			name, _ := args["name"].(string)
+			if name != "" {
+				return styleMuted.Render(" " + name)
+			}
+		}
+		return ""
+	}
+	// Show compact output (first 8 lines)
+	return truncateLines(output, 8, width)
 }

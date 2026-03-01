@@ -37,7 +37,8 @@ var subagentToolDefs []ToolDef
 func init() {
 	for _, td := range toolDefs {
 		switch td.Function.Name {
-		case "read_file", "list_files", "search_files", "web_search", "shell":
+		case "read_file", "list_files", "search_files", "web_search", "shell",
+			"git_status", "git_diff", "git_log":
 			subagentToolDefs = append(subagentToolDefs, td)
 		}
 	}

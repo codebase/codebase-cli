@@ -23,6 +23,7 @@ const (
 	chatPlanning                    // Q&A planning phase
 	chatPlanReview                  // reviewing generated plan
 	chatStreaming                   // agent is working
+	chatPermission                  // waiting for permission approval
 	chatDoneFlash                   // brief green flash after completion
 )
 
@@ -65,6 +66,9 @@ type chatModel struct {
 	toolsDone        int       // tools completed this turn
 	lastStreamRebuild time.Time // debounce streaming viewport rebuilds
 	inThink           bool      // inside <think> tags (MiniMax reasoning)
+
+	// Permission
+	permRequest *PermissionRequest // current pending permission prompt
 
 	// Glue + notifications
 	glue          *GlueClient
@@ -203,6 +207,21 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.rebuildViewport()
 				return m, nil
 			}
+			if m.state == chatPermission {
+				// Deny the pending permission and return to streaming
+				if m.agent != nil {
+					m.agent.permCh <- PermissionResponse{Allowed: false}
+				}
+				m.permRequest = nil
+				m.state = chatStreaming
+				m.input.Placeholder = "describe what you want to build..."
+				m.segments = append(m.segments, segment{
+					kind: "text",
+					text: styleWarn.Render("  ✗ denied") + "\n",
+				})
+				m.rebuildViewport()
+				return m, m.waitForEvent()
+			}
 			if m.state == chatPlanning || m.state == chatPlanReview {
 				m.state = chatIdle
 				m.planState = nil
@@ -224,6 +243,30 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.input.SetValue("")
 
 			switch m.state {
+			case chatPermission:
+				resp := parsePermissionInput(prompt)
+				if m.agent != nil {
+					m.agent.permCh <- resp
+				}
+				// Show what user decided
+				decision := styleOK.Render("  ✓ allowed")
+				if !resp.Allowed {
+					decision = styleWarn.Render("  ✗ denied")
+				} else if resp.TrustLevel == PermTrustTool {
+					decision = styleOK.Render("  ✓ allowed (always for this tool)")
+				} else if resp.TrustLevel == PermTrustAll {
+					decision = styleOK.Render("  ✓ allowed (trusting all)")
+				}
+				m.segments = append(m.segments, segment{
+					kind: "text",
+					text: decision + "\n",
+				})
+				m.permRequest = nil
+				m.state = chatStreaming
+				m.input.Placeholder = "describe what you want to build..."
+				m.rebuildViewport()
+				return m, m.waitForEvent()
+
 			case chatPlanning:
 				// User answering a planning question
 				cmds = append(cmds, m.handlePlanAnswer(prompt))
@@ -756,7 +799,7 @@ func (m *chatModel) handlePlanReview(input string) tea.Cmd {
 
 func (m *chatModel) handleAgentEvent(evt AgentEvent) tea.Cmd {
 	// Guard: ignore events if we're no longer streaming (e.g. after ctrl+c)
-	if m.state != chatStreaming && evt.Type != EventDone {
+	if m.state != chatStreaming && m.state != chatPermission && evt.Type != EventDone {
 		return nil
 	}
 
@@ -920,6 +963,21 @@ func (m *chatModel) handleAgentEvent(evt AgentEvent) tea.Cmd {
 			tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return narrateTickMsg{} }),
 		)
 
+	case EventPermission:
+		m.flushStreamingText()
+		m.state = chatPermission
+		m.permRequest = evt.Permission
+		// Render the permission prompt
+		summary := evt.Permission.Summary
+		m.segments = append(m.segments, segment{
+			kind: "text",
+			text: "\n" + styleWarn.Render("  ⚡ Permission required: ") + styleMuted.Render(summary) + "\n" +
+				styleDim.Render("  y/n/a (yes, no, always for this tool): "),
+		})
+		m.input.Placeholder = "y/n/a..."
+		m.rebuildViewport()
+		return m.waitForEvent() // keep listening for other events while waiting
+
 	case EventError:
 		m.flushStreamingText()
 		errStr := "unknown error"
@@ -983,6 +1041,8 @@ func (m chatModel) View() string {
 		} else {
 			statusParts = append(statusParts, m.spinner.View()+styleMuted.Render(" working"))
 		}
+	case chatPermission:
+		statusParts = append(statusParts, styleWarn.Render("⚡ permission"))
 	case chatPlanning:
 		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(colPurple).Render("◆ planning"))
 	case chatPlanReview:
@@ -1035,7 +1095,7 @@ func (m chatModel) View() string {
 	// ── Frame ────────────────────────────────────────────────
 	var frame lipgloss.Style
 	switch m.state {
-	case chatStreaming:
+	case chatStreaming, chatPermission:
 		frame = styleFrameActive.Width(m.width - 2)
 	case chatDoneFlash:
 		frame = styleFrameDone.Width(m.width - 2)
@@ -1066,6 +1126,8 @@ func (m chatModel) View() string {
 	switch m.state {
 	case chatStreaming:
 		hint = styleDim.Render("ctrl+c stop") + sep + styleDim.Render("↑↓ scroll")
+	case chatPermission:
+		hint = styleDim.Render("y allow") + sep + styleDim.Render("n deny") + sep + styleDim.Render("a always") + sep + styleDim.Render("ctrl+c deny")
 	case chatPlanning:
 		hint = styleDim.Render("ctrl+c cancel") + sep + styleDim.Render("enter answer")
 	case chatPlanReview:
