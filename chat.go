@@ -64,6 +64,7 @@ type chatModel struct {
 	toolsPending     int       // tools currently running
 	toolsDone        int       // tools completed this turn
 	lastStreamRebuild time.Time // debounce streaming viewport rebuilds
+	inThink           bool      // inside <think> tags (MiniMax reasoning)
 
 	// Glue + notifications
 	glue          *GlueClient
@@ -761,7 +762,35 @@ func (m *chatModel) handleAgentEvent(evt AgentEvent) tea.Cmd {
 
 	switch evt.Type {
 	case EventTextDelta:
-		m.streaming.WriteString(evt.Text)
+		// Filter out <think>...</think> reasoning blocks (MiniMax, DeepSeek, etc.)
+		text := evt.Text
+		for text != "" {
+			if m.inThink {
+				if end := strings.Index(text, "</think>"); end >= 0 {
+					m.inThink = false
+					text = text[end+len("</think>"):]
+					continue
+				}
+				// Still inside think block — discard everything
+				text = ""
+			} else {
+				if start := strings.Index(text, "<think>"); start >= 0 {
+					// Write text before the tag
+					if start > 0 {
+						m.streaming.WriteString(text[:start])
+					}
+					m.inThink = true
+					if !m.notify.HasActive() {
+						m.notify.Push(Notification{Type: NotifyProgress, Text: "Thinking..."})
+					}
+					text = text[start+len("<think>"):]
+					continue
+				}
+				// No think tags — write as-is
+				m.streaming.WriteString(text)
+				text = ""
+			}
+		}
 		// Debounce: only rebuild viewport at most every 50ms during streaming
 		if time.Since(m.lastStreamRebuild) > 50*time.Millisecond {
 			m.rebuildViewport()
@@ -909,7 +938,10 @@ func (m *chatModel) handleAgentEvent(evt AgentEvent) tea.Cmd {
 }
 
 func (m *chatModel) flushStreamingText() {
+	m.inThink = false
 	text := m.streaming.String()
+	// Strip any residual think tags
+	text = stripThinkTags(text)
 	if text != "" {
 		m.segments = append(m.segments, segment{
 			kind: "text",
@@ -1048,6 +1080,24 @@ func (m chatModel) View() string {
 	inputRow := inputLine + strings.Repeat(" ", inputGap) + hint
 
 	return framedBody + "\n" + suggestBar + inputRow
+}
+
+// stripThinkTags removes <think>...</think> blocks and stray tags from text.
+func stripThinkTags(s string) string {
+	for {
+		start := strings.Index(s, "<think>")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s[start:], "</think>")
+		if end < 0 {
+			// Unclosed tag — strip from <think> to end
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[start+end+len("</think>"):]
+	}
+	return strings.TrimSpace(s)
 }
 
 // parseSuggestionIndex checks if input is a suggestion number (1-based).
