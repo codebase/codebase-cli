@@ -104,6 +104,30 @@ func TestFormatQuestion(t *testing.T) {
 	if !strings.Contains(formatted, "Stateless") {
 		t.Error("should contain option description")
 	}
+	if !strings.Contains(formatted, "[3] Start building") {
+		t.Error("should contain Start building escape option")
+	}
+}
+
+func TestParseAnswerStartBuilding(t *testing.T) {
+	q := &PlanQuestion{
+		Options: []PlanOption{
+			{ID: "opt1", Label: "Option A"},
+			{ID: "opt2", Label: "Option B"},
+		},
+	}
+
+	// Picking the last number (len+1) should return the sentinel
+	answer := ParseAnswer("3", q)
+	if answer != AnswerStartBuilding {
+		t.Errorf("expected AnswerStartBuilding, got %q", answer)
+	}
+
+	// Regular options still work
+	answer = ParseAnswer("1", q)
+	if answer != "Option A" {
+		t.Errorf("expected 'Option A', got %q", answer)
+	}
 }
 
 func TestFormatQuestionMultiselect(t *testing.T) {

@@ -564,6 +564,42 @@ func (m *chatModel) handlePlanAnswer(input string) tea.Cmd {
 		return nil
 	}
 
+	// "Start building" — skip remaining questions, go to plan generation
+	if answer == AnswerStartBuilding {
+		m.segments = append(m.segments, segment{
+			kind: "user",
+			text: "  " + styleUserLabel.Render("  → ") + "Start building\n",
+		})
+		m.planState.CurrentQ = nil
+		m.planState.Done = true
+		m.rebuildViewport()
+
+		// If we have any Q&A, generate a plan; otherwise go straight to agent
+		if len(m.planState.QAHistory) > 0 {
+			m.notify.Push(Notification{Type: NotifyProgress, Text: "Generating plan..."})
+			glue := m.glue
+			ps := m.planState
+			return func() tea.Msg {
+				plan := glue.GeneratePlan(ps.OriginalPrompt, ps.QAHistory)
+				return planGeneratedMsg{plan: plan}
+			}
+		}
+
+		// No Q&A at all — skip plan, go straight to agent
+		m.segments = append(m.segments, segment{
+			kind: "text",
+			text: styleMuted.Render("  Skipping plan. Starting agent...\n\n"),
+		})
+		m.input.Placeholder = "describe what you want to build..."
+		original := m.planState.OriginalPrompt
+		m.planState = nil
+		m.startAgent(original)
+		return tea.Batch(
+			m.waitForEvent(),
+			tea.Tick(10*time.Second, func(t time.Time) tea.Msg { return narrateTickMsg{} }),
+		)
+	}
+
 	// Show the answer
 	m.segments = append(m.segments, segment{
 		kind: "user",

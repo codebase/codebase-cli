@@ -261,6 +261,8 @@ func FormatQuestion(q *PlanQuestion, questionNum int) string {
 		sb.WriteString(label + "\n")
 	}
 
+	sb.WriteString(fmt.Sprintf("\n  [%d] Start building — skip remaining questions\n", len(q.Options)+1))
+
 	hint := "\n  Type a number to select"
 	if q.Type == "multiselect" {
 		hint = "\n  Type numbers separated by commas (e.g. 1,3)"
@@ -271,11 +273,22 @@ func FormatQuestion(q *PlanQuestion, questionNum int) string {
 	return sb.String()
 }
 
+// AnswerStartBuilding is returned by ParseAnswer when the user picks "Start building".
+const AnswerStartBuilding = "__START_BUILDING__"
+
 // ParseAnswer interprets user input as option selection(s) or free text.
+// Returns AnswerStartBuilding if the user chose the "Start building" escape option.
 func ParseAnswer(input string, q *PlanQuestion) string {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return input
+	}
+
+	// Check for the "Start building" escape option (last number)
+	skipIdx := len(q.Options) + 1
+	var parsed int
+	if _, err := fmt.Sscanf(input, "%d", &parsed); err == nil && parsed == skipIdx {
+		return AnswerStartBuilding
 	}
 
 	// Try to parse as number(s)
