@@ -221,6 +221,14 @@ func (a *Agent) Run(prompt string) {
 		default:
 		}
 
+		// Check if compaction is needed before the LLM call
+		if needsCompaction(a.history, a.client.Model) {
+			compacted, ok := compactHistory(a.client, a.history)
+			if ok {
+				a.history = compacted
+			}
+		}
+
 		a.events <- AgentEvent{Type: EventTurnStart, Turn: turn}
 
 		// Stream LLM call
