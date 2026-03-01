@@ -43,6 +43,13 @@ func renderToolBlock(toolName string, args map[string]any, output string, state 
 				pathStr = " " + styleFilePath.Render(s)
 			}
 		}
+		if toolName == "search_files" {
+			if p, ok := args["pattern"]; ok {
+				if s, ok := p.(string); ok {
+					pathStr = " " + styleFilePath.Render(s)
+				}
+			}
+		}
 	}
 
 	// Build body content
@@ -54,6 +61,12 @@ func renderToolBlock(toolName string, args map[string]any, output string, state 
 		body = renderReadResult(args, output, state, innerW)
 	case "edit_file":
 		body = renderEditResult(args, output, state, innerW)
+	case "multi_edit":
+		body = renderMultiEditResult(args, output, state, innerW)
+	case "list_files":
+		body = renderListResult(args, output, state, innerW)
+	case "search_files":
+		body = renderSearchResult(args, output, state, innerW)
 	case "shell":
 		body = renderShellResult(args, output, state, innerW)
 	default:
@@ -131,6 +144,46 @@ func renderReadResult(args map[string]any, output string, state string, width in
 func renderEditResult(args map[string]any, output string, state string, width int) string {
 	if state == "pending" {
 		return ""
+	}
+	return styleMuted.Render(" " + output)
+}
+
+// ── Multi-edit result ────────────────────────────────────────
+
+func renderMultiEditResult(args map[string]any, output string, state string, width int) string {
+	if state == "pending" {
+		return ""
+	}
+	// Show just the first line (summary)
+	lines := strings.Split(output, "\n")
+	if len(lines) > 0 {
+		return styleMuted.Render(" " + lines[0])
+	}
+	return styleMuted.Render(" " + output)
+}
+
+// ── List result ──────────────────────────────────────────────
+
+func renderListResult(args map[string]any, output string, state string, width int) string {
+	if state == "pending" {
+		return ""
+	}
+	lines := strings.Split(output, "\n")
+	if len(lines) > 0 {
+		return styleMuted.Render(" " + lines[0])
+	}
+	return styleMuted.Render(" " + output)
+}
+
+// ── Search result ────────────────────────────────────────────
+
+func renderSearchResult(args map[string]any, output string, state string, width int) string {
+	if state == "pending" {
+		return ""
+	}
+	lines := strings.Split(output, "\n")
+	if len(lines) > 0 {
+		return styleMuted.Render(" " + lines[0])
 	}
 	return styleMuted.Render(" " + output)
 }

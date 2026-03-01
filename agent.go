@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ──────────────────────────────────────────────────────────────
@@ -43,19 +46,27 @@ type AgentEvent struct {
 //  Agent
 // ──────────────────────────────────────────────────────────────
 
-const maxTurns = 25
+const maxTurns = 30
+const maxConsecutiveErrors = 5
 
 const systemPrompt = `You are Codebase, a local AI coding agent running in the user's terminal.
 You have direct access to their filesystem and shell. You help them build,
 debug, and modify software projects.
 
-Available tools: read_file, write_file, edit_file, shell
+Available tools:
+- read_file: Read file contents with line numbers. Use offset/limit for large files.
+- write_file: Create or overwrite a file. Parent directories are created automatically.
+- edit_file: Surgical find-and-replace in a file. old_text must match exactly and be unique.
+- multi_edit: Batch multiple edits across files. Per-file atomicity with rollback.
+- list_files: List directory contents or glob for files (e.g. "**/*.go").
+- search_files: Regex search across files (powered by ripgrep). Find definitions, usages, etc.
+- shell: Run any shell command. Use for builds, tests, git, package management.
 
 Guidelines:
+- Use list_files and search_files to explore the project before making changes
 - Read files before editing them — understand existing code first
 - Make targeted, minimal changes — don't rewrite entire files unnecessarily
-- Use shell for: installing packages, running tests, git operations, listing files
-- All paths are relative to the working directory
+- For multiple related edits, prefer multi_edit over separate edit_file calls
 - If a tool fails, read the error and try a different approach
 - When finished, briefly summarize what you changed and why`
 
@@ -69,7 +80,7 @@ type Agent struct {
 }
 
 func NewAgent(client *LLMClient, workDir string, events chan<- AgentEvent, stopCh <-chan struct{}) *Agent {
-	sysContent := systemPrompt + fmt.Sprintf("\n\nWorking directory: %s", workDir)
+	sysContent := buildSystemPrompt(workDir)
 	return &Agent{
 		client:  client,
 		workDir: workDir,
@@ -83,12 +94,123 @@ func NewAgent(client *LLMClient, workDir string, events chan<- AgentEvent, stopC
 
 func strPtr(s string) *string { return &s }
 
+// buildSystemPrompt assembles the system prompt with project context.
+func buildSystemPrompt(workDir string) string {
+	var sb strings.Builder
+	sb.WriteString(systemPrompt)
+	sb.WriteString(fmt.Sprintf("\n\nWorking directory: %s\n", workDir))
+
+	// Load project instructions if available
+	projectInstructions := loadProjectInstructions(workDir)
+	if projectInstructions != "" {
+		sb.WriteString("\n## Project Instructions\n\n")
+		sb.WriteString(projectInstructions)
+		sb.WriteString("\n")
+	}
+
+	// Include top-level file tree
+	tree := buildFileTree(workDir, 2)
+	if tree != "" {
+		sb.WriteString("\n## Project Structure\n\n```\n")
+		sb.WriteString(tree)
+		sb.WriteString("```\n")
+	}
+
+	return sb.String()
+}
+
+// loadProjectInstructions looks for project config files (AGENTS.md, CLAUDE.md,
+// CODEX.md, .codebase) in the working directory and parent directories up to git root.
+func loadProjectInstructions(workDir string) string {
+	configFiles := []string{"AGENTS.md", "CLAUDE.md", "CODEX.md", ".codebase"}
+
+	dir := workDir
+	for {
+		for _, name := range configFiles {
+			path := filepath.Join(dir, name)
+			data, err := os.ReadFile(path)
+			if err == nil && len(data) > 0 {
+				content := string(data)
+				// Cap at 20KB to avoid blowing up context
+				if len(content) > 20*1024 {
+					content = content[:20*1024] + "\n\n--- TRUNCATED (20KB limit) ---"
+				}
+				return content
+			}
+		}
+
+		// Stop at git root or filesystem root
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return ""
+}
+
+// buildFileTree creates a simple tree listing of the project.
+func buildFileTree(workDir string, maxDepth int) string {
+	var sb strings.Builder
+	buildTreeRecursive(&sb, workDir, workDir, "", maxDepth, 0)
+	return sb.String()
+}
+
+func buildTreeRecursive(sb *strings.Builder, root, dir, prefix string, maxDepth, depth int) {
+	if depth > maxDepth {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	// Filter ignored directories
+	var filtered []os.DirEntry
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") && name != "." {
+			continue
+		}
+		if e.IsDir() {
+			if ignoreDirs[name] {
+				continue
+			}
+		}
+		filtered = append(filtered, e)
+	}
+
+	for i, e := range filtered {
+		isLast := i == len(filtered)-1
+		connector := "├── "
+		childPrefix := prefix + "│   "
+		if isLast {
+			connector = "└── "
+			childPrefix = prefix + "    "
+		}
+
+		if e.IsDir() {
+			fmt.Fprintf(sb, "%s%s%s/\n", prefix, connector, e.Name())
+			buildTreeRecursive(sb, root, filepath.Join(dir, e.Name()), childPrefix, maxDepth, depth+1)
+		} else {
+			fmt.Fprintf(sb, "%s%s%s\n", prefix, connector, e.Name())
+		}
+	}
+}
+
 // Run executes the agent loop for a user prompt. Blocks until done.
 func (a *Agent) Run(prompt string) {
 	a.history = append(a.history, ChatMessage{
 		Role:    "user",
 		Content: strPtr(prompt),
 	})
+
+	consecutiveErrors := 0
 
 	for turn := 1; turn <= maxTurns; turn++ {
 		// Check for stop signal
@@ -162,9 +284,51 @@ func (a *Agent) Run(prompt string) {
 			return
 		}
 
-		// Execute each tool call
-		for _, tc := range toolCalls {
-			// Parse args for display
+		// Execute tool calls — parallel for read-only, sequential for mutations
+		a.executeToolCalls(toolCalls, &consecutiveErrors)
+
+		if consecutiveErrors >= maxConsecutiveErrors {
+			a.events <- AgentEvent{
+				Type: EventError,
+				Error: fmt.Errorf("too many consecutive tool errors (%d), stopping", consecutiveErrors),
+			}
+			a.events <- AgentEvent{Type: EventDone, Text: "Too many errors."}
+			return
+		}
+
+		// Loop back for next turn
+	}
+
+	a.events <- AgentEvent{Type: EventDone, Text: "Reached maximum turns."}
+}
+
+// executeToolCalls runs tool calls with parallel execution for read-only tools.
+func (a *Agent) executeToolCalls(toolCalls []ToolCall, consecutiveErrors *int) {
+	// Classify tools
+	var parallel []ToolCall
+	var sequential []ToolCall
+	for _, tc := range toolCalls {
+		if IsParallelSafe(tc.Function.Name) {
+			parallel = append(parallel, tc)
+		} else {
+			sequential = append(sequential, tc)
+		}
+	}
+
+	allErrors := true
+
+	// Run read-only tools in parallel
+	if len(parallel) > 0 {
+		type result struct {
+			tc      ToolCall
+			args    map[string]any
+			output  string
+			success bool
+		}
+		results := make([]result, len(parallel))
+		var wg sync.WaitGroup
+
+		for i, tc := range parallel {
 			var argsMap map[string]any
 			json.Unmarshal([]byte(tc.Function.Arguments), &argsMap)
 
@@ -174,33 +338,79 @@ func (a *Agent) Run(prompt string) {
 				Args: argsMap,
 			}
 
-			output, success := ExecuteTool(tc.Function.Name, tc.Function.Arguments, a.workDir)
+			wg.Add(1)
+			go func(idx int, tc ToolCall, args map[string]any) {
+				defer wg.Done()
+				output, success := ExecuteTool(tc.Function.Name, tc.Function.Arguments, a.workDir)
+				results[idx] = result{tc: tc, args: args, output: output, success: success}
+			}(i, tc, argsMap)
+		}
 
-			if success && (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") {
-				a.files++
+		wg.Wait()
+
+		for _, r := range results {
+			if r.success {
+				allErrors = false
 			}
 
 			a.events <- AgentEvent{
 				Type:    EventToolResult,
-				Tool:    tc.Function.Name,
-				Args:    argsMap,
-				Output:  output,
-				Success: success,
+				Tool:    r.tc.Function.Name,
+				Args:    r.args,
+				Output:  r.output,
+				Success: r.success,
 			}
 
-			// Add tool result to history
 			a.history = append(a.history, ChatMessage{
 				Role:       "tool",
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-				Content:    strPtr(output),
+				ToolCallID: r.tc.ID,
+				Name:       r.tc.Function.Name,
+				Content:    strPtr(r.output),
 			})
 		}
-
-		// Loop back for next turn
 	}
 
-	a.events <- AgentEvent{Type: EventDone, Text: "Reached maximum turns."}
+	// Run mutating tools sequentially
+	for _, tc := range sequential {
+		var argsMap map[string]any
+		json.Unmarshal([]byte(tc.Function.Arguments), &argsMap)
+
+		a.events <- AgentEvent{
+			Type: EventToolStart,
+			Tool: tc.Function.Name,
+			Args: argsMap,
+		}
+
+		output, success := ExecuteTool(tc.Function.Name, tc.Function.Arguments, a.workDir)
+
+		if success {
+			allErrors = false
+			if tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" || tc.Function.Name == "multi_edit" {
+				a.files++
+			}
+		}
+
+		a.events <- AgentEvent{
+			Type:    EventToolResult,
+			Tool:    tc.Function.Name,
+			Args:    argsMap,
+			Output:  output,
+			Success: success,
+		}
+
+		a.history = append(a.history, ChatMessage{
+			Role:       "tool",
+			ToolCallID: tc.ID,
+			Name:       tc.Function.Name,
+			Content:    strPtr(output),
+		})
+	}
+
+	if allErrors {
+		*consecutiveErrors++
+	} else {
+		*consecutiveErrors = 0
+	}
 }
 
 // FilesChanged returns how many files the agent has created/modified.
