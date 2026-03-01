@@ -60,6 +60,7 @@ Available tools:
 - multi_edit: Batch multiple edits across files. Per-file atomicity with rollback.
 - list_files: List directory contents or glob for files (e.g. "**/*.go").
 - search_files: Regex search across files (powered by ripgrep). Find definitions, usages, etc.
+- dispatch_agent: Spawn a read-only research subagent to investigate questions in isolated context.
 - shell: Run any shell command. Use for builds, tests, git, package management.
 
 Guidelines:
@@ -349,7 +350,24 @@ func (a *Agent) executeToolCalls(toolCalls []ToolCall, consecutiveErrors *int) {
 			wg.Add(1)
 			go func(idx int, tc ToolCall, args map[string]any) {
 				defer wg.Done()
-				output, success := ExecuteTool(tc.Function.Name, tc.Function.Arguments, a.workDir)
+				var output string
+				var success bool
+				if tc.Function.Name == "dispatch_agent" {
+					task := ""
+					if args != nil {
+						task, _ = args["task"].(string)
+					}
+					res, err := RunSubagent(a.client, a.workDir, task)
+					if err != nil {
+						output = fmt.Sprintf("Subagent error: %v", err)
+						success = false
+					} else {
+						output = res
+						success = true
+					}
+				} else {
+					output, success = ExecuteTool(tc.Function.Name, tc.Function.Arguments, a.workDir)
+				}
 				results[idx] = result{tc: tc, args: args, output: output, success: success}
 			}(i, tc, argsMap)
 		}
@@ -389,7 +407,24 @@ func (a *Agent) executeToolCalls(toolCalls []ToolCall, consecutiveErrors *int) {
 			Args: argsMap,
 		}
 
-		output, success := ExecuteTool(tc.Function.Name, tc.Function.Arguments, a.workDir)
+		var output string
+		var success bool
+		if tc.Function.Name == "dispatch_agent" {
+			task := ""
+			if argsMap != nil {
+				task, _ = argsMap["task"].(string)
+			}
+			res, err := RunSubagent(a.client, a.workDir, task)
+			if err != nil {
+				output = fmt.Sprintf("Subagent error: %v", err)
+				success = false
+			} else {
+				output = res
+				success = true
+			}
+		} else {
+			output, success = ExecuteTool(tc.Function.Name, tc.Function.Arguments, a.workDir)
+		}
 
 		if success {
 			allErrors = false

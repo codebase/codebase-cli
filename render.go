@@ -67,6 +67,8 @@ func renderToolBlock(toolName string, args map[string]any, output string, state 
 		body = renderListResult(args, output, state, innerW)
 	case "search_files":
 		body = renderSearchResult(args, output, state, innerW)
+	case "dispatch_agent":
+		body = renderSubagentResult(args, output, state, innerW)
 	case "shell":
 		body = renderShellResult(args, output, state, innerW)
 	default:
@@ -186,6 +188,30 @@ func renderSearchResult(args map[string]any, output string, state string, width 
 		return styleMuted.Render(" " + lines[0])
 	}
 	return styleMuted.Render(" " + output)
+}
+
+// ── Subagent result ──────────────────────────────────────────
+
+func renderSubagentResult(args map[string]any, output string, state string, width int) string {
+	if state == "pending" {
+		task := ""
+		if args != nil {
+			task, _ = args["task"].(string)
+		}
+		if len(task) > 60 {
+			task = task[:57] + "..."
+		}
+		if task != "" {
+			return styleMuted.Render(" " + task)
+		}
+		return ""
+	}
+	lines := strings.Split(output, "\n")
+	count := len(lines)
+	if count > 3 {
+		return styleMuted.Render(fmt.Sprintf(" %d lines of research findings", count))
+	}
+	return truncateLines(output, 3, width)
 }
 
 // ── Shell result ─────────────────────────────────────────────

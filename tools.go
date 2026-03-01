@@ -195,6 +195,27 @@ var toolDefs = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolDefFunction{
+			Name: "dispatch_agent",
+			Description: "Spawn a focused research subagent to investigate a specific question or gather information. " +
+				"The subagent runs in its own isolated context with read-only tools (read_file, list_files, search_files, shell). " +
+				"It cannot modify files. Use this to explore large codebases, find patterns across many files, " +
+				"or answer complex questions without polluting your main context window. " +
+				"The subagent returns a text summary of its findings.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"task": map[string]interface{}{
+						"type":        "string",
+						"description": "A clear description of what to research or investigate. Be specific about what information you need.",
+					},
+				},
+				"required": []string{"task"},
+			},
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolDefFunction{
 			Name: "shell",
 			Description: "Execute a shell command in the project directory. " +
 				"Use for: running builds, tests, installing packages, git commands, and any terminal task. " +
@@ -216,9 +237,10 @@ var toolDefs = []ToolDef{
 
 // parallelSafeTools lists tools that are safe to run concurrently (read-only, no side effects).
 var parallelSafeTools = map[string]bool{
-	"read_file":    true,
-	"list_files":   true,
-	"search_files": true,
+	"read_file":      true,
+	"list_files":     true,
+	"search_files":   true,
+	"dispatch_agent": true,
 }
 
 // IsParallelSafe returns whether a tool can run concurrently with other tools.
@@ -273,6 +295,9 @@ func ExecuteTool(name string, argsJSON string, workDir string) (string, bool) {
 		return toolListFiles(args, workDir)
 	case "search_files":
 		return toolSearchFiles(args, workDir)
+	case "dispatch_agent":
+		// dispatch_agent is handled directly in the agent loop (needs LLM client)
+		return "Error: dispatch_agent must be called through the agent loop", false
 	case "shell":
 		return toolShell(args, workDir)
 	default:
