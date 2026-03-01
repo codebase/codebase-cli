@@ -9,6 +9,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// Set by goreleaser ldflags
+var (
+	version = "dev"
+	commit  = "none"
+)
+
 // ──────────────────────────────────────────────────────────────
 //  Configuration
 // ──────────────────────────────────────────────────────────────
@@ -31,7 +37,13 @@ func loadConfig() (*Config, error) {
 	model := flag.String("model", "", "LLM model name (default: gpt-4o)")
 	dir := flag.String("dir", "", "Working directory (default: current dir)")
 	baseURL := flag.String("base-url", "", "OpenAI-compatible API base URL")
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("codebase %s (%s)\n", version, commit)
+		os.Exit(0)
+	}
 
 	cfg := &Config{}
 

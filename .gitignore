@@ -1,5 +1,9 @@
 # Binary
-codebase
+/codebase
+/codebase.exe
+
+# Goreleaser
+dist/
 
 # Environment
 .env
