@@ -157,10 +157,12 @@ func (nm *notifyManager) renderOne(n Notification, width int) string {
 
 	content := fmt.Sprintf("  %s %s", icon, text)
 
-	// Celebrate gets sparkle animation
+	// Celebrate gets cascading sparkle animation
 	if n.Type == NotifyCelebrate {
-		sparkle := nm.sparkleFrame()
-		content = fmt.Sprintf("  %s %s %s", sparkle, style.Render(text), sparkle)
+		s1 := nm.sparkleFrameAt(nm.frame)
+		s2 := nm.sparkleFrameAt(nm.frame + 3)
+		s3 := nm.sparkleFrameAt(nm.frame + 6)
+		content = fmt.Sprintf("  %s %s %s %s %s", s1, s2, style.Render(text), s3, s1)
 		return content
 	}
 
@@ -174,7 +176,8 @@ func (nm *notifyManager) icon(t NotifyType) string {
 		return styleMuted.Render("›")
 	case NotifyProgress:
 		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		return lipgloss.NewStyle().Foreground(colCyan).Render(frames[nm.frame%len(frames)])
+		progColor := spinnerColors[(nm.frame/3)%len(spinnerColors)]
+		return lipgloss.NewStyle().Foreground(progColor).Render(frames[nm.frame%len(frames)])
 	case NotifySuccess:
 		return styleOK.Render("✓")
 	case NotifyWarn:
@@ -186,11 +189,16 @@ func (nm *notifyManager) icon(t NotifyType) string {
 	}
 }
 
-// sparkleFrame returns an animated sparkle character.
+// sparkleFrame returns an animated sparkle character at the current frame.
 func (nm *notifyManager) sparkleFrame() string {
-	sparkles := []string{"✦", "✧", "⋆", "✦", "·", "✧", "✦", "⋆"}
+	return nm.sparkleFrameAt(nm.frame)
+}
+
+// sparkleFrameAt returns a sparkle character at a specific frame offset for cascading effects.
+func (nm *notifyManager) sparkleFrameAt(frame int) string {
+	sparkles := []string{"✦", "✧", "⋆", "★", "·", "✧", "✦", "⋆"}
 	colors := []lipgloss.Color{colPurple, colCyan, colAccent, colSuccess, colOrange, colPurple, colCyan, colAccent}
-	idx := nm.frame % len(sparkles)
+	idx := frame % len(sparkles)
 	return lipgloss.NewStyle().Foreground(colors[idx]).Bold(true).Render(sparkles[idx])
 }
 

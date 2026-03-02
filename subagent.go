@@ -15,7 +15,7 @@ import (
 //  Max depth 1 (subagents cannot spawn sub-subagents).
 // ──────────────────────────────────────────────────────────────
 
-const subagentMaxTurns = 15
+const subagentMaxTurns = 25
 
 const subagentSystemPrompt = `You are a focused research assistant. You help gather information by reading files, searching code, and listing directories.
 

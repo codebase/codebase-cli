@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"os"
 	"os/exec"
 	"sync"
 )
@@ -421,4 +422,88 @@ func (ap *AudioPlayer) Stop() {
 		ap.cmd.Process.Kill()
 	}
 	ap.cmd.Wait()
+}
+
+// ── Success chime ───────────────────────────────────────────
+
+// chimePattern is a short 3-note ascending arpeggio for task completion.
+var chimePattern = []patternRow{
+	{"C-5", "E-5", "---", "---"},
+	{"E-5", "G-5", "---", "---"},
+	{"G-5", "C-5", "---", "---"},
+}
+
+// PlayChime plays a short success chime (~0.3 seconds).
+// Runs in the background. Respects CODEBASE_NOBOOT / CODEBASE_NOSOUND env vars.
+func PlayChime() {
+	if os.Getenv("CODEBASE_NOBOOT") != "" || os.Getenv("CODEBASE_NOSOUND") != "" {
+		return
+	}
+
+	player := tryChimePlayer()
+	if player == nil {
+		return
+	}
+
+	go func() {
+		synth := &chipSynth{
+			pattern: chimePattern,
+			lead:    channel{envDecay: 0.9995},
+			arp:     channel{envDecay: 0.9996},
+			bass:    channel{envDecay: 0.9999},
+			noise:   channel{envDecay: 0.999},
+		}
+
+		totalSamples := len(chimePattern) * samplesPerRow
+		buf := make([]int16, 1024)
+		pcm := make([]byte, len(buf)*2)
+
+		generated := 0
+		for generated < totalSamples {
+			chunkSize := len(buf)
+			remaining := totalSamples - generated
+			if chunkSize > remaining {
+				chunkSize = remaining
+			}
+			synth.renderSamples(buf[:chunkSize])
+			for i := 0; i < chunkSize; i++ {
+				binary.LittleEndian.PutUint16(pcm[i*2:], uint16(buf[i]))
+			}
+			if _, err := player.writer.Write(pcm[:chunkSize*2]); err != nil {
+				break
+			}
+			generated += chunkSize
+		}
+		player.writer.Close()
+		player.cmd.Wait()
+	}()
+}
+
+// tryChimePlayer creates a raw PCM audio pipe for the chime.
+func tryChimePlayer() *AudioPlayer {
+	if _, err := exec.LookPath("aplay"); err == nil {
+		cmd := exec.Command("aplay", "-t", "raw", "-f", "S16_LE", "-r", "44100", "-c", "1", "-q")
+		stdin, err := cmd.StdinPipe()
+		if err == nil {
+			cmd.Stderr = nil
+			cmd.Stdout = nil
+			if err := cmd.Start(); err == nil {
+				return &AudioPlayer{cmd: cmd, writer: stdin, done: make(chan struct{})}
+			}
+			stdin.Close()
+		}
+	}
+	if _, err := exec.LookPath("paplay"); err == nil {
+		cmd := exec.Command("paplay", "--format=s16le", "--rate=44100", "--channels=1", "--raw")
+		stdin, err := cmd.StdinPipe()
+		if err == nil {
+			cmd.Stderr = nil
+			cmd.Stdout = nil
+			if err := cmd.Start(); err == nil {
+				return &AudioPlayer{cmd: cmd, writer: stdin, done: make(chan struct{})}
+			}
+			stdin.Close()
+		}
+	}
+	return nil
 }

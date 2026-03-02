@@ -509,6 +509,8 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
+		// Cycle spinner color through accent palette
+		m.spinner.Style = lipgloss.NewStyle().Foreground(spinnerColors[m.notify.frame%len(spinnerColors)])
 		// Only re-render for spinner if there are pending tools (avoids 80ms full rebuild)
 		if m.state == chatStreaming && m.toolsPending > 0 {
 			m.rebuildViewport()
@@ -630,6 +632,9 @@ func (m *chatModel) startAgent(prompt string) {
 			if session := LoadSession(m.config.WorkDir, m.config.Model); session != nil {
 				m.agent.history = session.History
 				m.tokens = session.Tokens
+				if session.Title != "" {
+					m.title = session.Title
+				}
 				m.segments = append(m.segments, segment{
 					kind: "text",
 					text: styleMuted.Render("  Session restored from previous conversation.\n\n"),
@@ -937,11 +942,12 @@ func (m *chatModel) handleAgentEvent(evt AgentEvent) tea.Cmd {
 		if m.agent != nil {
 			m.files = m.agent.FilesChanged()
 			// Persist session to disk
-			SaveSession(m.agent, m.tokens)
+			SaveSession(m.agent, m.tokens, m.title)
 		}
 		m.state = chatDoneFlash
-		m.flashFrames = 1
+		m.flashFrames = 6
 		m.rebuildViewport()
+		go PlayChime()
 
 		// Glue: celebration + follow-up suggestions (in background)
 		summary := evt.Text
@@ -1098,7 +1104,18 @@ func (m chatModel) View() string {
 	case chatStreaming, chatPermission:
 		frame = styleFrameActive.Width(m.width - 2)
 	case chatDoneFlash:
-		frame = styleFrameDone.Width(m.width - 2)
+		colorIdx := len(flashCycleColors) - m.flashFrames
+		if colorIdx < 0 {
+			colorIdx = 0
+		}
+		if colorIdx >= len(flashCycleColors) {
+			colorIdx = len(flashCycleColors) - 1
+		}
+		frame = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(flashCycleColors[colorIdx]).
+			Padding(0, 1).
+			Width(m.width - 2)
 	case chatPlanning, chatPlanReview:
 		frame = styleFramePlan.Width(m.width - 2)
 	default:

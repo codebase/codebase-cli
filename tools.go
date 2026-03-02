@@ -187,6 +187,10 @@ var toolDefs = []ToolDef{
 						"type":        "string",
 						"description": "Glob to filter which files to search (e.g. \"*.ts\", \"*.{js,jsx}\").",
 					},
+					"context_lines": map[string]interface{}{
+						"type":        "number",
+						"description": "Number of context lines before and after each match (like grep -C). Default 0.",
+					},
 				},
 				"required": []string{"pattern"},
 			},
@@ -482,16 +486,30 @@ func toolWriteFile(args map[string]interface{}, workDir string) (string, bool) {
 		return fmt.Sprintf("Error creating directory: %v", err), false
 	}
 
+	// Read old content for diff summary before overwriting
+	var oldLineCount int
+	if existed {
+		if oldData, readErr := os.ReadFile(absPath); readErr == nil {
+			oldLineCount = strings.Count(string(oldData), "\n") + 1
+		}
+	}
+
 	if err := os.WriteFile(absPath, []byte(content), perm); err != nil {
 		return fmt.Sprintf("Error: %v", err), false
 	}
 
 	lines := strings.Count(content, "\n") + 1
-	action := "Created"
 	if existed {
-		action = "Updated"
+		lineDiff := lines - oldLineCount
+		diffNote := ""
+		if lineDiff > 0 {
+			diffNote = fmt.Sprintf(", +%d", lineDiff)
+		} else if lineDiff < 0 {
+			diffNote = fmt.Sprintf(", %d", lineDiff)
+		}
+		return fmt.Sprintf("Updated %s (%d→%d lines, %d bytes%s)", relPath, oldLineCount, lines, len(content), diffNote), true
 	}
-	return fmt.Sprintf("%s %s (%d lines, %d bytes)", action, relPath, lines, len(content)), true
+	return fmt.Sprintf("Created %s (%d lines, %d bytes)", relPath, lines, len(content)), true
 }
 
 // ── edit_file ────────────────────────────────────────────────
@@ -881,6 +899,13 @@ func toolSearchFiles(args map[string]interface{}, workDir string) (string, bool)
 		dirPath = "."
 	}
 	include := getString(args, "include")
+	contextLines := 0
+	if cl, ok := getFloat(args, "context_lines"); ok && cl > 0 {
+		contextLines = int(cl)
+		if contextLines > 10 {
+			contextLines = 10
+		}
+	}
 
 	fullPath, err := safePath(workDir, dirPath)
 	if err != nil {
@@ -888,10 +913,10 @@ func toolSearchFiles(args map[string]interface{}, workDir string) (string, bool)
 	}
 
 	// Try ripgrep first, fall back to grep
-	output, err := searchWithRg(pattern, fullPath, include, workDir)
+	output, err := searchWithRg(pattern, fullPath, include, workDir, contextLines)
 	if err != nil {
 		// rg not found — try grep
-		output, err = searchWithGrep(pattern, fullPath, include, workDir)
+		output, err = searchWithGrep(pattern, fullPath, include, workDir, contextLines)
 		if err != nil {
 			return fmt.Sprintf("Error: %v", err), false
 		}
@@ -910,7 +935,7 @@ func toolSearchFiles(args map[string]interface{}, workDir string) (string, bool)
 	return truncateOutput(fmt.Sprintf("%d matches for %q in %s:\n\n%s", len(lines), pattern, dirPath, output)), true
 }
 
-func searchWithRg(pattern, searchPath, include, workDir string) (string, error) {
+func searchWithRg(pattern, searchPath, include, workDir string, contextLines int) (string, error) {
 	args := []string{
 		"rg",
 		"--line-number",
@@ -932,6 +957,10 @@ func searchWithRg(pattern, searchPath, include, workDir string) (string, error) 
 
 	if include != "" {
 		args = append(args, "--glob", include)
+	}
+
+	if contextLines > 0 {
+		args = append(args, fmt.Sprintf("-C%d", contextLines))
 	}
 
 	args = append(args, "--", pattern, searchPath)
@@ -963,13 +992,18 @@ func searchWithRg(pattern, searchPath, include, workDir string) (string, error) 
 	return strings.TrimRight(output, "\n"), nil
 }
 
-func searchWithGrep(pattern, searchPath, include, workDir string) (string, error) {
+func searchWithGrep(pattern, searchPath, include, workDir string, contextLines int) (string, error) {
 	incFlag := "*"
 	if include != "" {
 		incFlag = include
 	}
 
-	cmd := exec.Command("grep", "-rn", "--include="+incFlag, pattern, searchPath)
+	grepArgs := []string{"-rn", "--include=" + incFlag}
+	if contextLines > 0 {
+		grepArgs = append(grepArgs, fmt.Sprintf("-C%d", contextLines))
+	}
+	grepArgs = append(grepArgs, pattern, searchPath)
+	cmd := exec.Command("grep", grepArgs...)
 	cmd.Dir = workDir
 	out, err := cmd.CombinedOutput()
 

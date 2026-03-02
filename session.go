@@ -21,6 +21,7 @@ const maxSessionAge = 7 * 24 * time.Hour // 7 days
 type SessionData struct {
 	WorkDir   string        `json:"work_dir"`
 	Model     string        `json:"model"`
+	Title     string        `json:"title,omitempty"`
 	History   []ChatMessage `json:"history"`
 	Tokens    TokenUsage    `json:"tokens"`
 	Files     int           `json:"files"`
@@ -53,7 +54,7 @@ func sessionFile(workDir string) (string, error) {
 }
 
 // SaveSession persists the agent's conversation to disk.
-func SaveSession(agent *Agent, tokens TokenUsage) error {
+func SaveSession(agent *Agent, tokens TokenUsage, title string) error {
 	if agent == nil || len(agent.history) <= 1 {
 		return nil // nothing to save (just system prompt)
 	}
@@ -66,6 +67,7 @@ func SaveSession(agent *Agent, tokens TokenUsage) error {
 	data := SessionData{
 		WorkDir:   agent.workDir,
 		Model:     agent.client.Model,
+		Title:     title,
 		History:   agent.history,
 		Tokens:    tokens,
 		Files:     agent.files,

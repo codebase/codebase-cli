@@ -94,6 +94,11 @@ var (
 	colPurple    lipgloss.Color
 	colOrange    lipgloss.Color
 	colCyan      lipgloss.Color
+
+	// flashCycleColors is the rainbow border color sequence for completion flash.
+	flashCycleColors []lipgloss.Color
+	// spinnerColors is the color cycle for the tool execution spinner.
+	spinnerColors []lipgloss.Color
 )
 
 // ──────────────────────────────────────────────────────────────
@@ -171,6 +176,10 @@ func initStyles() {
 	colPurple = lipgloss.Color(t.Purple)
 	colOrange = lipgloss.Color(t.Orange)
 	colCyan = lipgloss.Color(t.Cyan)
+
+	// Animation color cycles
+	flashCycleColors = []lipgloss.Color{colSuccess, colCyan, colAccent, colPurple, colOrange, colSuccess}
+	spinnerColors = []lipgloss.Color{colAccent, colCyan, colPurple, colSuccess, colOrange}
 
 	// Frame styles
 	styleFrame = lipgloss.NewStyle().
