@@ -2,6 +2,7 @@ import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { FileStateCache } from "../tools/file-state-cache.js";
 import { buildTools } from "../tools/registry.js";
+import { TaskStore } from "../tools/task-store.js";
 import type { ToolContext } from "../tools/types.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
 import { buildSystemPrompt } from "./system-prompt.js";
@@ -23,7 +24,11 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const { model, apiKey, source } = resolveConfig();
 	const cwd = opts.cwd ?? process.cwd();
 	const systemPrompt = opts.systemPrompt ?? buildSystemPrompt(cwd);
-	const toolContext: ToolContext = { cwd, fileStateCache: new FileStateCache() };
+	const toolContext: ToolContext = {
+		cwd,
+		fileStateCache: new FileStateCache(),
+		tasks: new TaskStore(),
+	};
 
 	const agent = new Agent({
 		initialState: {

@@ -9,6 +9,7 @@ import { createListFiles } from "./list-files.js";
 import { createMultiEdit } from "./multi-edit.js";
 import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
+import { createTaskTools } from "./tasks.js";
 import type { ToolContext } from "./types.js";
 import { createWebFetch } from "./web-fetch.js";
 import { createWriteFile } from "./write-file.js";
@@ -31,5 +32,6 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createGitDiff(ctx),
 		createGitLog(ctx),
 		createWebFetch(ctx),
+		...createTaskTools(ctx),
 	];
 }
