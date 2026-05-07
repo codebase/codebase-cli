@@ -1,5 +1,8 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createEditFile } from "./edit-file.js";
+import { createGitDiff } from "./git/diff.js";
+import { createGitLog } from "./git/log.js";
+import { createGitStatus } from "./git/status.js";
 import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
@@ -21,5 +24,8 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createListFiles(ctx),
 		createGlob(ctx),
 		createGrep(ctx),
+		createGitStatus(ctx),
+		createGitDiff(ctx),
+		createGitLog(ctx),
 	];
 }
