@@ -1,9 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { ToolContext } from "./types.js";
 
 /**
- * Phase 2 fills this in. The agent loop accepts an empty array,
- * so Phase 1 runs as a chat-only agent.
+ * Returns every built-in tool, configured against the given context.
+ * Phase 2 commits append factories to this list one by one.
  */
-export function buildTools(): AgentTool<any>[] {
+export function buildTools(_ctx: ToolContext): AgentTool<any>[] {
 	return [];
 }

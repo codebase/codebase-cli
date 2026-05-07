@@ -26,9 +26,9 @@
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "0.74.0",
 		"@earendil-works/pi-ai": "0.74.0",
-		"@sinclair/typebox": "^0.34.0",
 		"ink": "^5.2.1",
-		"react": "^18.3.1"
+		"react": "^18.3.1",
+		"typebox": "^1.1.24"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.5",
