@@ -1,8 +1,9 @@
 import { readFileSync, statSync } from "node:fs";
-import { extname, isAbsolute, resolve, sep } from "node:path";
+import { extname } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
-import { BinaryFileError, FileTooLargeError, PathOutsideCwdError } from "./errors.js";
+import { BinaryFileError, FileTooLargeError } from "./errors.js";
+import { detectEol, isLikelyBinary, resolveInsideCwd, stripBOM } from "./file-ops.js";
 import type { ToolContext } from "./types.js";
 
 const Params = Type.Object({
@@ -39,7 +40,6 @@ export interface ReadFileDetails {
 
 const DEFAULT_LIMIT = 2000;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
-const BINARY_SCAN_BYTES = 8192;
 const IMAGE_MIME: Record<string, string> = {
 	".png": "image/png",
 	".jpg": "image/jpeg",
@@ -164,34 +164,4 @@ export function createReadFile(ctx: ToolContext): AgentTool<typeof Params, ReadF
 
 function pad6(n: number): string {
 	return String(n).padStart(6, " ");
-}
-
-function resolveInsideCwd(cwd: string, requested: string): string {
-	const absCwd = resolve(cwd);
-	const candidate = isAbsolute(requested) ? resolve(requested) : resolve(absCwd, requested);
-	if (candidate !== absCwd && !candidate.startsWith(absCwd + sep)) {
-		throw new PathOutsideCwdError(requested);
-	}
-	return candidate;
-}
-
-function stripBOM(buf: Buffer): { content: string; hasBOM: boolean } {
-	if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
-		return { content: buf.subarray(3).toString("utf8"), hasBOM: true };
-	}
-	return { content: buf.toString("utf8"), hasBOM: false };
-}
-
-function detectEol(content: string): "\n" | "\r\n" | "" {
-	const idx = content.indexOf("\n");
-	if (idx === -1) return "";
-	return idx > 0 && content[idx - 1] === "\r" ? "\r\n" : "\n";
-}
-
-function isLikelyBinary(buf: Buffer): boolean {
-	const slice = buf.subarray(0, Math.min(buf.length, BINARY_SCAN_BYTES));
-	for (let i = 0; i < slice.length; i++) {
-		if (slice[i] === 0) return true;
-	}
-	return false;
 }
