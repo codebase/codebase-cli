@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [v2, main]
+  pull_request:
+    branches: [v2, main]
+
+jobs:
+  typescript:
+    name: TypeScript checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test

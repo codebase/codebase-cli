@@ -2,8 +2,13 @@
 /codebase
 /codebase.exe
 
-# Goreleaser
+# Goreleaser + TS build
 dist/
+
+# Node
+node_modules/
+*.tsbuildinfo
+.npm/
 
 # Environment
 .env
