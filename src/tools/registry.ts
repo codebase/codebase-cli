@@ -6,6 +6,7 @@ import { createGitStatus } from "./git/status.js";
 import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
+import { createMultiEdit } from "./multi-edit.js";
 import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
 import type { ToolContext } from "./types.js";
@@ -19,6 +20,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 	return [
 		createReadFile(ctx),
 		createEditFile(ctx),
+		createMultiEdit(ctx),
 		createWriteFile(ctx),
 		createShell(ctx),
 		createListFiles(ctx),
