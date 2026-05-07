@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createEditFile } from "./edit-file.js";
 import { createReadFile } from "./read-file.js";
+import { createShell } from "./shell.js";
 import type { ToolContext } from "./types.js";
 import { createWriteFile } from "./write-file.js";
 
@@ -9,5 +10,5 @@ import { createWriteFile } from "./write-file.js";
  * Phase 2 commits append factories to this list one by one.
  */
 export function buildTools(ctx: ToolContext): AgentTool<any>[] {
-	return [createReadFile(ctx), createEditFile(ctx), createWriteFile(ctx)];
+	return [createReadFile(ctx), createEditFile(ctx), createWriteFile(ctx), createShell(ctx)];
 }
