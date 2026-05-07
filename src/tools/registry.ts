@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createEditFile } from "./edit-file.js";
 import { createGlob } from "./glob.js";
+import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
 import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
@@ -19,5 +20,6 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createShell(ctx),
 		createListFiles(ctx),
 		createGlob(ctx),
+		createGrep(ctx),
 	];
 }
