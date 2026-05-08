@@ -1,7 +1,8 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
+import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
 import { HookManager } from "../hooks/manager.js";
 import { PermissionStore } from "../permissions/store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
@@ -10,6 +11,8 @@ import { TaskStore } from "../tools/task-store.js";
 import type { ToolContext } from "../tools/types.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
 import { buildSystemPrompt } from "./system-prompt.js";
+
+const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
 
 export interface CreateAgentOptions {
 	cwd?: string;
@@ -23,6 +26,7 @@ export interface AgentBundle {
 	toolContext: ToolContext;
 	permissions: PermissionStore;
 	hooks: HookManager;
+	diagnostics: DiagnosticsEngine;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
 }
 
@@ -34,6 +38,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const permissions = new PermissionStore();
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
+	const diagnostics = new DiagnosticsEngine({ cwd });
 
 	const toolContext: ToolContext = {
 		cwd,
@@ -91,16 +96,41 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 				},
 				signal,
 			);
-			// Diagnostics + steering messages land in their own commit; this hook
-			// stays a pure pass-through for now.
+
+			// After a write/edit tool, run language checkers on the affected file
+			// and steer the result into the next turn. Fire-and-forget so the
+			// tool result return isn't blocked by a 15s checker run.
+			if (filePath && WRITE_TOOL_NAMES.has(ctx.toolCall.name)) {
+				const absPath = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
+				diagnostics
+					.forFiles([absPath], signal)
+					.then((diags) => {
+						if (diags.length === 0) return;
+						const body = formatDiagnostics(diags);
+						agentRef?.steer({
+							role: "user",
+							content: `<system-reminder>\n${body}\n</system-reminder>`,
+							timestamp: Date.now(),
+						});
+					})
+					.catch(() => {
+						// Diagnostics failures are non-fatal — surface nothing.
+					});
+			}
 			return undefined;
 		},
 	});
+
+	// agentRef lets the afterToolCall closure call agent.steer() once the
+	// Agent is constructed. JS hoisting makes the assignment safe because
+	// afterToolCall fires inside the event loop, well after this assignment.
+	const agentRef: Agent = agent;
 
 	const subscribe = (listener: (event: AgentEvent) => void): (() => void) =>
 		agent.subscribe((event) => {
 			listener(event);
 		});
 
-	return { agent, model, source, toolContext, permissions, hooks, subscribe };
+	void agentRef;
+	return { agent, model, source, toolContext, permissions, hooks, diagnostics, subscribe };
 }
