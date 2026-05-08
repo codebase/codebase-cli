@@ -1,15 +1,32 @@
 import { CredentialsStore } from "./credentials.js";
 import { type OAuthConfig, refreshAccessToken, revokeToken, runOAuthLogin } from "./flow.js";
 
-const DEFAULT_AUTH_BASE = "https://codebase.foundation";
+const DEFAULT_AUTH_BASE = "https://codebase.design";
 
+/**
+ * Resolves the OAuth config the CLI uses against the codebase web app.
+ *
+ * The endpoint shapes come from the web's source-of-truth in
+ * `web/backend/routes/oauth.js` (and were re-confirmed in
+ * `docs/oauth-web-alignment-2026-05-08.md`):
+ *
+ *   • authorizationUrl  → `${base}/login` — the Next.js page that
+ *     POSTs PKCE params to /oauth/authorize on the user's behalf and
+ *     redirects back to the CLI's localhost callback.
+ *   • tokenUrl + refreshUrl → `${base}/api/oauth/token` — single
+ *     endpoint, two grant types (`authorization_code` + `refresh_token`).
+ *   • revokeUrl → `${base}/api/oauth/revoke`.
+ *
+ * codebase.design and codebase.foundation both alias to the same Next
+ * app; the user-facing brand is .design so it's the default.
+ */
 function defaultOAuthConfig(env: NodeJS.ProcessEnv = process.env): OAuthConfig {
 	const base = (env.CODEBASE_AUTH_BASE_URL ?? DEFAULT_AUTH_BASE).replace(/\/+$/, "");
 	return {
-		authorizationUrl: `${base}/cli/auth`,
-		tokenUrl: `${base}/api/cli/token`,
-		refreshUrl: `${base}/api/cli/refresh`,
-		revokeUrl: `${base}/api/cli/revoke`,
+		authorizationUrl: `${base}/login`,
+		tokenUrl: `${base}/api/oauth/token`,
+		refreshUrl: `${base}/api/oauth/token`,
+		revokeUrl: `${base}/api/oauth/revoke`,
 		clientId: env.CODEBASE_CLIENT_ID ?? "codebase-cli",
 		scopes: (env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
 	};

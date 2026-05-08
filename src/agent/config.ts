@@ -16,7 +16,12 @@ import { CredentialsStore } from "../auth/credentials.js";
  * providers, Vertex ADC, AWS multi-source. We just trust it.
  */
 
-const DEFAULT_PROXY_BASE = "https://codebase.foundation/api/cli";
+// The web's inference proxy lives under /api/inference/* — see
+// docs/oauth-web-alignment-2026-05-08.md. pi-ai's per-protocol path
+// appending lands the request on /api/inference/v1/messages
+// (Anthropic) or /api/inference/chat (OpenAI-compat) once baseUrl
+// points here.
+const DEFAULT_PROXY_BASE = "https://codebase.design/api/inference";
 
 const AUTO_DETECT_ORDER: readonly KnownProvider[] = [
 	"anthropic",
@@ -39,13 +44,13 @@ const DEFAULT_MODELS: Partial<Record<KnownProvider, string>> = {
 	deepseek: "deepseek-chat",
 	cerebras: "llama-3.3-70b",
 	xai: "grok-4",
-	openrouter: "anthropic/claude-sonnet-4-6",
+	openrouter: "anthropic/claude-sonnet-4",
 };
 
 export interface ResolvedConfig {
 	model: Model<string>;
 	apiKey: string;
-	source: "explicit" | "auto" | "proxy";
+	source: "explicit" | "auto" | "proxy" | "byok";
 }
 
 export class ConfigError extends Error {}
@@ -60,11 +65,16 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 	const env = opts.env ?? process.env;
 	const credentials = opts.credentials ?? new CredentialsStore();
 
-	// 1. OAuth/API credentials → proxy mode (unless explicitly disabled).
+	// 1. Saved credentials. Routing depends on the source:
+	//    - codebase / manual → proxy through codebase.design
+	//    - byok               → direct call against the provider's own API
 	const useProxy = env.CODEBASE_DISABLE_PROXY !== "1";
-	if (useProxy) {
-		const creds = credentials.load();
-		if (creds && !credentials.isExpired(creds)) {
+	const creds = credentials.load();
+	if (creds && !credentials.isExpired(creds)) {
+		if (creds.source === "byok" && creds.provider) {
+			const byok = buildByokConfig(creds.provider as KnownProvider, creds.accessToken);
+			if (byok) return byok;
+		} else if (useProxy) {
 			const proxied = buildProxiedConfig(env, creds.accessToken);
 			if (proxied) return proxied;
 		}
@@ -131,6 +141,18 @@ function buildProxiedConfig(env: NodeJS.ProcessEnv, accessToken: string): Resolv
 	const proxyBase = (env.CODEBASE_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE).replace(/\/+$/, "");
 	const proxiedModel: Model<string> = { ...baseModel, baseUrl: proxyBase };
 	return { model: proxiedModel, apiKey: accessToken, source: "proxy" };
+}
+
+/**
+ * BYOK mode: caller has saved a provider's own API key. Use the
+ * provider's normal baseUrl from pi-ai's registry — no proxy.
+ */
+function buildByokConfig(provider: KnownProvider, apiKey: string): ResolvedConfig | null {
+	const modelId = DEFAULT_MODELS[provider];
+	if (!modelId) return null;
+	const model = getModel(provider, modelId as never) as Model<string> | undefined;
+	if (!model) return null;
+	return { model, apiKey, source: "byok" };
 }
 
 function isProcessEnv(value: NodeJS.ProcessEnv | ResolveConfigOptions): value is NodeJS.ProcessEnv {

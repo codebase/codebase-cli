@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 
 export const CREDENTIALS_VERSION = 1;
 
+export type CredentialSource = "codebase" | "manual" | "byok";
+
 export interface Credentials {
 	version: number;
 	accessToken: string;
@@ -14,8 +16,20 @@ export interface Credentials {
 	scopes: string[];
 	userId?: string;
 	email?: string;
-	/** Provider that issued this token. "codebase" for OAuth flow, "manual" for `codebase auth <key>`. */
-	source: "codebase" | "manual";
+	/**
+	 * How the credential was obtained.
+	 *  - `codebase`: OAuth flow against codebase.design — proxy mode
+	 *  - `manual`:   `codebase auth <cbk_xxx>` paste — proxy mode
+	 *  - `byok`:     "bring your own key" — provider's own API, no proxy
+	 *                requires the `provider` field below.
+	 */
+	source: CredentialSource;
+	/**
+	 * Set only when `source === "byok"`. Names the pi-ai provider (e.g.
+	 * `anthropic`, `openai`) that owns the key. Determines which baseUrl
+	 * + model registry the agent uses.
+	 */
+	provider?: string;
 }
 
 export interface CredentialsStoreOptions {
@@ -61,7 +75,12 @@ export class CredentialsStore {
 		if (parsed.version !== CREDENTIALS_VERSION) return null;
 		if (typeof parsed.accessToken !== "string" || !parsed.accessToken) return null;
 		if (!Array.isArray(parsed.scopes)) return null;
-		if (parsed.source !== "codebase" && parsed.source !== "manual") return null;
+		if (parsed.source !== "codebase" && parsed.source !== "manual" && parsed.source !== "byok") {
+			return null;
+		}
+		if (parsed.source === "byok" && (typeof parsed.provider !== "string" || !parsed.provider)) {
+			return null;
+		}
 		return parsed;
 	}
 

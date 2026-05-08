@@ -19,6 +19,7 @@ import { ANSWER_START_BUILDING, type QAPair } from "../plan/types.js";
 import type { Task } from "../tools/task-store.js";
 import type { ChatState } from "../types.js";
 import { type UserQuery, UserQueryCancelled } from "../user-queries/store.js";
+import { FirstRunSetup } from "./FirstRunSetup.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { Permission } from "./Permission.js";
@@ -29,26 +30,35 @@ import { UserQueryView } from "./UserQuery.js";
 
 export function App() {
 	const { exit } = useApp();
-	let bundle: AgentBundle | undefined;
-	let configError: string | undefined;
+	const [setupAttempt, setSetupAttempt] = useState(0);
 
-	try {
-		bundle = createAgent();
-	} catch (err) {
-		configError = err instanceof ConfigError ? err.message : String(err);
-	}
+	// setupAttempt re-runs this memo after the wizard persists creds.
+	const { bundle, configError } = useMemo(() => {
+		void setupAttempt;
+		try {
+			return { bundle: createAgent(), configError: undefined as string | undefined };
+		} catch (err) {
+			return {
+				bundle: undefined,
+				configError: err instanceof ConfigError ? err.message : String(err),
+			};
+		}
+	}, [setupAttempt]);
 
 	if (!bundle) {
+		// ConfigError is the "no provider configured" path — show the
+		// first-run wizard so new users have a guided way in. Anything
+		// else is a real error and shouldn't prompt for credentials.
+		if (configError !== undefined) {
+			return <FirstRunSetup onDone={() => setSetupAttempt((n) => n + 1)} onQuit={exit} />;
+		}
 		return (
 			<Box flexDirection="column" paddingX={1} paddingY={1}>
 				<Text bold color="red">
 					configuration error
 				</Text>
 				<Box marginTop={1}>
-					<Text>{configError}</Text>
-				</Box>
-				<Box marginTop={1}>
-					<Text dimColor>Press Ctrl-C to exit.</Text>
+					<Text>(unknown — see logs)</Text>
 				</Box>
 				<ExitOnCtrlC onExit={exit} />
 			</Box>

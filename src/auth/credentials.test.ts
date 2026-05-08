@@ -109,4 +109,21 @@ describe("CredentialsStore", () => {
 		store.save({ accessToken: "v2", scopes: [], source: "manual" });
 		expect(store.load()?.accessToken).toBe("v2");
 	});
+
+	it("byok credentials round-trip with their provider", () => {
+		store.save({ accessToken: "sk-ant-foo", scopes: [], source: "byok", provider: "anthropic" });
+		const loaded = store.load();
+		expect(loaded?.source).toBe("byok");
+		expect(loaded?.provider).toBe("anthropic");
+		expect(loaded?.accessToken).toBe("sk-ant-foo");
+	});
+
+	it("byok credentials without a provider field are rejected", () => {
+		require("node:fs").mkdirSync(dataRoot, { recursive: true });
+		require("node:fs").writeFileSync(
+			store.filePath,
+			JSON.stringify({ version: 1, accessToken: "sk-...", scopes: [], source: "byok" }),
+		);
+		expect(store.load()).toBeNull();
+	});
 });
