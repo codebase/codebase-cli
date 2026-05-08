@@ -7,12 +7,14 @@ import { routeUserInput } from "../agent/router.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
 import type { PermissionRequest } from "../permissions/store.js";
+import type { Task } from "../tools/task-store.js";
 import type { ChatState } from "../types.js";
 import type { UserQuery } from "../user-queries/store.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { Permission } from "./Permission.js";
 import { Status } from "./Status.js";
+import { TaskPanel } from "./TaskPanel.js";
 import { UserQueryView } from "./UserQuery.js";
 
 export function App() {
@@ -59,6 +61,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
 	const [userQuery, setUserQuery] = useState<UserQuery | undefined>(bundle.userQueries.current());
 	const [statusLines, setStatusLines] = useState<string[]>([]);
+	const [tasks, setTasks] = useState<readonly Task[]>(() => bundle.toolContext.tasks.list());
 
 	const registry = useMemo(() => {
 		const reg = new CommandRegistry();
@@ -79,6 +82,10 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 
 	useEffect(() => {
 		return bundle.userQueries.subscribe((q) => setUserQuery(q));
+	}, [bundle]);
+
+	useEffect(() => {
+		return bundle.toolContext.tasks.subscribe((snapshot) => setTasks(snapshot));
 	}, [bundle]);
 
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
@@ -150,6 +157,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				</Text>
 			</Box>
 			<MessageList messages={state.messages} streaming={state.streaming} />
+			<TaskPanel tasks={tasks} />
 			{statusLines.length > 0 ? (
 				<Box flexDirection="column" paddingX={1} marginBottom={1}>
 					{statusLines.map((line, i) => (
