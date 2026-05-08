@@ -10,6 +10,7 @@ import { buildMemoryAddendum } from "../memory/inject.js";
 import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
 import { PlanModeStore } from "../plan/store.js";
+import { SessionStore } from "../sessions/store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
 import { buildTools } from "../tools/registry.js";
 import { TaskStore } from "../tools/task-store.js";
@@ -41,6 +42,8 @@ const PLAN_MODE_BLOCKED: ReadonlySet<string> = new Set([
 export interface CreateAgentOptions {
 	cwd?: string;
 	systemPrompt?: string;
+	/** When true, attempt to resume the previous session for this cwd. Default false. */
+	resume?: boolean;
 }
 
 export interface AgentBundle {
@@ -54,6 +57,7 @@ export interface AgentBundle {
 	memory: MemoryStore;
 	glue: GlueClient;
 	compaction: CompactionEngine;
+	sessions: SessionStore;
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
@@ -79,6 +83,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		apiKey: glueModels.apiKey,
 	});
 	const compaction = new CompactionEngine({ glue, modelId: model.id });
+	const sessions = new SessionStore({ cwd });
+	const resumed = opts.resume ? sessions.load(model.id) : null;
 
 	const toolContext: ToolContext = {
 		cwd,
@@ -103,7 +109,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			model,
 			systemPrompt: fullSystemPrompt,
 			tools: buildTools(toolContext),
-			messages: [],
+			messages: resumed?.messages ?? [],
 		},
 		getApiKey: () => apiKey,
 		transformContext: async (messages, signal) => {
@@ -192,6 +198,30 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			listener(event);
 		});
 
+	// Persist after every agent_end so a crash mid-session doesn't lose work.
+	agent.subscribe((event) => {
+		if (event.type !== "agent_end") return;
+		try {
+			const messages = event.messages.length > 0 ? event.messages : (resumed?.messages ?? []);
+			if (messages.length === 0) return;
+			sessions.save({
+				modelId: model.id,
+				title: resumed?.title ?? null,
+				messages,
+				usage: resumed?.usage ?? {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+			});
+		} catch {
+			// Persistence is best-effort — don't crash the agent over a write failure.
+		}
+	});
+
 	void agentRef;
 	return {
 		agent,
@@ -204,6 +234,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		memory,
 		glue,
 		compaction,
+		sessions,
 		hooks,
 		diagnostics,
 		subscribe,
