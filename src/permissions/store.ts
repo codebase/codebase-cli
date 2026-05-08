@@ -116,6 +116,8 @@ const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
 	// Memory tools are user-context, not destructive code edits — auto-allow.
 	"save_memory",
 	"read_memory",
+	// `config` is read-only.
+	"config",
 ]);
 
 export interface PermissionStoreOptions {
