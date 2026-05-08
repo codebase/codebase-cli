@@ -199,7 +199,21 @@ Port all **30 tools** from `internal/tools/` to TypeBox + pi-agent-core's `Agent
 - Shell output > truncation cap is persisted to a temp file, path surfaced in result.
 - vitest coverage per tool covers the failure modes listed in the checklist.
 
-### Phase 3 — Hooks, permissions, diagnostics (1 week)
+### Phase 3 — Hooks, permissions, diagnostics (1 week) — ✅ DONE 2026-05-07 (24/30 tools, 246 tests)
+
+**Status:** Hooks engine, permission store + Ink prompt, diagnostics engine + steered injection all shipped. Five deferred Phase 2 tools landed alongside: `git_commit`, `git_branch`, `enter_worktree`, `exit_worktree`, `ask_user`. The remaining 6 tools wait for their owning phase: `enter_plan_mode` + `exit_plan_mode` (Phase 4), `save_memory` + `read_memory` (Phase 5), `config` (Phase 6/7).
+
+What landed:
+- **HookManager** (`src/hooks/`): 6 event types, JSON config from `~/.codebase/hooks.json` + `.codebase/hooks.json`, exit-2 blocks, async fire-and-forget, matcher syntax for tool|alternation:pathGlob.
+- **PermissionStore + Ink prompt** (`src/permissions/`, `src/ui/Permission.tsx`): in-session trust state (allow-once / trust-tool / trust-all), risk classification, single-keystroke responses. Read-only tools auto-allow. Shell auto-allows when the command matches the read-only allowlist (`permission.go:65–90` ported verbatim).
+- **DiagnosticsEngine** (`src/diagnostics/`): tsc / go vet / pyright / eslint, 15s per-checker timeout, NO_COLOR=1 env, project-type auto-detect cached per session, fire-and-forget run from `afterToolCall` so the tool result isn't blocked. Results steered into the next turn as a `<system-reminder>` user message via `agent.steer()`.
+- **UserQueryStore + UserQueryView** (`src/user-queries/`, `src/ui/UserQuery.tsx`): same pattern as permissions but for free-form input. Drives `ask_user`.
+
+The agent's `beforeToolCall` runs permissions first, then user hooks; `afterToolCall` runs hooks then schedules diagnostics. App.tsx priority for the input row is Permission > UserQuery > Input.
+
+---
+
+
 
 - Port `hooks.go` to a TS hooks engine. Keep the 6 event types (PreToolUse, PostToolUse, PostEdit, UserPromptSubmit, SessionStart, Stop). Bridge to pi-agent-core's `beforeToolCall` / `afterToolCall` for tool gating; keep external-shell-command hooks for the rest. Config schema preserved (`~/.codebase/hooks.json` and `.codebase/hooks.json`). Exit code 2 = block.
 - Port `permission.go`. Move the read-only allowlist (Unix + Windows/PowerShell + Git read + build/test prefixes — currently ~40 entries at `permission.go:65–90`) verbatim. Wire as a `beforeToolCall` hook for `shell`. Preserve `Risk` (LOW/MEDIUM/HIGH) and `Explanation` from the glue classifier in the permission request.
