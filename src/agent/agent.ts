@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { CompactionEngine } from "../compaction/engine.js";
+import { ConfigStore } from "../config/store.js";
 import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
 import { GlueClient, resolveGlueModels } from "../glue/client.js";
 import { HookManager } from "../hooks/manager.js";
@@ -68,7 +69,11 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const cwd = opts.cwd ?? process.cwd();
 	const systemPrompt = opts.systemPrompt ?? buildSystemPrompt(cwd);
 
-	const permissions = new PermissionStore();
+	const config = new ConfigStore({ cwd });
+	const permissions = new PermissionStore({
+		allowPatterns: config.allowPatterns(),
+		denyPatterns: config.denyPatterns(),
+	});
 	const userQueries = new UserQueryStore();
 	const planMode = new PlanModeStore();
 	const memory = new MemoryStore({ cwd });

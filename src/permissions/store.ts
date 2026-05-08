@@ -2,6 +2,80 @@ import { shellNeedsPermission } from "../tools/permission.js";
 
 export type Decision = "allow" | "block";
 
+/**
+ * Convert a permission pattern's arg-glob portion into a regex.
+ * `*` → `.*`, `?` → `.`, everything else escaped. Anchored.
+ */
+function compileGlob(glob: string): RegExp {
+	const escaped = glob
+		.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+		.replace(/\*/g, ".*")
+		.replace(/\?/g, ".");
+	return new RegExp(`^${escaped}$`);
+}
+
+/**
+ * Pull the "primary string arg" from a tool-call args object. This
+ * is the value users typically want to glob against — the shell
+ * command, the file path, the URL, etc. Falls back to the JSON
+ * stringification so unknown tools still match in some way.
+ */
+function primaryArgString(toolName: string, args: unknown): string {
+	const a = (args ?? {}) as Record<string, unknown>;
+	const pick = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
+	switch (toolName) {
+		case "shell":
+			return pick("command") || pick("cmd");
+		case "read_file":
+		case "write_file":
+		case "edit_file":
+		case "multi_edit":
+		case "notebook_edit":
+			return pick("path") || pick("file_path");
+		case "list_files":
+			return pick("path");
+		case "glob":
+		case "grep":
+			return pick("pattern");
+		case "web_fetch":
+			return pick("url");
+		case "web_search":
+			return pick("query");
+		default:
+			try {
+				return JSON.stringify(args);
+			} catch {
+				return "";
+			}
+	}
+}
+
+/**
+ * Compile a config-supplied list of `tool` or `tool:glob` patterns.
+ * Returns a matcher closure; the closure returns true when the tool
+ * call matches any pattern in the list.
+ */
+function compileMatcher(patterns: readonly string[]): (toolName: string, args: unknown) => boolean {
+	if (patterns.length === 0) return () => false;
+	const compiled = patterns.map((pattern) => {
+		const colonIdx = pattern.indexOf(":");
+		if (colonIdx < 0) {
+			return { tool: pattern, regex: null as RegExp | null };
+		}
+		const tool = pattern.slice(0, colonIdx);
+		const glob = pattern.slice(colonIdx + 1);
+		return { tool, regex: compileGlob(glob) };
+	});
+	return (toolName: string, args: unknown) => {
+		for (const { tool, regex } of compiled) {
+			if (tool !== toolName) continue;
+			if (!regex) return true;
+			if (regex.test(primaryArgString(toolName, args))) return true;
+		}
+		return false;
+	};
+}
+
 export type ResponseChoice = "allow-once" | "trust-tool" | "trust-all" | "deny";
 
 export interface PermissionRequest {
@@ -44,13 +118,38 @@ const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
 	"read_memory",
 ]);
 
+export interface PermissionStoreOptions {
+	/**
+	 * Persistent allow patterns from the layered config. Each is either
+	 * a bare tool name or `tool:<arg-glob>` — see Config.permissions in
+	 * `src/config/types.ts`.
+	 */
+	allowPatterns?: readonly string[];
+	/**
+	 * Persistent deny patterns. Take priority over allows AND the
+	 * built-in always-allowed set, so a user can deny e.g. `shell:rm *`
+	 * without touching the read-only allowlist.
+	 */
+	denyPatterns?: readonly string[];
+}
+
 /**
  * Per-agent-instance permission store. Used by the agent's
  * beforeToolCall hook to decide whether to allow, prompt, or block.
  *
- * Trust state is in-memory and session-scoped — restarting the CLI
- * resets all per-tool/global trust. Persisting trust across sessions
- * lands in Phase 6 (config) so users can choose what to remember.
+ * Decision order, highest priority first:
+ *   1. config-supplied deny patterns       → block immediately
+ *   2. session-scoped "trust-all" response → allow
+ *   3. session-scoped "trust-tool" response → allow for that tool
+ *   4. built-in ALWAYS_ALLOWED read-only set → allow
+ *   5. config-supplied allow patterns      → allow
+ *   6. shell-/git-branch-specific read heuristics → allow
+ *   7. otherwise → prompt the user
+ *
+ * Trust state from interactive responses is in-memory (session-only).
+ * Persisting it across sessions is what the config layer is for —
+ * users can promote a session-scoped trust to a config entry by
+ * editing ~/.codebase/config.json.
  */
 export class PermissionStore {
 	private trustAll = false;
@@ -58,9 +157,18 @@ export class PermissionStore {
 	private readonly queue: Array<{ request: PermissionRequest; resolve: (d: Decision) => void }> = [];
 	private readonly listeners = new Set<(req: PermissionRequest | undefined) => void>();
 	private counter = 0;
+	private readonly matchAllow: (toolName: string, args: unknown) => boolean;
+	private readonly matchDeny: (toolName: string, args: unknown) => boolean;
+
+	constructor(options: PermissionStoreOptions = {}) {
+		this.matchAllow = compileMatcher(options.allowPatterns ?? []);
+		this.matchDeny = compileMatcher(options.denyPatterns ?? []);
+	}
 
 	async evaluate(toolName: string, args: unknown): Promise<Decision> {
+		if (this.matchDeny(toolName, args)) return "block";
 		if (this.shouldAutoAllow(toolName, args)) return "allow";
+		if (this.matchAllow(toolName, args)) return "allow";
 
 		return new Promise((resolve) => {
 			const request: PermissionRequest = {

@@ -146,3 +146,62 @@ describe("PermissionStore request shape", () => {
 		expect(store.current()?.detail).toBe("wip: refactor auth");
 	});
 });
+
+describe("PermissionStore config patterns", () => {
+	it("allow pattern with bare tool name auto-allows that tool", async () => {
+		const store = new PermissionStore({ allowPatterns: ["write_file"] });
+		await expect(store.evaluate("write_file", { path: "x.ts" })).resolves.toBe("allow");
+		// other tools still prompt
+		const p = store.evaluate("edit_file", { path: "y.ts" });
+		expect(store.current()?.tool).toBe("edit_file");
+		store.respond(store.current()!.id, "deny");
+		await expect(p).resolves.toBe("block");
+	});
+
+	it("allow pattern with glob matches the primary string arg", async () => {
+		const store = new PermissionStore({ allowPatterns: ["shell:git status*"] });
+		await expect(store.evaluate("shell", { command: "git status" })).resolves.toBe("allow");
+		await expect(store.evaluate("shell", { command: "git status --short" })).resolves.toBe("allow");
+		// non-matching shell still prompts
+		const p = store.evaluate("shell", { command: "rm -rf dist" });
+		expect(store.current()?.tool).toBe("shell");
+		store.respond(store.current()!.id, "deny");
+		await expect(p).resolves.toBe("block");
+	});
+
+	it("deny pattern blocks even on a normally-auto-allowed tool", async () => {
+		const store = new PermissionStore({ denyPatterns: ["read_file:.env*"] });
+		// .env is typically auto-allowed since read_file is read-only.
+		await expect(store.evaluate("read_file", { path: ".env" })).resolves.toBe("block");
+		await expect(store.evaluate("read_file", { path: ".env.local" })).resolves.toBe("block");
+		// regular reads still go through.
+		await expect(store.evaluate("read_file", { path: "src/main.ts" })).resolves.toBe("allow");
+	});
+
+	it("deny takes priority over allow for the same tool", async () => {
+		const store = new PermissionStore({
+			allowPatterns: ["shell:*"],
+			denyPatterns: ["shell:rm*"],
+		});
+		await expect(store.evaluate("shell", { command: "ls -la" })).resolves.toBe("allow");
+		await expect(store.evaluate("shell", { command: "rm -rf node_modules" })).resolves.toBe("block");
+	});
+
+	it("file-path glob matches read/write/edit primary arg", async () => {
+		const store = new PermissionStore({ allowPatterns: ["write_file:src/**"] });
+		await expect(store.evaluate("write_file", { path: "src/main.ts", content: "" })).resolves.toBe("allow");
+		await expect(store.evaluate("write_file", { path: "src/foo/bar.ts", content: "" })).resolves.toBe("allow");
+		// outside src/ still prompts
+		const p = store.evaluate("write_file", { path: "tests/foo.ts", content: "" });
+		expect(store.current()?.tool).toBe("write_file");
+		store.respond(store.current()!.id, "deny");
+		await expect(p).resolves.toBe("block");
+	});
+
+	it("URL glob matches web_fetch", async () => {
+		const store = new PermissionStore({ allowPatterns: ["web_fetch:https://docs.codebase.design/*"] });
+		await expect(store.evaluate("web_fetch", { url: "https://docs.codebase.design/getting-started" })).resolves.toBe(
+			"allow",
+		);
+	});
+});
