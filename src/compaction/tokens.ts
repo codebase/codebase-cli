@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Usage } from "@earendil-works/pi-ai";
 
 const CHARS_PER_TOKEN = 3.8;
 const PER_MESSAGE_OVERHEAD = 4;
@@ -9,10 +10,18 @@ const PER_MESSAGE_OVERHEAD = 4;
  *   - Real tokenizers are slow on every turn.
  *   - The agent doesn't need exact counts to make a binary trigger
  *     decision; the 75% threshold has plenty of slack.
- *   - Real cache-aware accounting comes from the provider's reported
- *     usage, which lands in Phase 8.
+ *
+ * Assistant messages emitted by pi-agent-core carry a `usage` block
+ * with the provider-reported `totalTokens`. When that's present we
+ * trust it over the chars/3.8 heuristic — this gives accurate
+ * accounting on assistant turns and keeps the heuristic only for the
+ * user/tool messages we have no real token count for.
  */
 export function estimateMessageTokens(message: AgentMessage): number {
+	const usage = (message as { usage?: Usage }).usage;
+	if (usage && typeof usage.totalTokens === "number" && usage.totalTokens > 0) {
+		return usage.totalTokens;
+	}
 	const body = serialize(message);
 	return Math.ceil(body.length / CHARS_PER_TOKEN) + PER_MESSAGE_OVERHEAD;
 }
