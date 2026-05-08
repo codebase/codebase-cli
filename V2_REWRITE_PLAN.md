@@ -288,7 +288,11 @@ Port from `auth.go` (440 LOC) and `docs/cli-auth-plan.md`:
 
 **Acceptance:** `/login` initiates OAuth. User-defined skill in `~/.codebase/skills/optimize.md` is discovered and invocable as `/optimize`. After `codebase auth login`, skills/templates/prompts saved on the user's codebase.foundation account appear in `/help` with a `(platform)` source tag. Local skill with the same id as a platform skill keeps its local override (override priority: platform > bundled > user). Style switch via `/style learning` or `--style=learning` CLI flag works.
 
-### Phase 8 — Cost tracking + cache boundary (2–3 days)
+### Phase 8 — Cost tracking + cache boundary (2–3 days) — 🟢 SUBSTANTIALLY DONE 2026-05-08 (460 tests)
+
+**Status:** Usage shape adopted, `/cost` slash command surfaces full breakdown (input/output/cache-read/cache-write tokens, dollars per bucket, cache hit rate, per-turn average, proxy-source tag). Compaction now prefers `usage.totalTokens` from pi-agent-core's assistant messages over the chars/3.8 heuristic — real accounting on the half of the transcript that has it, heuristic only where it must. Static-prefix vs. dynamic-suffix split deferred: our system prompt is already fully static (only the date rolls daily; no per-turn injection), so pi-ai's default cache control should already kick in. `cacheRetention` is in pi-ai's `SimpleStreamOptions` but not surfaced through pi-agent-core's `AgentOptions` — surfacing it is upstream work. `/cost` is the diagnostic; once a session shows the hit rate, we'll know whether to push the upstream change.
+
+---
 
 - Adopt pi-ai's `Usage` shape including `cacheRead` / `cacheWrite` / `cost`. Display in `/session` and a new `/cost` command.
 - System prompt cache boundary: split static prefix (cache-eligible — system instructions, tool list, MEMORY.md) from dynamic suffix (per-turn — current task, recent diagnostics, output style). Anthropic prompt caching ⇒ ~20–25% input token savings on turn 2+.
