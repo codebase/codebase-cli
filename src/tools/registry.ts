@@ -12,6 +12,7 @@ import { createShell } from "./shell.js";
 import { createTaskTools } from "./tasks.js";
 import type { ToolContext } from "./types.js";
 import { createWebFetch } from "./web-fetch.js";
+import { createWebSearch } from "./web-search.js";
 import { createWriteFile } from "./write-file.js";
 
 /**
@@ -32,6 +33,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createGitDiff(ctx),
 		createGitLog(ctx),
 		createWebFetch(ctx),
+		createWebSearch(ctx),
 		...createTaskTools(ctx),
 	];
 }
