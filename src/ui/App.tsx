@@ -3,6 +3,7 @@ import { useEffect, useMemo, useReducer, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
+import { routeUserInput } from "../agent/router.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
 import type { PermissionRequest } from "../permissions/store.js";
@@ -94,11 +95,35 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				// Inject the registry so /help can list commands.
 				// biome-ignore lint/suspicious/noExplicitAny: cross-cutting injection
 				registry,
+				// biome-ignore lint/suspicious/noExplicitAny: cross-cutting injection
 			} as any);
 			if (result.handled) return;
 		}
 
+		// Capture history-presence BEFORE the user-prompt dispatch — React's
+		// batched updates mean state.messages won't reflect the new user message
+		// in the same tick, but the router needs to know whether this is a
+		// continuation (greeting fast-track) or a first message.
+		const hadHistory = state.messages.some((m) => m.role === "assistant");
 		dispatch({ type: "user-prompt", text });
+
+		try {
+			const route = await routeUserInput(bundle.glue, text, { hasHistory: hadHistory });
+			if (route.kind === "chat") {
+				dispatch({ type: "chat-reply", text: route.reply });
+				return;
+			}
+			// Both "agent" and "plan" fall through to the agent for now;
+			// dedicated plan-mode UI lands in a follow-up commit.
+		} catch (err) {
+			// If the router itself crashes, don't drop the request — run the agent.
+			// We still log it as a non-fatal status line so users notice.
+			setStatusLines((prev) => [
+				...prev,
+				`(router fell back to agent: ${err instanceof Error ? err.message : err})`,
+			]);
+		}
+
 		bundle.agent.prompt(text).catch((err: unknown) => {
 			dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
 		});

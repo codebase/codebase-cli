@@ -5,6 +5,7 @@ import { type ChatState, EMPTY_USAGE, type ToolExecution } from "../types.js";
 export type Action =
 	| { type: "agent-event"; event: AgentEvent }
 	| { type: "user-prompt"; text: string }
+	| { type: "chat-reply"; text: string }
 	| { type: "abort" }
 	| { type: "error"; message: string }
 	| { type: "reset" };
@@ -34,6 +35,23 @@ export function reducer(state: ChatState, action: Action): ChatState {
 				error: undefined,
 				turnUsage: undefined,
 			};
+		}
+
+		case "chat-reply": {
+			// Glue replied to a small-talk turn; we render it as a synthetic
+			// assistant message but never feed it to pi-agent-core, so the
+			// agent's actual context stays clean of meta-banter.
+			const message: AgentMessage = {
+				role: "assistant",
+				content: [{ type: "text", text: action.text }],
+				api: "chat",
+				provider: "chat",
+				model: state.model.id,
+				usage: EMPTY_USAGE,
+				stopReason: "stop",
+				timestamp: Date.now(),
+			};
+			return { ...state, messages: [...state.messages, message], status: "idle" };
 		}
 
 		case "abort":
