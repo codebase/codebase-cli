@@ -14,7 +14,7 @@ Requires **Node.js ≥ 20**. The one-liner installer prints a hint with Volta/fn
 **macOS / Linux (one-liner — recommended):**
 
 ```sh
-curl -fsSL https://codebase.foundation/install.sh | sh
+curl -fsSL https://codebase.design/install.sh | sh
 ```
 
 This detects an existing v1 binary, asks before removing it, then installs v2 via npm.
@@ -22,7 +22,7 @@ This detects an existing v1 binary, asks before removing it, then installs v2 vi
 **Windows (PowerShell):**
 
 ```powershell
-irm https://codebase.foundation/install.ps1 | iex
+irm https://codebase.design/install.ps1 | iex
 ```
 
 **With npm (any platform, requires Node.js ≥ 20):**

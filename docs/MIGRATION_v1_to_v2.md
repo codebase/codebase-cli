@@ -12,7 +12,7 @@ This guide is for v1 users upgrading.
 ## TL;DR
 
 ```sh
-curl -fsSL https://codebase.foundation/install.sh | sh
+curl -fsSL https://codebase.design/install.sh | sh
 ```
 
 That's the whole migration. The installer detects your v1 binary, asks

@@ -147,28 +147,54 @@ PR against the tap on every npm publish.)
 
 ---
 
-## 5. Wire up codebase.foundation/install.sh
+## 5. Keep the install scripts on codebase.design fresh
 
-**Owner:** whoever owns the codebase.foundation web app.
+**Owner:** whoever owns the codebase.design / codebase.foundation web
+app. The two domains both point at the Next.js app under
+`polyvibe-poc/web/`; the canonical user-facing install URL is
+`codebase.design/install.sh` (and `/install.ps1`).
 
-The install command in the README is:
+The install commands in the README are:
 
 ```sh
-curl -fsSL https://codebase.foundation/install.sh | sh
+curl -fsSL https://codebase.design/install.sh | sh
+irm  https://codebase.design/install.ps1 | iex
 ```
 
-Two ways to serve `install.sh`:
+These resolve to static files under `polyvibe-poc/web/public/`:
 
-- **Static file** mounted at `/install.sh` from the web app's public
-  dir. Source of truth: this repo's `install.sh`. Mirror it on every
-  release (a small CI step, e.g. a webhook that pulls the file from
-  `main` to the web app's bucket).
-- **Redirect** to
-  `https://raw.githubusercontent.com/codebase-foundation/codebase-cli/main/install.sh`.
-  Quickest to set up; loses caching but is one fewer source of drift.
+```
+polyvibe-poc/web/public/install.sh   ← served at codebase.design/install.sh
+polyvibe-poc/web/public/install.ps1  ← served at codebase.design/install.ps1
+```
 
-Either way, also make `https://codebase.foundation/install.ps1`
-resolve to the PowerShell installer in this repo.
+`codebase-cli/install.sh` and `codebase-cli/install.ps1` are the
+**source of truth** — they live next to the CLI so they're versioned
+and tested with it. The copies under `web/public/` need to be synced
+on every CLI release. Run from inside `codebase-cli/`:
+
+```sh
+./scripts/sync-install-scripts.sh
+```
+
+That copies both files into `../web/public/` and reports the diff. The
+sibling-path assumption (`../web/`) matches this monorepo layout; if
+the repos are checked out elsewhere, set `WEB_PUBLIC_DIR` first:
+
+```sh
+WEB_PUBLIC_DIR=/path/to/web/public ./scripts/sync-install-scripts.sh
+```
+
+Then commit the updated files in the `polyvibe-poc` repo and redeploy
+the web app. Until that's deployed, the new installer is live only on
+disk; users hitting `codebase.design/install.sh` get whatever was
+deployed last.
+
+(If you'd rather avoid the manual sync, two safe alternatives are: a
+prebuild step in `web/package.json` that runs the sync script, or a
+302 redirect from `/install.sh` to
+`https://raw.githubusercontent.com/codebase-foundation/codebase-cli/main/install.sh` —
+quickest, but loses caching and the GitHub repo must be public.)
 
 ---
 

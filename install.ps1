@@ -1,7 +1,7 @@
 # Codebase CLI installer (Windows / PowerShell).
 #
 # Usage:
-#   irm https://codebase.foundation/install.ps1 | iex
+#   irm https://codebase.design/install.ps1 | iex
 #   irm https://raw.githubusercontent.com/codebase-foundation/codebase-cli/main/install.ps1 | iex
 #
 # What this does:
@@ -100,7 +100,7 @@ if (-not $NodeOk) {
     Write-Host "  - Direct:  https://nodejs.org/"
     Write-Host ""
     Write-Host "Then re-run:"
-    Write-Host "  irm https://codebase.foundation/install.ps1 | iex"
+    Write-Host "  irm https://codebase.design/install.ps1 | iex"
     Write-Host ""
     exit 1
 }
@@ -120,7 +120,7 @@ try {
 } catch {
     Write-Warn2 "npm install failed. If this is a permissions error, retry from an elevated PowerShell:"
     Write-Warn2 "  Start-Process powershell -Verb RunAs"
-    Write-Warn2 "  irm https://codebase.foundation/install.ps1 | iex"
+    Write-Warn2 "  irm https://codebase.design/install.ps1 | iex"
     throw
 }
 

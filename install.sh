@@ -3,7 +3,7 @@ set -e
 
 # Codebase CLI installer (Linux / macOS).
 # Usage:
-#   curl -fsSL https://codebase.foundation/install.sh | sh
+#   curl -fsSL https://codebase.design/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/codebase-foundation/codebase-cli/main/install.sh | sh
 #
 # What this does:
@@ -108,7 +108,7 @@ Install one of:
   • System: https://nodejs.org/
 
 Then re-run:
-  curl -fsSL https://codebase.foundation/install.sh | sh
+  curl -fsSL https://codebase.design/install.sh | sh
 
 EOF
 	exit 1

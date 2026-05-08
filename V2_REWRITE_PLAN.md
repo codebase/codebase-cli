@@ -359,7 +359,7 @@ What's deferred:
 
 - 🟡 Bun single-binary build — explicitly post-2.0. Path is documented in `docs/DISTRIBUTION.md §6`. The npm + Homebrew + curl|sh paths are first-class without it.
 
-✅ `install.ps1` is the Windows symmetric to `install.sh`: detects v1, removes it on confirm, checks Node ≥ 20 (winget/choco/scoop/Volta hint when missing), runs `npm install -g`, preserves `~\.codebase\` end-to-end. Both installers ship from the same canonical URLs (`codebase.foundation/install.sh` and `/install.ps1`).
+✅ `install.ps1` is the Windows symmetric to `install.sh`: detects v1, removes it on confirm, checks Node ≥ 20 (winget/choco/scoop/Volta hint when missing), runs `npm install -g`, preserves `~\.codebase\` end-to-end. Both installers ship from `https://codebase.design/install.sh` and `/install.ps1` — the canonical user-facing URLs. The actual files live in `polyvibe-poc/web/public/`; `scripts/sync-install-scripts.sh` is the one-command sync from this repo's source-of-truth copies. Operator runbook: `docs/DISTRIBUTION.md §5`.
 
 **Acceptance criteria status:**
 
