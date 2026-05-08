@@ -221,7 +221,13 @@ The agent's `beforeToolCall` runs permissions first, then user hooks; `afterTool
 
 **Acceptance:** Editing a TS file with a type error and asking the agent to fix it: the agent sees the diagnostic on the next turn without user paste. External hooks defined in `~/.codebase/hooks.json` still execute.
 
-### Phase 4 — Glue + plan mode (1 week)
+### Phase 4 — Glue + plan mode (1 week) — ✅ DONE 2026-05-08 (27/30 tools, 297 tests)
+
+**Status:** Glue (cheap-model sidecar with intent classifier + narration), plan engine (Q&A → markdown plan), and plan mode tools (`enter_plan_mode` / `exit_plan_mode`) all shipped. The plan-mode permission gate blocks every destructive tool while active. The App-level UI integration (intent classification before agent.prompt, plan-mode UI screen) lands in Phase 11 alongside the rest of the TUI parity work. 27/30 tools shipped; remaining 3 = `config` (Phase 6/7), `save_memory` + `read_memory` (Phase 5).
+
+---
+
+
 
 Port from `glue.go` and `plan.go`:
 - `GlueClient` with `fast` + `smart` model split via `GLUE_FAST_MODEL` / `GLUE_SMART_MODEL` env vars.
