@@ -8,6 +8,7 @@ import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
 import { createMultiEdit } from "./multi-edit.js";
+import { createNotebookEdit } from "./notebook-edit.js";
 import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
 import { createTaskTools } from "./tasks.js";
@@ -25,6 +26,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createReadFile(ctx),
 		createEditFile(ctx),
 		createMultiEdit(ctx),
+		createNotebookEdit(ctx),
 		createWriteFile(ctx),
 		createShell(ctx),
 		createListFiles(ctx),
