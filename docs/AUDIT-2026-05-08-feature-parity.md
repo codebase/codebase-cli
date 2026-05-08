@@ -405,9 +405,16 @@ These are ranked by ROI per line of code, not by which is hardest.
 4. **Persistent permission allowlist** — array in config.json that
    skips the prompt for entries matching `<tool>:<arg-pattern>`. CC's
    `permissions.allow` shape is the reference.
-5. **Parallel read-only tool execution** — declare effects on every
-   tool, fire all `read-fs`/`read-net` tools in a tool-use round
-   concurrently. Major perf win.
+5. ~~Parallel read-only tool execution~~ ✅ **already shipped.**
+   pi-agent-core's `executeToolCalls` (`agent-loop.js:233-239`)
+   honors a per-tool `executionMode: "sequential" | "parallel"` field
+   and parallelizes only when every tool in the LLM's batch is
+   parallel — otherwise serializes the whole batch for safety. Our
+   tool factories are already correctly tagged: read_file, glob,
+   grep, list_files, web_fetch, web_search, git_status/diff/log,
+   read_memory all `parallel`; everything mutating (write/edit/shell
+   /git_commit/save_memory/etc.) `sequential`. Audit was wrong to
+   list this as a TODO.
 6. **Headless `--output json/stream-json`** — table-stakes for CI use.
 7. **Hook events: `PreCompact`, `PostCompact`, `SubagentStart`,
    `SubagentStop`** — small additions, big telemetry value.

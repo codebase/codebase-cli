@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { render } from "ink";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
-import { runHeadless } from "./headless/run.js";
+import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { App } from "./ui/App.js";
 
 // Auto-load .env files before any subsystem reads process.env.
@@ -20,17 +20,57 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 } else if (argv[0] === "auth") {
 	runAuthSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "run") {
-	const prompt = argv.slice(1).join(" ").trim();
-	if (!prompt) {
-		process.stderr.write("usage: codebase run <prompt>\n");
+	const { prompt, outputFormat, error } = parseRunArgs(argv.slice(1));
+	if (error) {
+		process.stderr.write(`${error}\n`);
 		process.exit(2);
 	}
-	runHeadless({ prompt }).then((code) => process.exit(code));
+	if (!prompt) {
+		process.stderr.write("usage: codebase run [--output text|json|stream-json] <prompt>\n");
+		process.exit(2);
+	}
+	runHeadless({ prompt, outputFormat }).then((code) => process.exit(code));
 } else {
 	const instance = render(<App />);
 	instance.waitUntilExit().catch(() => {
 		process.exit(1);
 	});
+}
+
+interface ParsedRunArgs {
+	prompt?: string;
+	outputFormat?: HeadlessOutputFormat;
+	error?: string;
+}
+
+const VALID_OUTPUT_FORMATS = new Set<HeadlessOutputFormat>(["text", "json", "stream-json"]);
+
+function parseRunArgs(args: string[]): ParsedRunArgs {
+	const remaining: string[] = [];
+	let outputFormat: HeadlessOutputFormat | undefined;
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === "--output" || a === "-o") {
+			const value = args[i + 1];
+			if (!value || !VALID_OUTPUT_FORMATS.has(value as HeadlessOutputFormat)) {
+				return { error: `--output must be one of: ${[...VALID_OUTPUT_FORMATS].join(", ")}` };
+			}
+			outputFormat = value as HeadlessOutputFormat;
+			i++;
+			continue;
+		}
+		if (a.startsWith("--output=")) {
+			const value = a.slice("--output=".length);
+			if (!VALID_OUTPUT_FORMATS.has(value as HeadlessOutputFormat)) {
+				return { error: `--output must be one of: ${[...VALID_OUTPUT_FORMATS].join(", ")}` };
+			}
+			outputFormat = value as HeadlessOutputFormat;
+			continue;
+		}
+		remaining.push(a);
+	}
+	const prompt = remaining.join(" ").trim();
+	return { prompt: prompt || undefined, outputFormat };
 }
 
 function readPackageVersion(): string {
@@ -54,6 +94,8 @@ function printHelp(): void {
 			"Usage:",
 			"  codebase                     run the interactive TUI in the current directory",
 			"  codebase run <prompt>        one-shot headless run, prints to stdout",
+			"  codebase run --output json|stream-json <prompt>",
+			"                               one-shot run with structured output",
 			"  codebase auth login          sign in via codebase.foundation OAuth",
 			"  codebase auth logout         revoke the current session",
 			"  codebase auth status         show current sign-in",
