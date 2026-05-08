@@ -1,0 +1,163 @@
+import { CredentialsStore } from "./credentials.js";
+import { type OAuthConfig, refreshAccessToken, revokeToken, runOAuthLogin } from "./flow.js";
+
+const DEFAULT_AUTH_BASE = "https://codebase.foundation";
+
+function defaultOAuthConfig(env: NodeJS.ProcessEnv = process.env): OAuthConfig {
+	const base = (env.CODEBASE_AUTH_BASE_URL ?? DEFAULT_AUTH_BASE).replace(/\/+$/, "");
+	return {
+		authorizationUrl: `${base}/cli/auth`,
+		tokenUrl: `${base}/api/cli/token`,
+		refreshUrl: `${base}/api/cli/refresh`,
+		revokeUrl: `${base}/api/cli/revoke`,
+		clientId: env.CODEBASE_CLIENT_ID ?? "codebase-cli",
+		scopes: (env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
+	};
+}
+
+export interface AuthCliOptions {
+	store?: CredentialsStore;
+	config?: OAuthConfig;
+	stdout?: (msg: string) => void;
+	stderr?: (msg: string) => void;
+}
+
+/**
+ * Dispatch a `codebase auth …` subcommand. Returns the exit code to
+ * surface from the parent process.
+ *
+ * Recognized argv:
+ *   auth                  → status
+ *   auth status           → status
+ *   auth login            → run OAuth browser flow, persist tokens
+ *   auth logout           → clear credentials, best-effort server revoke
+ *   auth refresh          → force a refresh against the stored refresh token
+ *   auth <key>            → save a manual API key (headless / SSH)
+ */
+export async function runAuthSubcommand(argv: string[], options: AuthCliOptions = {}): Promise<number> {
+	const store = options.store ?? new CredentialsStore();
+	const config = options.config ?? defaultOAuthConfig();
+	const out = options.stdout ?? ((m) => process.stdout.write(`${m}\n`));
+	const err = options.stderr ?? ((m) => process.stderr.write(`${m}\n`));
+
+	const subcommand = argv[1] ?? "status";
+
+	try {
+		switch (subcommand) {
+			case "status":
+				return statusCmd(store, out);
+
+			case "login":
+				return await loginCmd(store, config, out, err);
+
+			case "logout":
+				return await logoutCmd(store, config, out);
+
+			case "refresh":
+				return await refreshCmd(store, config, out, err);
+
+			default: {
+				if (subcommand.startsWith("-")) {
+					err(`unknown flag: ${subcommand}`);
+					return 2;
+				}
+				// Treat as a manual API key
+				return manualKeyCmd(store, subcommand, out);
+			}
+		}
+	} catch (e) {
+		err(e instanceof Error ? e.message : String(e));
+		return 1;
+	}
+}
+
+function statusCmd(store: CredentialsStore, out: (m: string) => void): number {
+	const creds = store.load();
+	if (!creds) {
+		out("not signed in");
+		out("run: codebase auth login");
+		return 0;
+	}
+	const expiry = creds.expiresAt
+		? `expires ${new Date(creds.expiresAt).toISOString()}${store.isExpired(creds) ? " (expired)" : ""}`
+		: "no expiry";
+	out(`signed in via ${creds.source}`);
+	if (creds.email) out(`  email:  ${creds.email}`);
+	if (creds.userId) out(`  userId: ${creds.userId}`);
+	out(`  scopes: ${creds.scopes.join(" ")}`);
+	out(`  ${expiry}`);
+	out(`  file:   ${store.filePath} (mode ${(store.mode() ?? 0).toString(8)})`);
+	return 0;
+}
+
+async function loginCmd(
+	store: CredentialsStore,
+	config: OAuthConfig,
+	out: (m: string) => void,
+	err: (m: string) => void,
+): Promise<number> {
+	out("opening your browser to sign in…");
+	out("(if it doesn't open, the URL will be printed)");
+	try {
+		const creds = await runOAuthLogin(config);
+		store.save(creds);
+		out(`signed in${creds.email ? ` as ${creds.email}` : ""}.`);
+		return 0;
+	} catch (e) {
+		err(`login failed: ${e instanceof Error ? e.message : String(e)}`);
+		return 1;
+	}
+}
+
+async function logoutCmd(store: CredentialsStore, config: OAuthConfig, out: (m: string) => void): Promise<number> {
+	const creds = store.load();
+	if (creds && creds.source === "codebase") {
+		await revokeToken(config, creds.accessToken);
+	}
+	const removed = store.clear();
+	out(removed ? "signed out." : "no credentials to remove.");
+	return 0;
+}
+
+async function refreshCmd(
+	store: CredentialsStore,
+	config: OAuthConfig,
+	out: (m: string) => void,
+	err: (m: string) => void,
+): Promise<number> {
+	const creds = store.load();
+	if (!creds) {
+		err("not signed in");
+		return 1;
+	}
+	if (!creds.refreshToken) {
+		err("no refresh token saved (manual API keys can't be refreshed)");
+		return 1;
+	}
+	try {
+		const next = await refreshAccessToken(config, creds.refreshToken);
+		store.save({
+			...next,
+			email: next.email ?? creds.email,
+			userId: next.userId ?? creds.userId,
+		});
+		out("refreshed");
+		return 0;
+	} catch (e) {
+		err(`refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+		return 1;
+	}
+}
+
+function manualKeyCmd(store: CredentialsStore, key: string, out: (m: string) => void): number {
+	if (!key || key.length < 16) {
+		throw new Error("API key looks too short — paste the full token from the dashboard.");
+	}
+	store.save({
+		accessToken: key,
+		scopes: ["inference"],
+		source: "manual",
+	});
+	out("API key saved.");
+	return 0;
+}
