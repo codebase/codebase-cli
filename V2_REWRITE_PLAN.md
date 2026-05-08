@@ -237,7 +237,11 @@ Port from `glue.go` and `plan.go`:
 
 **Acceptance:** "Add auth to my Next.js app" triggers plan mode, asks 2–3 questions, produces a reviewable plan, then runs the agent.
 
-### Phase 5 — Memory + compaction (4–5 days)
+### Phase 5 — Memory + compaction (4–5 days) — ✅ DONE 2026-05-08 (29/30 tools, 340 tests)
+
+**Status:** Memory subsystem (per-project store at `~/.codebase/projects/<hash>/memory/` with 4-type taxonomy enforcement, MEMORY.md auto-injection capped at 200 lines / 25KB, save_memory + read_memory tools), compaction engine (snip-then-summarize at 75% threshold, safe-split detection, file-op preservation across the cut, transformContext wiring), and session persistence (per-cwd JSON snapshot keyed off sha256(cwd)[:8], auto-save on agent_end, 7-day staleness + model-match check, atomic tmp+rename) all shipped. 29/30 tools done; only `config` remains (Phase 6/7).
+
+---
 
 - Port `memory.go`. Keep per-project isolation at `~/.codebase/projects/{projectHash}/memory/`. MEMORY.md auto-injection into system prompt with 200-line/25KB cap (matches Claude Code's `truncateEntrypointContent()` — line cut first, then byte-cut at newline). **Add** the 4-type taxonomy enforcement (user/feedback/project/reference) via `parseMemoryType()` in `save_memory` / `read_memory` tools.
 - Port `compact.go`. 75% threshold, 8 most-recent messages preserved, safe-split detection between assistant-with-tool-calls and tool results, exact summarization prompt phrasing preserved. **Upgrade** from `chars/3.8` heuristic to real API-reported token counts where available (pi-ai exposes them per provider).
