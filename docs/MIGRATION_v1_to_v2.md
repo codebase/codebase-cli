@@ -111,7 +111,7 @@ If you need to roll back to v1:
 
 ```sh
 # 1. Uninstall v2
-npm uninstall -g @codebase-foundation/cli
+npm uninstall -g codebase-cli
 
 # 2. Reinstall v1 from the tagged Go release
 curl -fsSL https://github.com/codebase-foundation/codebase-cli/releases/download/v1.0.0/install.sh | sh

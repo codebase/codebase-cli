@@ -28,7 +28,7 @@ irm https://codebase.design/install.ps1 | iex
 **With npm (any platform, requires Node.js ≥ 20):**
 
 ```sh
-npm install -g @codebase-foundation/cli
+npm install -g codebase-cli
 ```
 
 **With Homebrew:**

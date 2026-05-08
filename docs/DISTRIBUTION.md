@@ -12,29 +12,32 @@ between them.
 
 ---
 
-## 1. Reserve the npm scope
+## 1. Claim the npm name
 
 **Owner:** anyone with an npmjs.com account. Free.
 
-1. Sign in at <https://www.npmjs.com/>.
-2. Create an organization named `codebase-foundation`. Pick the **Free
-   (Public Packages)** plan.
-3. Generate an automation token:
+The package is published as the **unscoped** name `codebase-cli` —
+no org or scope to create. The name was confirmed available on
+2026-05-08; the first `npm publish` claims it.
+
+1. Sign in at <https://www.npmjs.com/> (or `npm adduser` from the
+   shell).
+2. Generate an automation token for CI:
    - Profile → Access Tokens → Generate New Token
    - Type: **Granular Access Token** (preferred) or **Automation**
-   - Packages and scopes: full read+write on `@codebase-foundation/*`
+   - Packages and scopes: full read+write on `codebase-cli`
    - Expiration: 1 year is fine; calendar a refresh.
-4. Add the token to GitHub as a repo secret:
+3. Add the token to GitHub as a repo secret:
    - `gh secret set NPM_TOKEN --body "<paste token>"`
    - Or via the web UI: Settings → Secrets and variables → Actions →
      New repository secret → `NPM_TOKEN`.
-5. Verify locally (optional):
+4. Verify locally (optional):
    ```sh
    npm whoami --registry https://registry.npmjs.org/
-   npm access list packages @codebase-foundation
    ```
 
-After this, the `release.yml` workflow can publish.
+After the first publish, the package belongs to the publishing
+account; subsequent publishes from CI use the `NPM_TOKEN`.
 
 ---
 
@@ -54,7 +57,7 @@ npm pack --dry-run
 
 # 3. Publish (NOTE: this is irreversible — version + tag are locked in
 #    on npm forever)
-npm publish --access public
+npm publish
 ```
 
 `prepublishOnly` re-runs `clean → check → build` before publish, so
@@ -63,12 +66,12 @@ the tarball is always built from a passing checkout.
 After it succeeds, smoke-test the install path on a fresh box:
 
 ```sh
-npm install -g @codebase-foundation/cli
+npm install -g codebase-cli
 codebase --version
 codebase auth status
 ```
 
-If anything's broken, `npm unpublish @codebase-foundation/cli@<version>`
+If anything's broken, `npm unpublish codebase-cli@<version>`
 within 72 hours of publish.
 
 ---
@@ -122,7 +125,7 @@ Steps:
    ```
 3. After your first npm publish, get the tarball SHA256:
    ```sh
-   curl -sL https://registry.npmjs.org/@codebase-foundation/cli/-/cli-2.0.0-rc.1.tgz \
+   curl -sL https://registry.npmjs.org/codebase-cli/-/cli-2.0.0-rc.1.tgz \
      | shasum -a 256
    ```
 4. Edit `Formula/codebase.rb` to set the right `url` and `sha256` (the

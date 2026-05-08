@@ -8,13 +8,13 @@
 #   1. Detects an existing v1 (Go) binary at ~\.codebase\bin\codebase.exe
 #      and offers to remove it.
 #   2. Verifies Node.js >= 20 is available (or prints an install hint).
-#   3. Installs @codebase-foundation/cli globally via npm.
+#   3. Installs codebase-cli globally via npm.
 #   4. Preserves ~\.codebase\ data — sessions, projects, memory, and
 #      OAuth credentials carry over from v1 with no re-auth.
 
 $ErrorActionPreference = "Stop"
 
-$Pkg = "@codebase-foundation/cli"
+$Pkg = "codebase-cli"
 $BinName = "codebase"
 $NodeMinMajor = 20
 

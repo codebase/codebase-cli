@@ -363,7 +363,7 @@ What's deferred:
 
 **Acceptance criteria status:**
 
-- ✅ "`npm install -g @codebase-foundation/cli` works on fresh Linux/Mac/Windows" — package surface is verified locally; CI workflow does the actual cross-platform check on tag push.
+- ✅ "`npm install -g codebase-cli` works on fresh Linux/Mac/Windows" — package surface is verified locally; CI workflow does the actual cross-platform check on tag push.
 - ✅ "A user with an existing OAuth session keeps working without re-authenticating after upgrade" — `~/.codebase/credentials.json` is byte-identical between v1 and v2; both share the file format. Verified by reading both implementations.
 
 Operator's next move: follow `docs/DISTRIBUTION.md` §1 → §3 → §2 → §4 → §5 in that order.
@@ -454,7 +454,7 @@ When the next AI session opens this repo:
 
 ## Open questions to resolve before Phase 6
 
-- **npm package name**: `@codebase-foundation/cli` is the implied target. Confirm availability.
+- **npm package name**: `codebase-cli` is the implied target. Confirm availability.
 - **OAuth backend URL**: production is `codebase.foundation/api`. Is staging (`staging.polyvibe.io` per `cli-auth-plan.md`) still relevant or has it been folded in?
 - **Project file pickup**: should v2 read `AGENTS.md` / `RULES.md` / `CLAUDE.md` from the project? (v1 reads `CLAUDE.md` already on this branch.)
 - **Output styles**: config or CLI flag (`--style=learning`)? Lean: config + flag override.

@@ -17,7 +17,7 @@ class Codebase < Formula
   desc "AI coding agent in your terminal — TypeScript, multi-provider, OAuth-aware"
   homepage "https://codebase.foundation"
   # Replace VERSION_PLACEHOLDER with the published version on each bump.
-  url "https://registry.npmjs.org/@codebase-foundation/cli/-/cli-VERSION_PLACEHOLDER.tgz"
+  url "https://registry.npmjs.org/codebase-cli/-/codebase-cli-VERSION_PLACEHOLDER.tgz"
   sha256 "SHA256_PLACEHOLDER"
   license "MIT"
 

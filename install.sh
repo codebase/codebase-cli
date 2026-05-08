@@ -9,11 +9,11 @@ set -e
 # What this does:
 #   1. Detects an existing v1 (Go) binary and offers to remove it.
 #   2. Verifies Node.js >= 20 is available (or prints a one-line install hint).
-#   3. Installs @codebase-foundation/cli globally via npm.
+#   3. Installs codebase-cli globally via npm.
 #   4. Preserves ~/.codebase/ data (sessions, projects, memory, OAuth
 #      credentials) — sign-in carries over from v1 with no re-auth.
 
-PKG="@codebase-foundation/cli"
+PKG="codebase-cli"
 BIN_NAME="codebase"
 NODE_MIN_MAJOR=20
 

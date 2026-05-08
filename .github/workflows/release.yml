@@ -62,7 +62,7 @@ jobs:
       - name: Publish to npm
         # Pass --tag so pre-releases never become `latest`, even
         # transiently. npm interprets the absence of --tag as `latest`.
-        run: npm publish --provenance --access public --tag "${{ steps.disttag.outputs.tag }}"
+        run: npm publish --provenance --tag "${{ steps.disttag.outputs.tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
