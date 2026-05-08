@@ -2,7 +2,9 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
+import { CompactionEngine } from "../compaction/engine.js";
 import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
+import { GlueClient, resolveGlueModels } from "../glue/client.js";
 import { HookManager } from "../hooks/manager.js";
 import { buildMemoryAddendum } from "../memory/inject.js";
 import { MemoryStore } from "../memory/store.js";
@@ -50,6 +52,8 @@ export interface AgentBundle {
 	userQueries: UserQueryStore;
 	planMode: PlanModeStore;
 	memory: MemoryStore;
+	glue: GlueClient;
+	compaction: CompactionEngine;
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
@@ -67,6 +71,14 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
 	const diagnostics = new DiagnosticsEngine({ cwd });
+
+	const glueModels = resolveGlueModels({ parentModel: model, parentApiKey: apiKey });
+	const glue = new GlueClient({
+		fastModel: glueModels.fast,
+		smartModel: glueModels.smart,
+		apiKey: glueModels.apiKey,
+	});
+	const compaction = new CompactionEngine({ glue, modelId: model.id });
 
 	const toolContext: ToolContext = {
 		cwd,
@@ -94,6 +106,11 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			messages: [],
 		},
 		getApiKey: () => apiKey,
+		transformContext: async (messages, signal) => {
+			if (!compaction.needsCompaction(messages)) return messages;
+			const result = await compaction.compact(messages, signal);
+			return result.messages;
+		},
 		beforeToolCall: async (ctx, signal) => {
 			// 1. Plan mode gate: block destructive tools entirely while planning.
 			if (planMode.isActive() && PLAN_MODE_BLOCKED.has(ctx.toolCall.name)) {
@@ -185,6 +202,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		userQueries,
 		planMode,
 		memory,
+		glue,
+		compaction,
 		hooks,
 		diagnostics,
 		subscribe,
