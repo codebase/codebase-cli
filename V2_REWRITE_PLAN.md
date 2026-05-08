@@ -250,7 +250,11 @@ Port from `glue.go` and `plan.go`:
 
 **Acceptance:** A 100-turn session compacts without losing file-op history. Memory survives across sessions. `~/.codebase/` data dir is byte-compatible with Go v1.
 
-### Phase 6 — OAuth + inference proxy (1 week) *(NEW — was missing from original plan)*
+### Phase 6 — OAuth + inference proxy (1 week) — ✅ DONE 2026-05-08 (29/30 tools, 383 tests)
+
+**Status:** Auth subsystem fully shipped. PKCE crypto (RFC 7636: 64-byte verifier, SHA-256 challenge, anti-CSRF state, constant-time compare). CredentialsStore at `~/.codebase/credentials.json` with 0600 mode enforced and atomic writes; load is defensive (malformed self-clears, unknown versions return null). Browser-based OAuth login spins a localhost callback server, opens the browser, validates state in constant time, and exchanges the code via form-encoded POST. CLI subcommands `codebase auth login / logout / status / refresh / <key>` wired before the TUI launches. resolveConfig now routes through `https://codebase.foundation/api/cli` (overridable) when a non-expired token is present — pi-ai's provider implementations work unchanged because the proxy mimics each wire protocol. CODEBASE_DISABLE_PROXY=1 forces direct-provider mode for debugging. The proxy backend itself (the platform-side endpoints) is a separate work item; this side is ready to talk to it.
+
+---
 
 Port from `auth.go` (440 LOC) and `docs/cli-auth-plan.md`:
 - **PKCE flow**: `generateCodeVerifier()`, `generateCodeChallenge()`, `generateState()` — full RFC 7636 compliance.
