@@ -279,10 +279,14 @@ Port from `auth.go` (440 LOC) and `docs/cli-auth-plan.md`:
 ---
 
 - Port `commands.go`. Current set: `/help`, `/clear`, `/compact`, `/model`, `/session` (alias `/info`), `/copy`, `/theme`, `/diagnostics` (alias `/diag`), `/undo` (powered by FileHistory). Plus auth: `/login`, `/logout`, `/whoami`, `/keys`. Handler signature: `(ctx, args) => effect`.
-- **Add** skill loader: bundled + user-defined `.md` files in `~/.codebase/skills/`. Slash invocation expands to a system prompt prefix. Match Claude Code's `id@source` plugin format (e.g., `analyze@bundled`, `optimize@user`).
+- **Add** skill loader with three sources merged through one registry (`src/skills/loader.ts`):
+  - **bundled** — ships with the binary
+  - **user** — local `.md` files in `~/.codebase/skills/`
+  - **platform** — fetched from the user's codebase.foundation account when OAuth'd. `src/skills/platform-loader.ts` is the contract anchor; wire format documented inline (GET `/api/cli/skills`). ETag-cached under `~/.codebase/cache/platform-assets.json`. Refresh on `codebase auth refresh` or hourly.
+- **Add** templates and prompts to the same loader pipeline. Templates emit a file tree; prompts are saved snippets. The platform path is the differentiator — local-only skill systems (Claude Code, pi-tui) can't ship per-account curated assets.
 - **Add** output styles (Default/Explanatory/Learning). Markdown + frontmatter, loaded from `~/.codebase/output-styles/*.md` then project `.codebase/output-styles/*.md`. Place style content **below** the cache boundary so toggling doesn't bust the prompt cache.
 
-**Acceptance:** `/login` initiates OAuth. User-defined skill in `~/.codebase/skills/optimize.md` is discovered and invocable as `/optimize`. Style switch via `/style learning` or `--style=learning` CLI flag works.
+**Acceptance:** `/login` initiates OAuth. User-defined skill in `~/.codebase/skills/optimize.md` is discovered and invocable as `/optimize`. After `codebase auth login`, skills/templates/prompts saved on the user's codebase.foundation account appear in `/help` with a `(platform)` source tag. Local skill with the same id as a platform skill keeps its local override (override priority: platform > bundled > user). Style switch via `/style learning` or `--style=learning` CLI flag works.
 
 ### Phase 8 — Cost tracking + cache boundary (2–3 days)
 
