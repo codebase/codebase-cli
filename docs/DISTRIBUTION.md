@@ -190,6 +190,21 @@ the web app. Until that's deployed, the new installer is live only on
 disk; users hitting `codebase.design/install.sh` get whatever was
 deployed last.
 
+> ⚠️ **Next.js rebuild required for new files.** In production mode
+> (`next start`), Next.js bakes the `public/` file list at `next build`
+> time — adding a new file (e.g. an installer that didn't exist
+> before) returns 404 until the next build. Editing an *existing*
+> file's contents serves immediately without rebuild. So the first
+> time you add `install.sh` / `install.ps1`, run:
+>
+> ```sh
+> cd /path/to/polyvibe-poc/web
+> npm run build
+> pm2 reload codebase-frontend     # graceful restart on PM2
+> ```
+>
+> Subsequent edits to those files are picked up without a rebuild.
+
 (If you'd rather avoid the manual sync, two safe alternatives are: a
 prebuild step in `web/package.json` that runs the sync script, or a
 302 redirect from `/install.sh` to
