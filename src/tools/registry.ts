@@ -11,6 +11,7 @@ import { createEnterWorktree, createExitWorktree } from "./git/worktree.js";
 import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
+import { createMemoryTools } from "./memory-tools.js";
 import { createMultiEdit } from "./multi-edit.js";
 import { createNotebookEdit } from "./notebook-edit.js";
 import { createPlanModeTools } from "./plan-mode.js";
@@ -50,5 +51,6 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createWebSearch(ctx),
 		createDispatchAgent(ctx),
 		...createTaskTools(ctx),
+		...createMemoryTools(ctx),
 	];
 }
