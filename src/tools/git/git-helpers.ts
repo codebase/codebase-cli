@@ -10,14 +10,26 @@ export interface GitResult {
  * Spawn `git` with the given args. Returns a Promise that resolves with
  * captured stdout, stderr, and exit code. Never throws — caller decides
  * whether non-zero is an error in their context.
+ *
+ * If `stdin` is provided it's written to the child's stdin and stdin is
+ * closed (used for `git commit -F -` to feed multi-line messages without
+ * a temp file).
  */
-export function runGit(args: string[], cwd: string, signal?: AbortSignal): Promise<GitResult> {
+export function runGit(args: string[], cwd: string, signal?: AbortSignal, stdin?: string): Promise<GitResult> {
 	return new Promise((resolveRun) => {
 		const child = spawn("git", args, {
 			cwd,
 			env: process.env,
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 		});
+		if (stdin !== undefined) {
+			try {
+				child.stdin?.write(stdin);
+				child.stdin?.end();
+			} catch {
+				// stdin already closed by a fast exit — that's fine
+			}
+		}
 		const out: Buffer[] = [];
 		const err: Buffer[] = [];
 		child.stdout?.on("data", (b: Buffer) => out.push(b));

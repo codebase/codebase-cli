@@ -107,6 +107,11 @@ export class PermissionStore {
 			const cmd = (args as { command?: string } | undefined)?.command;
 			if (typeof cmd === "string" && !shellNeedsPermission(cmd)) return true;
 		}
+		// git_branch with no name (or just listing) is read-only.
+		if (toolName === "git_branch") {
+			const a = args as { name?: string } | undefined;
+			if (!a?.name) return true;
+		}
 		return false;
 	}
 

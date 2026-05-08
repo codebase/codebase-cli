@@ -1,6 +1,8 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createDispatchAgent } from "./dispatch-agent.js";
 import { createEditFile } from "./edit-file.js";
+import { createGitBranch } from "./git/branch.js";
+import { createGitCommit } from "./git/commit.js";
 import { createGitDiff } from "./git/diff.js";
 import { createGitLog } from "./git/log.js";
 import { createGitStatus } from "./git/status.js";
@@ -35,6 +37,8 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createGitStatus(ctx),
 		createGitDiff(ctx),
 		createGitLog(ctx),
+		createGitCommit(ctx),
+		createGitBranch(ctx),
 		createWebFetch(ctx),
 		createWebSearch(ctx),
 		createDispatchAgent(ctx),
