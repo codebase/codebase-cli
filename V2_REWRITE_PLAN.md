@@ -313,7 +313,11 @@ Port from `auth.go` (440 LOC) and `docs/cli-auth-plan.md`:
 
 **Acceptance:** `codebase run "summarize this repo"` works in CI without a TTY. `.env` files load. `/undo` reverses the last edit.
 
-### Phase 11 — TUI parity + polish (1 week)
+### Phase 11 — TUI parity + polish (1 week) — 🟢 SUBSTANTIALLY DONE 2026-05-08 (453 tests)
+
+**Status:** Headline TUI work shipped — intent routing (chat replies skip the agent), full plan-mode flow (Q&A → reviewable plan → approve/revise/cancel via UserQuery), live TaskPanel + ToolPanel rendering above the status bar, kill-ring/cursor editing in Input, pre-wrap message text at word boundaries, /copy slash command with OSC 52 + platform fallbacks. Frameless layout + left-accent tool blocks + throbber were already in place from Phase 1. Remaining items are polish (gradient dividers, centered permission box, OSC 633 prompt boundaries) — none block usability.
+
+---
 
 The Go TUI on `anthropic-support` had two overhauls (`3900a1b` + `d7a250a`) that the Ink rewrite must match aesthetically. Specific patterns to preserve:
 
