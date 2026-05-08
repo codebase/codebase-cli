@@ -13,6 +13,7 @@ import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
 import { createMultiEdit } from "./multi-edit.js";
 import { createNotebookEdit } from "./notebook-edit.js";
+import { createPlanModeTools } from "./plan-mode.js";
 import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
 import { createTaskTools } from "./tasks.js";
@@ -44,6 +45,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createEnterWorktree(ctx),
 		createExitWorktree(ctx),
 		createAskUser(ctx),
+		...createPlanModeTools(ctx),
 		createWebFetch(ctx),
 		createWebSearch(ctx),
 		createDispatchAgent(ctx),

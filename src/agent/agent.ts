@@ -5,6 +5,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
 import { HookManager } from "../hooks/manager.js";
 import { PermissionStore } from "../permissions/store.js";
+import { PlanModeStore } from "../plan/store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
 import { buildTools } from "../tools/registry.js";
 import { TaskStore } from "../tools/task-store.js";
@@ -14,6 +15,24 @@ import { type ResolvedConfig, resolveConfig } from "./config.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
 const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
+
+/**
+ * Tools blocked while plan mode is active. Anything that mutates working-tree
+ * state, runs commands, or talks to git's index belongs here. Read tools
+ * (read_file, list_files, glob, grep, dispatch_agent, web_*, git read trio)
+ * stay available so the agent can investigate and write the plan.
+ */
+const PLAN_MODE_BLOCKED: ReadonlySet<string> = new Set([
+	"write_file",
+	"edit_file",
+	"multi_edit",
+	"notebook_edit",
+	"shell",
+	"git_commit",
+	"git_branch",
+	"enter_worktree",
+	"exit_worktree",
+]);
 
 export interface CreateAgentOptions {
 	cwd?: string;
@@ -27,6 +46,7 @@ export interface AgentBundle {
 	toolContext: ToolContext;
 	permissions: PermissionStore;
 	userQueries: UserQueryStore;
+	planMode: PlanModeStore;
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
@@ -39,6 +59,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 
 	const permissions = new PermissionStore();
 	const userQueries = new UserQueryStore();
+	const planMode = new PlanModeStore();
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
 	const diagnostics = new DiagnosticsEngine({ cwd });
@@ -48,6 +69,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		fileStateCache: new FileStateCache(),
 		tasks: new TaskStore(),
 		userQueries,
+		planMode,
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
@@ -64,12 +86,21 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		},
 		getApiKey: () => apiKey,
 		beforeToolCall: async (ctx, signal) => {
-			// 1. Built-in permission gate (fast, sync for read-only tools).
+			// 1. Plan mode gate: block destructive tools entirely while planning.
+			if (planMode.isActive() && PLAN_MODE_BLOCKED.has(ctx.toolCall.name)) {
+				return {
+					block: true,
+					reason:
+						`${ctx.toolCall.name} is blocked while plan mode is active. ` +
+						"Use exit_plan_mode after presenting your plan to regain write access.",
+				};
+			}
+			// 2. Built-in permission gate (fast, sync for read-only tools).
 			const decision = await permissions.evaluate(ctx.toolCall.name, ctx.args);
 			if (decision === "block") {
 				return { block: true, reason: "Permission denied by user." };
 			}
-			// 2. User-defined hooks (typically audit/lint/validation steps).
+			// 3. User-defined hooks (typically audit/lint/validation steps).
 			const filePath = (ctx.args as { path?: string } | undefined)?.path;
 			const outcome = await hooks.dispatch(
 				"PreToolUse",
@@ -136,5 +167,16 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		});
 
 	void agentRef;
-	return { agent, model, source, toolContext, permissions, userQueries, hooks, diagnostics, subscribe };
+	return {
+		agent,
+		model,
+		source,
+		toolContext,
+		permissions,
+		userQueries,
+		planMode,
+		hooks,
+		diagnostics,
+		subscribe,
+	};
 }
