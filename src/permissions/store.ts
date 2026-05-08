@@ -39,6 +39,9 @@ const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
 	// ask_user is a question, not a mutation — the user-query UI gates the
 	// actual interaction so a permission prompt on top is redundant.
 	"ask_user",
+	// Memory tools are user-context, not destructive code edits — auto-allow.
+	"save_memory",
+	"read_memory",
 ]);
 
 /**

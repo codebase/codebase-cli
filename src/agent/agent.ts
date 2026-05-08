@@ -4,6 +4,8 @@ import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
 import { HookManager } from "../hooks/manager.js";
+import { buildMemoryAddendum } from "../memory/inject.js";
+import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
 import { PlanModeStore } from "../plan/store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
@@ -47,6 +49,7 @@ export interface AgentBundle {
 	permissions: PermissionStore;
 	userQueries: UserQueryStore;
 	planMode: PlanModeStore;
+	memory: MemoryStore;
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
@@ -60,6 +63,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const permissions = new PermissionStore();
 	const userQueries = new UserQueryStore();
 	const planMode = new PlanModeStore();
+	const memory = new MemoryStore({ cwd });
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
 	const diagnostics = new DiagnosticsEngine({ cwd });
@@ -70,6 +74,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		tasks: new TaskStore(),
 		userQueries,
 		planMode,
+		memory,
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
@@ -77,10 +82,14 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			}),
 	};
 
+	// MEMORY.md gets concatenated onto the system prompt at agent creation.
+	// Reload-after-save is a Phase 11 polish item.
+	const fullSystemPrompt = systemPrompt + buildMemoryAddendum(memory);
+
 	const agent = new Agent({
 		initialState: {
 			model,
-			systemPrompt,
+			systemPrompt: fullSystemPrompt,
 			tools: buildTools(toolContext),
 			messages: [],
 		},
@@ -175,6 +184,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		permissions,
 		userQueries,
 		planMode,
+		memory,
 		hooks,
 		diagnostics,
 		subscribe,
