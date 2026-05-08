@@ -1,14 +1,22 @@
 import { getEnvApiKey, getModel, type KnownProvider, type Model } from "@earendil-works/pi-ai";
+import { CredentialsStore } from "../auth/credentials.js";
 
 /**
  * Provider+model selection, in priority order:
- *   1. CODEBASE_PROVIDER + CODEBASE_MODEL env (explicit override)
- *   2. First provider in {@link AUTO_DETECT_ORDER} with a usable env key
- *   3. Throw — caller should surface this as an onboarding hint
+ *   1. Saved OAuth/API credentials (~/.codebase/credentials.json) — if
+ *      present and not expired, route the chosen model through the
+ *      codebase.foundation inference proxy so the backend can deduct
+ *      credits. The model metadata stays the same; only baseUrl + apiKey
+ *      change.
+ *   2. CODEBASE_PROVIDER + CODEBASE_MODEL env (explicit override)
+ *   3. First provider in {@link AUTO_DETECT_ORDER} with a usable env key
+ *   4. Throw — caller should surface this as an onboarding hint
  *
  * pi-ai's `getEnvApiKey` already handles every quirky case: OAuth-only
  * providers, Vertex ADC, AWS multi-source. We just trust it.
  */
+
+const DEFAULT_PROXY_BASE = "https://codebase.foundation/api/cli";
 
 const AUTO_DETECT_ORDER: readonly KnownProvider[] = [
 	"anthropic",
@@ -37,12 +45,31 @@ const DEFAULT_MODELS: Partial<Record<KnownProvider, string>> = {
 export interface ResolvedConfig {
 	model: Model<string>;
 	apiKey: string;
-	source: "explicit" | "auto";
+	source: "explicit" | "auto" | "proxy";
 }
 
 export class ConfigError extends Error {}
 
-export function resolveConfig(env: NodeJS.ProcessEnv = process.env): ResolvedConfig {
+export interface ResolveConfigOptions {
+	env?: NodeJS.ProcessEnv;
+	credentials?: CredentialsStore;
+}
+
+export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOptions = process.env): ResolvedConfig {
+	const opts = isProcessEnv(envOrOpts) ? { env: envOrOpts } : envOrOpts;
+	const env = opts.env ?? process.env;
+	const credentials = opts.credentials ?? new CredentialsStore();
+
+	// 1. OAuth/API credentials → proxy mode (unless explicitly disabled).
+	const useProxy = env.CODEBASE_DISABLE_PROXY !== "1";
+	if (useProxy) {
+		const creds = credentials.load();
+		if (creds && !credentials.isExpired(creds)) {
+			const proxied = buildProxiedConfig(env, creds.accessToken);
+			if (proxied) return proxied;
+		}
+	}
+
 	const explicitProvider = env.CODEBASE_PROVIDER as KnownProvider | undefined;
 	const explicitModel = env.CODEBASE_MODEL;
 
@@ -77,8 +104,39 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): ResolvedCon
 	}
 
 	throw new ConfigError(
-		"No usable LLM provider found. Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, " +
+		"No usable LLM provider found. Sign in with `codebase auth login`, paste an API key with " +
+			"`codebase auth <key>`, or set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, " +
 			"GOOGLE_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, CEREBRAS_API_KEY, XAI_API_KEY, OPENROUTER_API_KEY. " +
 			"Or set CODEBASE_PROVIDER + CODEBASE_MODEL explicitly.",
 	);
+}
+
+/**
+ * Build a model whose baseUrl points at the codebase.foundation
+ * inference proxy. The proxy MUST mimic the chosen provider's wire
+ * protocol (Anthropic Messages, OpenAI Responses, etc.) — what we send
+ * here is identical to a direct call, the bearer token is the only
+ * thing that changes.
+ */
+function buildProxiedConfig(env: NodeJS.ProcessEnv, accessToken: string): ResolvedConfig | null {
+	const explicitProvider = env.CODEBASE_PROVIDER as KnownProvider | undefined;
+	const explicitModel = env.CODEBASE_MODEL;
+	const provider = explicitProvider ?? "anthropic";
+	const modelId = explicitModel ?? DEFAULT_MODELS[provider];
+	if (!modelId) return null;
+
+	const baseModel = getModel(provider, modelId as never) as Model<string> | undefined;
+	if (!baseModel) return null;
+
+	const proxyBase = (env.CODEBASE_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE).replace(/\/+$/, "");
+	const proxiedModel: Model<string> = { ...baseModel, baseUrl: proxyBase };
+	return { model: proxiedModel, apiKey: accessToken, source: "proxy" };
+}
+
+function isProcessEnv(value: NodeJS.ProcessEnv | ResolveConfigOptions): value is NodeJS.ProcessEnv {
+	if (!value) return true;
+	// ResolveConfigOptions has at most env/credentials properties; ProcessEnv has many.
+	const keys = Object.keys(value);
+	if (keys.length === 0) return true;
+	return !keys.every((k) => k === "env" || k === "credentials");
 }
