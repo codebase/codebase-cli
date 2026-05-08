@@ -358,7 +358,8 @@ What's shipped in-repo:
 What's deferred:
 
 - 🟡 Bun single-binary build — explicitly post-2.0. Path is documented in `docs/DISTRIBUTION.md §6`. The npm + Homebrew + curl|sh paths are first-class without it.
-- 🟡 `install.ps1` Windows installer — file exists from v1 but hasn't been rewritten for v2 yet. Lower priority since Windows users typically install via npm directly.
+
+✅ `install.ps1` is the Windows symmetric to `install.sh`: detects v1, removes it on confirm, checks Node ≥ 20 (winget/choco/scoop/Volta hint when missing), runs `npm install -g`, preserves `~\.codebase\` end-to-end. Both installers ship from the same canonical URLs (`codebase.foundation/install.sh` and `/install.ps1`).
 
 **Acceptance criteria status:**
 
