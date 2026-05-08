@@ -15,6 +15,7 @@ import { MessageList } from "./MessageList.js";
 import { Permission } from "./Permission.js";
 import { Status } from "./Status.js";
 import { TaskPanel } from "./TaskPanel.js";
+import { ToolPanel } from "./ToolPanel.js";
 import { UserQueryView } from "./UserQuery.js";
 
 export function App() {
@@ -157,6 +158,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				</Text>
 			</Box>
 			<MessageList messages={state.messages} streaming={state.streaming} />
+			<ToolPanel tools={state.tools} />
 			<TaskPanel tasks={tasks} />
 			{statusLines.length > 0 ? (
 				<Box flexDirection="column" paddingX={1} marginBottom={1}>
