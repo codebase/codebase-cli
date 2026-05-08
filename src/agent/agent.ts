@@ -9,6 +9,7 @@ import { FileStateCache } from "../tools/file-state-cache.js";
 import { buildTools } from "../tools/registry.js";
 import { TaskStore } from "../tools/task-store.js";
 import type { ToolContext } from "../tools/types.js";
+import { UserQueryStore } from "../user-queries/store.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
@@ -25,6 +26,7 @@ export interface AgentBundle {
 	source: ResolvedConfig["source"];
 	toolContext: ToolContext;
 	permissions: PermissionStore;
+	userQueries: UserQueryStore;
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
@@ -36,6 +38,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const systemPrompt = opts.systemPrompt ?? buildSystemPrompt(cwd);
 
 	const permissions = new PermissionStore();
+	const userQueries = new UserQueryStore();
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
 	const diagnostics = new DiagnosticsEngine({ cwd });
@@ -44,6 +47,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		cwd,
 		fileStateCache: new FileStateCache(),
 		tasks: new TaskStore(),
+		userQueries,
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
@@ -132,5 +136,5 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		});
 
 	void agentRef;
-	return { agent, model, source, toolContext, permissions, hooks, diagnostics, subscribe };
+	return { agent, model, source, toolContext, permissions, userQueries, hooks, diagnostics, subscribe };
 }

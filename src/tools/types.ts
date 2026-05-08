@@ -1,5 +1,6 @@
 import type { Agent, AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
+import type { UserQueryStore } from "../user-queries/store.js";
 import type { FileStateCache } from "./file-state-cache.js";
 import type { TaskStore } from "./task-store.js";
 
@@ -11,6 +12,7 @@ export interface ToolContext {
 	cwd: string;
 	fileStateCache: FileStateCache;
 	tasks: TaskStore;
+	userQueries: UserQueryStore;
 	/**
 	 * Spawn a fresh Agent for sub-tasks (used by dispatch_agent). The
 	 * factory inherits the parent's model and apiKey but takes its own

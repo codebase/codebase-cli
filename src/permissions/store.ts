@@ -36,6 +36,9 @@ const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
 	"get_task",
 	"create_task",
 	"update_task",
+	// ask_user is a question, not a mutation — the user-query UI gates the
+	// actual interaction so a permission prompt on top is redundant.
+	"ask_user",
 ]);
 
 /**

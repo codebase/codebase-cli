@@ -4,10 +4,12 @@ import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
 import type { PermissionRequest } from "../permissions/store.js";
+import type { UserQuery } from "../user-queries/store.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { Permission } from "./Permission.js";
 import { Status } from "./Status.js";
+import { UserQueryView } from "./UserQuery.js";
 
 export function App() {
 	const { exit } = useApp();
@@ -51,6 +53,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		initialState({ provider: bundle.model.provider, id: bundle.model.id, name: bundle.model.name }),
 	);
 	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
+	const [userQuery, setUserQuery] = useState<UserQuery | undefined>(bundle.userQueries.current());
 
 	useEffect(() => {
 		const unsubscribe = bundle.subscribe((event) => {
@@ -61,6 +64,10 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 
 	useEffect(() => {
 		return bundle.permissions.subscribe((req) => setPermRequest(req));
+	}, [bundle]);
+
+	useEffect(() => {
+		return bundle.userQueries.subscribe((q) => setUserQuery(q));
 	}, [bundle]);
 
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
@@ -98,6 +105,12 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				<Permission
 					request={permRequest}
 					onRespond={(choice) => bundle.permissions.respond(permRequest.id, choice)}
+				/>
+			) : userQuery ? (
+				<UserQueryView
+					query={userQuery}
+					onAnswer={(answer) => bundle.userQueries.respond(userQuery.id, answer)}
+					onCancel={() => bundle.userQueries.cancel(userQuery.id)}
 				/>
 			) : (
 				<Input disabled={busy} onSubmit={handleSubmit} onAbort={handleAbort} />

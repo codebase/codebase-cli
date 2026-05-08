@@ -1,4 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { createAskUser } from "./ask-user.js";
 import { createDispatchAgent } from "./dispatch-agent.js";
 import { createEditFile } from "./edit-file.js";
 import { createGitBranch } from "./git/branch.js";
@@ -42,6 +43,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createGitBranch(ctx),
 		createEnterWorktree(ctx),
 		createExitWorktree(ctx),
+		createAskUser(ctx),
 		createWebFetch(ctx),
 		createWebSearch(ctx),
 		createDispatchAgent(ctx),
