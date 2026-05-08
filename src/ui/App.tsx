@@ -1,9 +1,12 @@
 import { Box, Text, useApp } from "ink";
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
+import { BUILTIN_COMMANDS } from "../commands/builtins.js";
+import { CommandRegistry } from "../commands/registry.js";
 import type { PermissionRequest } from "../permissions/store.js";
+import type { ChatState } from "../types.js";
 import type { UserQuery } from "../user-queries/store.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
@@ -54,6 +57,13 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	);
 	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
 	const [userQuery, setUserQuery] = useState<UserQuery | undefined>(bundle.userQueries.current());
+	const [statusLines, setStatusLines] = useState<string[]>([]);
+
+	const registry = useMemo(() => {
+		const reg = new CommandRegistry();
+		reg.registerAll(BUILTIN_COMMANDS);
+		return reg;
+	}, []);
 
 	useEffect(() => {
 		const unsubscribe = bundle.subscribe((event) => {
@@ -72,7 +82,22 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
 
-	const handleSubmit = (text: string) => {
+	const handleSubmit = async (text: string) => {
+		// Slash commands first — they bypass the agent.
+		if (text.startsWith("/")) {
+			const result = await registry.dispatch(text, {
+				bundle,
+				state: state as ChatState,
+				emit: (line: string) => setStatusLines((prev) => [...prev, line]),
+				clearDisplay: () => dispatch({ type: "reset" }),
+				exit: onExit,
+				// Inject the registry so /help can list commands.
+				// biome-ignore lint/suspicious/noExplicitAny: cross-cutting injection
+				registry,
+			} as any);
+			if (result.handled) return;
+		}
+
 		dispatch({ type: "user-prompt", text });
 		bundle.agent.prompt(text).catch((err: unknown) => {
 			dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
@@ -100,6 +125,15 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				</Text>
 			</Box>
 			<MessageList messages={state.messages} streaming={state.streaming} />
+			{statusLines.length > 0 ? (
+				<Box flexDirection="column" paddingX={1} marginBottom={1}>
+					{statusLines.map((line, i) => (
+						<Text key={`${i}-${line.slice(0, 8)}`} dimColor>
+							{line}
+						</Text>
+					))}
+				</Box>
+			) : null}
 			<Status state={state} />
 			{permRequest ? (
 				<Permission
