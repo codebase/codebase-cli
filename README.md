@@ -1,25 +1,40 @@
 # Codebase CLI
 
-AI coding agent in your terminal. Reads your project, writes code, runs commands, searches the web. Works with any LLM provider or use ours.
+AI coding agent in your terminal. Reads your project, writes code, runs commands, searches the web. Works with any LLM provider — or sign in with codebase.foundation and we proxy inference for you.
+
+> **v2 (TypeScript)** — codebase-cli has been rewritten on top of the
+> [pi-mono](https://github.com/earendil-works/pi-mono) runtime. Existing
+> v1 (Go) users: the installer below auto-detects the old binary and
+> migrates your data. See [`docs/MIGRATION_v1_to_v2.md`](docs/MIGRATION_v1_to_v2.md).
 
 ## Install
 
-**macOS / Linux:**
+Requires **Node.js ≥ 20**. The one-liner installer prints a hint with Volta/fnm/nvm if Node is missing or too old.
+
+**macOS / Linux (one-liner — recommended):**
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/codebase-foundation/codebase-cli/main/install.sh | sh
+curl -fsSL https://codebase.foundation/install.sh | sh
 ```
+
+This detects an existing v1 binary, asks before removing it, then installs v2 via npm.
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/codebase-foundation/codebase-cli/main/install.ps1 | iex
+irm https://codebase.foundation/install.ps1 | iex
 ```
 
-**With Go:**
+**With npm (any platform, requires Node.js ≥ 20):**
 
 ```sh
-go install github.com/codebase-foundation/cli@latest
+npm install -g @codebase-foundation/cli
+```
+
+**With Homebrew:**
+
+```sh
+brew install codebase-foundation/codebase/codebase
 ```
 
 **From source:**
@@ -27,8 +42,9 @@ go install github.com/codebase-foundation/cli@latest
 ```sh
 git clone https://github.com/codebase-foundation/codebase-cli.git
 cd codebase-cli
-go build -o codebase .
-sudo mv codebase /usr/local/bin/   # or: mv codebase ~/.local/bin/
+npm install
+npm run build
+npm link        # symlinks `codebase` into your npm prefix
 ```
 
 After install, run `codebase` from any project directory.
@@ -38,10 +54,10 @@ After install, run `codebase` from any project directory.
 **Option 1: Login with Codebase (easiest)**
 
 ```sh
-codebase login
+codebase auth login
 ```
 
-Opens your browser, logs you into codebase.foundation, and you're ready. Uses our inference providers (MiniMax, Claude, etc.) with your account credits. No API keys needed.
+Opens your browser, logs you into codebase.foundation, and you're ready. Uses our inference providers (Claude, MiniMax, Qwen, etc.) with your account credits. No API keys needed.
 
 **Option 2: Bring your own API key**
 
@@ -148,19 +164,21 @@ Plus any tools from connected MCP servers.
 - **Glue models** — route cheap tasks to a fast model, save money
 - **Permission explainer** — risk-rated permission prompts (LOW/MEDIUM/HIGH)
 - **Multi-provider** — OpenAI, Anthropic, MiniMax, Groq, Ollama, any compatible endpoint
-- **Single binary** — no runtime dependencies, works on air-gapped systems
+- **OAuth-aware platform** — sign-in unlocks proxied inference and account-curated skills/templates/prompts
 
 ## Authentication
 
 ```sh
-codebase login          # browser OAuth — log in with Google, GitHub, or wallet
-codebase login --key cbk_xxx   # API key from dashboard (for SSH/headless)
-codebase logout         # revoke session
+codebase auth login            # browser OAuth — log in with Google, GitHub, or wallet
+codebase auth <cbk_xxx>        # save an API key from the dashboard (SSH / headless)
+codebase auth status           # show current sign-in
+codebase auth refresh          # force-refresh the access token
+codebase auth logout           # revoke session
 ```
 
-Credentials stored at `~/.codebase/credentials.json` (mode 0600).
+Credentials are stored at `~/.codebase/credentials.json` (mode 0600).
 
-When logged in, the CLI routes through `codebase.foundation` — you get access to all providers (MiniMax, Claude, Qwen, etc.) using your account credits. No API keys to manage.
+When logged in, the CLI routes through `codebase.foundation` — you get access to all providers (Claude, MiniMax, Qwen, etc.) using your account credits. No API keys to manage. Skill, template, and prompt definitions you author in the web app become available automatically (Phase 7+).
 
 ## MCP (External Tool Servers)
 
@@ -209,13 +227,14 @@ The CLI reads these files from your project root for context:
 ## Flags
 
 ```
-codebase                     # run in current directory
-codebase -dir /path/to/proj  # run in specific directory
-codebase -model claude-sonnet-4-20250514  # override model
-codebase -resume             # resume previous session
-codebase -version            # print version
-codebase login               # authenticate with codebase.foundation
-codebase logout              # revoke authentication
+codebase                            # run in current directory
+codebase --dir /path/to/proj        # run in specific directory
+codebase --model claude-sonnet-4-5  # override model
+codebase --resume                   # resume previous session
+codebase --version                  # print version
+codebase auth login                 # authenticate with codebase.foundation
+codebase auth logout                # revoke authentication
+codebase --headless "fix the build" # one-shot, no TUI
 ```
 
 ## Environment Variables

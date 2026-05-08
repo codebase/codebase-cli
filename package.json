@@ -1,15 +1,46 @@
 {
 	"name": "@codebase-foundation/cli",
 	"version": "2.0.0-pre.0",
-	"description": "Codebase CLI v2 — TypeScript agent on pi-mono runtime",
+	"description": "Codebase CLI — a TypeScript coding agent on the pi-mono runtime. OAuth-aware, any LLM provider, single install.",
+	"keywords": [
+		"ai",
+		"agent",
+		"cli",
+		"coding",
+		"claude",
+		"openai",
+		"anthropic",
+		"developer-tools",
+		"terminal",
+		"tui"
+	],
+	"homepage": "https://codebase.foundation",
+	"bugs": {
+		"url": "https://github.com/codebase-foundation/codebase-cli/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/codebase-foundation/codebase-cli.git"
+	},
+	"license": "MIT",
+	"author": "Codebase Foundation",
 	"type": "module",
-	"private": true,
 	"bin": {
 		"codebase": "bin/codebase"
 	},
 	"main": "./dist/cli.js",
+	"files": [
+		"bin/",
+		"dist/",
+		"LICENSE",
+		"README.md"
+	],
 	"engines": {
 		"node": ">=20.0.0"
+	},
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	},
 	"scripts": {
 		"dev": "tsx src/cli.tsx",
@@ -21,7 +52,9 @@
 		"format": "biome format --write src/",
 		"test": "vitest --run",
 		"test:watch": "vitest",
-		"check": "npm run typecheck && npm run lint && npm test"
+		"check": "npm run typecheck && npm run lint && npm test",
+		"prepublishOnly": "npm run clean && npm run check && npm run build",
+		"prepack": "npm run build"
 	},
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "0.74.0",
