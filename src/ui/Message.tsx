@@ -1,9 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
+import { wrapText } from "./wrap.js";
 
 interface MessageProps {
 	message: AgentMessage;
 	streaming?: boolean;
+	/** Terminal columns available to the message body, post-padding. Defaults to 80. */
+	width?: number;
 }
 
 const ROLE_STYLE = {
@@ -12,10 +15,15 @@ const ROLE_STYLE = {
 	toolResult: { accent: "magenta", label: "tool" },
 } as const;
 
-export function Message({ message, streaming }: MessageProps) {
+export function Message({ message, streaming, width = 80 }: MessageProps) {
 	const role = message.role;
 	const style = ROLE_STYLE[role as keyof typeof ROLE_STYLE];
 	if (!style) return null;
+
+	// The body sits inside `Box flexDirection=row` with a 1-col accent + 1-col
+	// gap, plus the parent App's paddingX of 1 each side. Reserve 4 cols so
+	// the wrapped text never tries to occupy the accent gutter.
+	const bodyWidth = Math.max(20, width - 4);
 
 	return (
 		<Box flexDirection="row" marginY={0}>
@@ -27,16 +35,16 @@ export function Message({ message, streaming }: MessageProps) {
 					{style.label}
 					{streaming ? " …" : ""}
 				</Text>
-				<MessageBody message={message} />
+				<MessageBody message={message} width={bodyWidth} />
 			</Box>
 		</Box>
 	);
 }
 
-function MessageBody({ message }: { message: AgentMessage }) {
+function MessageBody({ message, width }: { message: AgentMessage; width: number }) {
 	if (message.role === "user") {
 		const text = typeof message.content === "string" ? message.content : renderUserContent(message.content);
-		return <Text>{text}</Text>;
+		return <WrappedLines text={text} width={width} keyPrefix="user" />;
 	}
 
 	if (message.role === "assistant") {
@@ -45,25 +53,36 @@ function MessageBody({ message }: { message: AgentMessage }) {
 				{message.content.map((block, idx) => {
 					const key = blockKey(block, idx);
 					if (block.type === "text") {
-						return <Text key={key}>{block.text}</Text>;
+						return <WrappedLines key={key} text={block.text} width={width} keyPrefix={key} />;
 					}
 					if (block.type === "thinking") {
 						return (
-							<Text key={key} dimColor italic>
-								(thinking) {block.thinking}
-							</Text>
+							<WrappedLines
+								key={key}
+								text={`(thinking) ${block.thinking}`}
+								width={width}
+								keyPrefix={key}
+								dimColor
+								italic
+							/>
 						);
 					}
 					if (block.type === "toolCall") {
 						return (
-							<Text key={key} color="magenta">
-								→ {block.name}({summarizeArgs(block.arguments)})
-							</Text>
+							<WrappedLines
+								key={key}
+								text={`→ ${block.name}(${summarizeArgs(block.arguments)})`}
+								width={width}
+								keyPrefix={key}
+								color="magenta"
+							/>
 						);
 					}
 					return null;
 				})}
-				{message.errorMessage ? <Text color="red">! {message.errorMessage}</Text> : null}
+				{message.errorMessage ? (
+					<WrappedLines text={`! ${message.errorMessage}`} width={width} keyPrefix="err" color="red" />
+				) : null}
 			</>
 		);
 	}
@@ -72,10 +91,41 @@ function MessageBody({ message }: { message: AgentMessage }) {
 		const text = message.content
 			.map((block) => (block.type === "text" ? block.text : `[image:${block.mimeType}]`))
 			.join("");
-		return <Text color={message.isError ? "red" : undefined}>{text}</Text>;
+		return <WrappedLines text={text} width={width} keyPrefix="tool" color={message.isError ? "red" : undefined} />;
 	}
 
 	return null;
+}
+
+interface WrappedLinesProps {
+	text: string;
+	width: number;
+	keyPrefix: string;
+	color?: string;
+	dimColor?: boolean;
+	italic?: boolean;
+}
+
+/**
+ * Render text as N <Text> elements, one per pre-wrapped line. Stacks
+ * vertically inside the parent column-flex Box. Pre-wrap means the
+ * wraps happen at word boundaries, so when the user select-and-copies
+ * they get clean line endings — no mid-word breaks at column edges.
+ */
+function WrappedLines({ text, width, keyPrefix, color, dimColor, italic }: WrappedLinesProps) {
+	const lines = wrapText(text, width);
+	return (
+		<>
+			{lines.map((line, i) => (
+				// Wrapped lines have no per-line state — <Text> is pure-presentational —
+				// so reusing instances on re-wrap is harmless; index-as-key is fine here.
+				// biome-ignore lint/suspicious/noArrayIndexKey: stateless leaf, reuse is safe
+				<Text key={`${keyPrefix}:${i}`} color={color} dimColor={dimColor} italic={italic}>
+					{line.length === 0 ? " " : line}
+				</Text>
+			))}
+		</>
+	);
 }
 
 function renderUserContent(content: unknown): string {
