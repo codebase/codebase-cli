@@ -7,9 +7,18 @@ import { routeUserInput } from "../agent/router.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
 import type { PermissionRequest } from "../permissions/store.js";
+import {
+	buildAgentPrompt,
+	generatePlan,
+	generateQuestion,
+	MAX_QUESTIONS,
+	parseAnswer,
+	revisePlan,
+} from "../plan/flow.js";
+import { ANSWER_START_BUILDING, type QAPair } from "../plan/types.js";
 import type { Task } from "../tools/task-store.js";
 import type { ChatState } from "../types.js";
-import type { UserQuery } from "../user-queries/store.js";
+import { type UserQuery, UserQueryCancelled } from "../user-queries/store.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { Permission } from "./Permission.js";
@@ -121,8 +130,10 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				dispatch({ type: "chat-reply", text: route.reply });
 				return;
 			}
-			// Both "agent" and "plan" fall through to the agent for now;
-			// dedicated plan-mode UI lands in a follow-up commit.
+			if (route.kind === "plan") {
+				await runPlanFlow(text);
+				return;
+			}
 		} catch (err) {
 			// If the router itself crashes, don't drop the request — run the agent.
 			// We still log it as a non-fatal status line so users notice.
@@ -135,6 +146,72 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		bundle.agent.prompt(text).catch((err: unknown) => {
 			dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
 		});
+	};
+
+	/**
+	 * Plan-mode flow:
+	 *   1. Q&A loop (up to MAX_QUESTIONS, with the start-building escape).
+	 *   2. Generate plan, render as a synthetic assistant message so the
+	 *      user can read it in chat.
+	 *   3. Approve / Revise / Cancel via the UserQuery primitive.
+	 *   4. On approve, hand the original prompt + plan + Q&A to the agent
+	 *      with the canonical buildAgentPrompt wrapper so weaker models
+	 *      stick to the plan instead of re-planning mid-execution.
+	 */
+	const runPlanFlow = async (originalPrompt: string): Promise<void> => {
+		const qaHistory: QAPair[] = [];
+		try {
+			for (let i = 0; i < MAX_QUESTIONS; i++) {
+				const result = await generateQuestion(bundle.glue, originalPrompt, qaHistory, i);
+				if (result.done || !result.question) break;
+				const q = result.question;
+				const optionLabels = q.options?.map((o) => o.label);
+				const answer = await bundle.userQueries.ask({
+					question: q.question,
+					options: optionLabels,
+					placeholder: optionLabels ? `1-${optionLabels.length}, or type a free-form answer` : undefined,
+				});
+				const resolved = parseAnswer(answer, q);
+				if (resolved === ANSWER_START_BUILDING) break;
+				qaHistory.push({ question: q.question, answer: resolved });
+			}
+
+			let plan = await generatePlan(bundle.glue, originalPrompt, qaHistory);
+
+			while (true) {
+				dispatch({ type: "chat-reply", text: plan });
+				const decision = await bundle.userQueries.ask({
+					question: "Approve this plan and run it?",
+					options: ["Yes — run it", "Revise", "Cancel"],
+				});
+				const choice = matchOption(decision, ["Yes — run it", "Revise", "Cancel"]);
+				if (choice === "Yes — run it") {
+					const finalPrompt = buildAgentPrompt(originalPrompt, plan, qaHistory);
+					bundle.agent.prompt(finalPrompt).catch((err: unknown) => {
+						dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
+					});
+					return;
+				}
+				if (choice === "Cancel") {
+					dispatch({ type: "chat-reply", text: "(plan cancelled)" });
+					return;
+				}
+				const feedback = await bundle.userQueries.ask({
+					question: "What should change about the plan?",
+					placeholder: "describe the revision",
+				});
+				plan = await revisePlan(bundle.glue, plan, feedback);
+			}
+		} catch (err) {
+			if (err instanceof UserQueryCancelled) {
+				dispatch({ type: "chat-reply", text: "(plan cancelled)" });
+				return;
+			}
+			dispatch({
+				type: "error",
+				message: `plan flow failed: ${err instanceof Error ? err.message : String(err)}`,
+			});
+		}
 	};
 
 	const handleAbort = () => {
@@ -186,6 +263,26 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			)}
 		</Box>
 	);
+}
+
+/**
+ * Resolve a user's typed answer to one of the supplied options.
+ * Accepts the option label (case-insensitive), a 1-based index,
+ * or the leading word of the label. Falls back to the raw input
+ * if nothing matches — caller decides what to do with that.
+ */
+function matchOption(answer: string, options: string[]): string {
+	const trimmed = answer.trim();
+	const idx = Number.parseInt(trimmed, 10);
+	if (Number.isFinite(idx) && idx >= 1 && idx <= options.length) {
+		return options[idx - 1];
+	}
+	const lower = trimmed.toLowerCase();
+	for (const option of options) {
+		if (option.toLowerCase() === lower) return option;
+		if (option.toLowerCase().startsWith(lower) && lower.length >= 3) return option;
+	}
+	return trimmed;
 }
 
 function ExitOnCtrlC({ onExit }: { onExit: () => void }) {
