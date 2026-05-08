@@ -6,6 +6,7 @@ import { createGitCommit } from "./git/commit.js";
 import { createGitDiff } from "./git/diff.js";
 import { createGitLog } from "./git/log.js";
 import { createGitStatus } from "./git/status.js";
+import { createEnterWorktree, createExitWorktree } from "./git/worktree.js";
 import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
@@ -39,6 +40,8 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createGitLog(ctx),
 		createGitCommit(ctx),
 		createGitBranch(ctx),
+		createEnterWorktree(ctx),
+		createExitWorktree(ctx),
 		createWebFetch(ctx),
 		createWebSearch(ctx),
 		createDispatchAgent(ctx),
