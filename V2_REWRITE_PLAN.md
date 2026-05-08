@@ -123,7 +123,21 @@ Phases 0 and 1 run in parallel. Phases 2–8 are roughly sequential, but tools (
 
 **Acceptance:** A user prompt round-trips to a real provider, streaming output renders, Ctrl-C aborts cleanly. Faux provider reproduces 3 deterministic scenarios in vitest.
 
-### Phase 2 — Tools port + quality upgrade (3 weeks)
+### Phase 2 — Tools port + quality upgrade (3 weeks) — ✅ DONE 2026-05-07 (19/30 shipped, 11 deferred to owning phases)
+
+**Status:** 19 tools shipped at full quality (159 vitest tests). The other 11 wait for their owning phase rather than ship as cross-phase stubs (see `feedback_one_phase_at_a_time.md` in memory).
+
+Shipped this phase: `read_file`, `edit_file`, `multi_edit`, `write_file`, `notebook_edit`, `shell`, `list_files`, `glob`, `grep`, `git_status`, `git_diff`, `git_log`, `web_fetch`, `web_search`, `dispatch_agent`, `create_task`, `update_task`, `list_tasks`, `get_task`.
+
+Deferred (each lands with the phase that supplies its missing infrastructure):
+- Phase 3 (permission gate): `git_commit`, `git_branch`, `enter_worktree`, `exit_worktree`, `ask_user`
+- Phase 4 (plan flow): `enter_plan_mode`, `exit_plan_mode`
+- Phase 5 (MEMORY.md taxonomy): `save_memory`, `read_memory`
+- Phase 6/7 (settings + slash commands): `config`
+
+All audit-flagged critical bugs from the Go impl are closed: concurrent-modification detection on edits, BOM/CRLF preservation, shell streaming + disk spill on overflow, configurable timeout, image-as-ImageContent, .gitignore-aware glob/grep, file-mode preservation. Per-tool checklist below stayed the binding contract; the rest of this section is preserved as the contract that future tool ports (deferred set + any new tools) must also satisfy.
+
+---
 
 Port all **30 tools** from `internal/tools/` to TypeBox + pi-agent-core's `AgentTool` shape. **Do not port line-by-line — rewrite each tool against the quality checklist below.** A head-to-head comparison of our `read/edit/shell/grep/dispatch` against pi-mono and Claude Code (2026-05-07) found our architecture is solid but edge-case handling has critical gaps. Keep what's good; close the gaps using patterns from both references.
 
