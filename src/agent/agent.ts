@@ -28,6 +28,11 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		cwd,
 		fileStateCache: new FileStateCache(),
 		tasks: new TaskStore(),
+		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
+			new Agent({
+				initialState: { model, systemPrompt: subPrompt, tools: subTools },
+				getApiKey: () => apiKey,
+			}),
 	};
 
 	const agent = new Agent({
