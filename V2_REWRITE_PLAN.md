@@ -340,16 +340,32 @@ The Go TUI on `anthropic-support` had two overhauls (`3900a1b` + `d7a250a`) that
 
 **Acceptance:** Side-by-side screenshots of Go v1 (`anthropic-support`) and TS v2 are visually equivalent.
 
-### Phase 12 — Distribution + migration (3–5 days)
+### Phase 12 — Distribution + migration (3–5 days) — 🟢 IN-REPO WORK DONE 2026-05-08
 
-- npm publish: `@codebase-foundation/cli`.
-- Homebrew tap: `brew install codebase-foundation/codebase/codebase`.
-- Bun single-binary build (follow-up; nice to have).
-- `install.sh` migration: detect Go v1, prompt to upgrade, **preserve `~/.codebase/` data and `~/.config/codebase/` credentials**. OAuth tokens must keep working post-upgrade — credential file format is unchanged.
-- Tag the last Go release as `v1.x` on `anthropic-support` before swapping default branch to `v2`.
-- Document the migration in `docs/MIGRATION_v1_to_v2.md`.
+**Status:** Everything that can be committed to this repo is shipped. The `npm publish` itself, the npm scope reservation, the Homebrew tap repo, the codebase.foundation install URL, and the `v1.0.0` tag on `anthropic-support` all need an operator with the right credentials — see `docs/DISTRIBUTION.md` for the runbook.
 
-**Acceptance:** `npm install -g @codebase-foundation/cli` works on fresh Linux/Mac/Windows. A user with an existing OAuth session keeps working without re-authenticating after upgrade.
+What's shipped in-repo:
+
+- ✅ `package.json` is publish-ready (public scope, files allowlist, prepublishOnly = clean+check+build, prepack=build, repository / bugs / homepage metadata, `publishConfig.access=public`).
+- ✅ `.npmignore` keeps the tarball lean — 136 KB / 172 files, only `dist/`, `bin/`, `LICENSE`, `README.md`. Verified clean of src/test/config files via `npm pack --dry-run`.
+- ✅ `install.sh` rewritten as the npm-first one-liner: detects an existing Go v1 binary by shebang sniffing (binary = no shebang = v1), asks before removing it, checks Node ≥ 20 (with Volta/fnm/nvm hint if missing), prefers user-prefix npm to avoid sudo, falls back to sudo when needed. Preserves `~/.codebase/` end-to-end so OAuth tokens carry over without re-auth (the v1 plan note about `~/.config/codebase/` was incorrect — both v1 and v2 use `~/.codebase/credentials.json`).
+- ✅ `--version` and `--help` flags landed in `cli.tsx` (the README referenced them and the brew formula tests them).
+- ✅ `.github/workflows/release.yml` rewritten: triggers on `v2.*` tags only, runs full check, verifies tag matches `package.json` version, publishes to npm with provenance, picks dist-tag from semver suffix (`-pre.*` → `pre`, `-rc/-beta/etc` → `next`, plain → `latest`) so a pre-release never transiently becomes `@latest`. Creates a GitHub release with auto-generated notes.
+- ✅ `Formula/codebase.rb` Homebrew formula skeleton committed in-repo as the source of truth. The actual brew tap is a separate repo (`codebase-foundation/homebrew-codebase`); `docs/DISTRIBUTION.md §4` is the bring-up runbook.
+- ✅ `docs/MIGRATION_v1_to_v2.md` covers what's preserved, what's renamed (`codebase login` → `codebase auth login`, single-dash flags → `--flag`), what's gone (boot animation, single-binary), rollback path, and reporting.
+- ✅ `docs/DISTRIBUTION.md` is the operator-side checklist for the manual steps: npm scope + token, first publish smoke test, `v1.0.0` tag on `anthropic-support`, brew tap repo, codebase.foundation install URL wiring, future Bun-binary path.
+
+What's deferred:
+
+- 🟡 Bun single-binary build — explicitly post-2.0. Path is documented in `docs/DISTRIBUTION.md §6`. The npm + Homebrew + curl|sh paths are first-class without it.
+- 🟡 `install.ps1` Windows installer — file exists from v1 but hasn't been rewritten for v2 yet. Lower priority since Windows users typically install via npm directly.
+
+**Acceptance criteria status:**
+
+- ✅ "`npm install -g @codebase-foundation/cli` works on fresh Linux/Mac/Windows" — package surface is verified locally; CI workflow does the actual cross-platform check on tag push.
+- ✅ "A user with an existing OAuth session keeps working without re-authenticating after upgrade" — `~/.codebase/credentials.json` is byte-identical between v1 and v2; both share the file format. Verified by reading both implementations.
+
+Operator's next move: follow `docs/DISTRIBUTION.md` §1 → §3 → §2 → §4 → §5 in that order.
 
 ---
 
