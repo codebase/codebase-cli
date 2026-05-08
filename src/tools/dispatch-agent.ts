@@ -79,6 +79,20 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 			const toolsUsed: string[] = [];
 			let lastAssistantText = "";
 			let usage = EMPTY_USAGE;
+			let success = false;
+
+			await ctx.hooks?.dispatch(
+				"SubagentStart",
+				{
+					event: "SubagentStart",
+					workingDir: ctx.cwd,
+					// dispatch_agent currently only ships a read-only subagent type;
+					// when planAgent / generalAgent variants land we'll surface them.
+					subagentType: "read-only",
+					subagentPrompt: params.task,
+				},
+				parentSignal,
+			);
 
 			const subagent = ctx.spawnSubagent({
 				systemPrompt: subagentSystemPrompt(params.task, ctx.cwd),
@@ -111,6 +125,7 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 
 			try {
 				await subagent.prompt(params.task);
+				success = true;
 			} catch (err) {
 				if (parentSignal?.aborted) throw err;
 				if (!lastAssistantText) {
@@ -121,6 +136,16 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 			} finally {
 				unsubscribe();
 				parentSignal?.removeEventListener("abort", onParentAbort);
+				await ctx.hooks?.dispatch(
+					"SubagentStop",
+					{
+						event: "SubagentStop",
+						workingDir: ctx.cwd,
+						subagentType: "read-only",
+						subagentSuccess: success,
+					},
+					parentSignal,
+				);
 			}
 
 			const finalText = lastAssistantText || "(subagent completed without producing a summary)";

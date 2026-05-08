@@ -98,6 +98,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		userQueries,
 		planMode,
 		memory,
+		hooks,
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
@@ -119,7 +120,23 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		getApiKey: () => apiKey,
 		transformContext: async (messages, signal) => {
 			if (!compaction.needsCompaction(messages)) return messages;
+			await hooks.dispatch(
+				"PreCompact",
+				{ event: "PreCompact", workingDir: cwd, messageCount: messages.length },
+				signal,
+			);
 			const result = await compaction.compact(messages, signal);
+			await hooks.dispatch(
+				"PostCompact",
+				{
+					event: "PostCompact",
+					workingDir: cwd,
+					messageCount: result.messages.length,
+					collapsedMessageCount: result.details.collapsedMessageCount,
+					truncatedTokens: result.details.truncatedTokens,
+				},
+				signal,
+			);
 			return result.messages;
 		},
 		beforeToolCall: async (ctx, signal) => {

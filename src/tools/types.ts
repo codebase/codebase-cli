@@ -1,5 +1,6 @@
 import type { Agent, AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
+import type { HookManager } from "../hooks/manager.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { PlanModeStore } from "../plan/store.js";
 import type { UserQueryStore } from "../user-queries/store.js";
@@ -17,6 +18,12 @@ export interface ToolContext {
 	userQueries: UserQueryStore;
 	planMode: PlanModeStore;
 	memory: MemoryStore;
+	/**
+	 * User-defined hooks. Tools that care about lifecycle events (e.g.
+	 * dispatch_agent → SubagentStart/Stop) reach into this. Optional so
+	 * the test harness can leave it undefined.
+	 */
+	hooks?: HookManager;
 	/**
 	 * Spawn a fresh Agent for sub-tasks (used by dispatch_agent). The
 	 * factory inherits the parent's model and apiKey but takes its own
