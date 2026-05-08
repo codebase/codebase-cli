@@ -272,7 +272,11 @@ Port from `auth.go` (440 LOC) and `docs/cli-auth-plan.md`:
 
 **Acceptance:** `codebase auth login` opens browser, completes OAuth, persists credentials at mode 0600. Subsequent agent runs route through the proxy and show real usage. `codebase auth logout` revokes locally and (best-effort) server-side. Refresh on token expiry is silent.
 
-### Phase 7 — Slash commands + skills + output styles (3–4 days)
+### Phase 7 — Slash commands + skills + output styles (3–4 days) — 🟡 PARTIAL 2026-05-08
+
+**Status:** Slash-command registry + 7 builtins shipped (`/help`, `/clear`, `/compact`, `/session`/`/info`, `/model`, `/whoami`/`/status`, `/exit`/`/quit`). Skill loader (`~/.codebase/skills/*.md`) and output styles (Default/Explanatory/Learning) are deferred — they layer on top of the registry without changing it, so they can land independently.
+
+---
 
 - Port `commands.go`. Current set: `/help`, `/clear`, `/compact`, `/model`, `/session` (alias `/info`), `/copy`, `/theme`, `/diagnostics` (alias `/diag`), `/undo` (powered by FileHistory). Plus auth: `/login`, `/logout`, `/whoami`, `/keys`. Handler signature: `(ctx, args) => effect`.
 - **Add** skill loader: bundled + user-defined `.md` files in `~/.codebase/skills/`. Slash invocation expands to a system prompt prefix. Match Claude Code's `id@source` plugin format (e.g., `analyze@bundled`, `optimize@user`).
@@ -296,7 +300,11 @@ Port from `auth.go` (440 LOC) and `docs/cli-auth-plan.md`:
 
 **Acceptance:** A locally-installed MCP server (e.g., GitHub MCP via stdio) shows up as tools; agent can call them transparently. Running `codebase` from a directory open in VS Code detects the IDE and opens edits via the bridge.
 
-### Phase 10 — Headless + dotenv + filehistory (3–4 days)
+### Phase 10 — Headless + dotenv + filehistory (3–4 days) — 🟡 PARTIAL 2026-05-08
+
+**Status:** Headless run (`codebase run <prompt>`) ships streaming assistant text to stdout, tool noise to stderr, exit codes 0/1/130. DotEnv loader auto-applies cwd/.env then ~/.codebase/.env at process start, never overriding real env. FileHistory (undo) and the first-run setup wizard are deferred — both are pure-UX layers over already-stable subsystems.
+
+---
 
 - Port `headless.go`: `codebase run "<prompt>"` runs the agent loop without TUI, streams text + tool calls to stdout, debug to stderr. Required for CI/scripting.
 - Port `dotenv.go`: auto-load `.env` (cwd) then `~/.codebase/.env` at startup. Never override existing env vars. Support quoted values + `export` prefix.
