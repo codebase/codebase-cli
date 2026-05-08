@@ -1,10 +1,12 @@
 import { Box, Text, useApp } from "ink";
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
+import type { PermissionRequest } from "../permissions/store.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
+import { Permission } from "./Permission.js";
 import { Status } from "./Status.js";
 
 export function App() {
@@ -48,12 +50,17 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		reducer,
 		initialState({ provider: bundle.model.provider, id: bundle.model.id, name: bundle.model.name }),
 	);
+	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
 
 	useEffect(() => {
 		const unsubscribe = bundle.subscribe((event) => {
 			dispatch({ type: "agent-event", event });
 		});
 		return unsubscribe;
+	}, [bundle]);
+
+	useEffect(() => {
+		return bundle.permissions.subscribe((req) => setPermRequest(req));
 	}, [bundle]);
 
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
@@ -87,7 +94,14 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			</Box>
 			<MessageList messages={state.messages} streaming={state.streaming} />
 			<Status state={state} />
-			<Input disabled={busy} onSubmit={handleSubmit} onAbort={handleAbort} />
+			{permRequest ? (
+				<Permission
+					request={permRequest}
+					onRespond={(choice) => bundle.permissions.respond(permRequest.id, choice)}
+				/>
+			) : (
+				<Input disabled={busy} onSubmit={handleSubmit} onAbort={handleAbort} />
+			)}
 		</Box>
 	);
 }
