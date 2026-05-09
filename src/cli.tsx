@@ -9,6 +9,19 @@ import { App } from "./ui/App.js";
 // Auto-load .env files before any subsystem reads process.env.
 loadDotEnv();
 
+// Module-level consts referenced by `parseRunArgs`. Declared BEFORE
+// the dispatch block below — `const` lives in the temporal dead zone
+// until its declaration runs, so the dispatch can't reach `parseRunArgs`
+// → `VALID_OUTPUT_FORMATS` until both have initialized.
+interface ParsedRunArgs {
+	prompt?: string;
+	outputFormat?: HeadlessOutputFormat;
+	autoApprove?: boolean;
+	error?: string;
+}
+
+const VALID_OUTPUT_FORMATS = new Set<HeadlessOutputFormat>(["text", "json", "stream-json"]);
+
 const argv = process.argv.slice(2);
 
 if (argv[0] === "--version" || argv[0] === "-v") {
@@ -20,16 +33,16 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 } else if (argv[0] === "auth") {
 	runAuthSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "run") {
-	const { prompt, outputFormat, error } = parseRunArgs(argv.slice(1));
+	const { prompt, outputFormat, autoApprove, error } = parseRunArgs(argv.slice(1));
 	if (error) {
 		process.stderr.write(`${error}\n`);
 		process.exit(2);
 	}
 	if (!prompt) {
-		process.stderr.write("usage: codebase run [--output text|json|stream-json] <prompt>\n");
+		process.stderr.write("usage: codebase run [--output text|json|stream-json] [--auto-approve] <prompt>\n");
 		process.exit(2);
 	}
-	runHeadless({ prompt, outputFormat }).then((code) => process.exit(code));
+	runHeadless({ prompt, outputFormat, autoApprove }).then((code) => process.exit(code));
 } else {
 	const instance = render(<App />);
 	instance.waitUntilExit().catch(() => {
@@ -37,17 +50,10 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	});
 }
 
-interface ParsedRunArgs {
-	prompt?: string;
-	outputFormat?: HeadlessOutputFormat;
-	error?: string;
-}
-
-const VALID_OUTPUT_FORMATS = new Set<HeadlessOutputFormat>(["text", "json", "stream-json"]);
-
 function parseRunArgs(args: string[]): ParsedRunArgs {
 	const remaining: string[] = [];
 	let outputFormat: HeadlessOutputFormat | undefined;
+	let autoApprove = false;
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		if (a === "--output" || a === "-o") {
@@ -67,10 +73,14 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 			outputFormat = value as HeadlessOutputFormat;
 			continue;
 		}
+		if (a === "--auto-approve" || a === "--yes" || a === "-y") {
+			autoApprove = true;
+			continue;
+		}
 		remaining.push(a);
 	}
 	const prompt = remaining.join(" ").trim();
-	return { prompt: prompt || undefined, outputFormat };
+	return { prompt: prompt || undefined, outputFormat, autoApprove };
 }
 
 function readPackageVersion(): string {

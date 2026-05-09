@@ -187,11 +187,19 @@ function invokeCli({ tmpProject, prompt }) {
 			// full control; this flag is a convenience.
 			env.CODEBASE_MODEL = modelOverride;
 		}
-		const child = spawn(process.execPath, [cliPath, "run", "--output", "json", prompt], {
-			cwd: tmpProject,
-			env,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		// --auto-approve is non-negotiable for the bench: there's no human
+		// at the terminal to answer permission prompts, and without it the
+		// agent hangs the moment a write tool fires. The harness is the
+		// trust boundary; verify.sh is what catches misuse.
+		const child = spawn(
+			process.execPath,
+			[cliPath, "run", "--output", "json", "--auto-approve", prompt],
+			{
+				cwd: tmpProject,
+				env,
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		);
 
 		let stdout = "";
 		let stderr = "";

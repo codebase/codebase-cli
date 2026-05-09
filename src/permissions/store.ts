@@ -133,6 +133,17 @@ export interface PermissionStoreOptions {
 	 * without touching the read-only allowlist.
 	 */
 	denyPatterns?: readonly string[];
+	/**
+	 * When true, every tool call that would otherwise prompt the user
+	 * gets auto-approved instead. Used by headless / CI / bench runs
+	 * where there's no human at the terminal to answer the prompt and
+	 * the alternative is to hang forever.
+	 *
+	 * Deny patterns still apply and still block. The user is opting
+	 * into "allow everything except deny", not "allow literally
+	 * everything".
+	 */
+	autoApprove?: boolean;
 }
 
 /**
@@ -161,16 +172,19 @@ export class PermissionStore {
 	private counter = 0;
 	private readonly matchAllow: (toolName: string, args: unknown) => boolean;
 	private readonly matchDeny: (toolName: string, args: unknown) => boolean;
+	private readonly autoApprove: boolean;
 
 	constructor(options: PermissionStoreOptions = {}) {
 		this.matchAllow = compileMatcher(options.allowPatterns ?? []);
 		this.matchDeny = compileMatcher(options.denyPatterns ?? []);
+		this.autoApprove = options.autoApprove ?? false;
 	}
 
 	async evaluate(toolName: string, args: unknown): Promise<Decision> {
 		if (this.matchDeny(toolName, args)) return "block";
 		if (this.shouldAutoAllow(toolName, args)) return "allow";
 		if (this.matchAllow(toolName, args)) return "allow";
+		if (this.autoApprove) return "allow";
 
 		return new Promise((resolve) => {
 			const request: PermissionRequest = {

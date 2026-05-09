@@ -45,6 +45,14 @@ export interface CreateAgentOptions {
 	systemPrompt?: string;
 	/** When true, attempt to resume the previous session for this cwd. Default false. */
 	resume?: boolean;
+	/**
+	 * When true, every tool call that would prompt the user gets
+	 * auto-approved instead. Set this only when there's no human at
+	 * the terminal — `codebase run --auto-approve …`, bench harnesses,
+	 * CI. The TUI never sets it; auto-approve in interactive mode
+	 * defeats the entire permission system.
+	 */
+	autoApprove?: boolean;
 }
 
 export interface AgentBundle {
@@ -73,6 +81,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const permissions = new PermissionStore({
 		allowPatterns: config.allowPatterns(),
 		denyPatterns: config.denyPatterns(),
+		autoApprove: opts.autoApprove,
 	});
 	const userQueries = new UserQueryStore();
 	const planMode = new PlanModeStore();

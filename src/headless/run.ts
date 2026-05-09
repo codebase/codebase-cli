@@ -19,6 +19,12 @@ export interface HeadlessOptions {
 	resume?: boolean;
 	/** Output shape. Default `text`. */
 	outputFormat?: HeadlessOutputFormat;
+	/**
+	 * Auto-approve every permission prompt. Required for any non-
+	 * interactive use — without it the agent hangs forever the first
+	 * time a write tool fires, since there's no TUI to answer.
+	 */
+	autoApprove?: boolean;
 	stdout?: (chunk: string) => void;
 	stderr?: (chunk: string) => void;
 }
@@ -50,7 +56,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 
 	let bundle: AgentBundle;
 	try {
-		bundle = createAgent({ resume: opts.resume });
+		bundle = createAgent({ resume: opts.resume, autoApprove: opts.autoApprove });
 	} catch (e) {
 		const msg = e instanceof ConfigError ? e.message : e instanceof Error ? e.message : String(e);
 		err(`error: ${msg}\n`);
