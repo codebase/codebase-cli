@@ -52,6 +52,8 @@
 		"test": "vitest --run",
 		"test:watch": "vitest",
 		"check": "npm run typecheck && npm run lint && npm test",
+		"bench": "node bench/run.mjs",
+		"bench:report": "node bench/aggregate.mjs",
 		"prepublishOnly": "npm run clean && npm run check && npm run build",
 		"prepack": "npm run build"
 	},

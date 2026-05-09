@@ -1,0 +1,1 @@
+The greeting in src/index.ts has a typo: it says "helo world" instead of "hello world". Fix it.
