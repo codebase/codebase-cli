@@ -4,6 +4,7 @@ import { render } from "ink";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
+import { runProjectSubcommand } from "./projects/cli.js";
 import { App } from "./ui/App.js";
 
 // Auto-load .env files before any subsystem reads process.env.
@@ -32,6 +33,8 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	process.exit(0);
 } else if (argv[0] === "auth") {
 	runAuthSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "project" || argv[0] === "projects") {
+	runProjectSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "run") {
 	const { prompt, outputFormat, autoApprove, error } = parseRunArgs(argv.slice(1));
 	if (error) {
@@ -111,6 +114,8 @@ function printHelp(): void {
 			"  codebase auth status         show current sign-in",
 			"  codebase auth refresh        force-refresh the access token",
 			"  codebase auth <cbk_xxx>      save a manual API key (for SSH / headless)",
+			"  codebase project list        list your projects on codebase.design",
+			"  codebase project pull <id>   download a project as a ZIP",
 			"  codebase --version           print version and exit",
 			"  codebase --help              show this message",
 			"",
