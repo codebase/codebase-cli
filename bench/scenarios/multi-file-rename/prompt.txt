@@ -1,0 +1,1 @@
+Rename the function `parseDate` (defined in src/parse.ts) to `parseTimestamp`. Update every reference across the codebase so nothing still calls it by the old name. Don't change the function's behavior — only the name.

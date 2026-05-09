@@ -1,0 +1,1 @@
+There's no test file for the functions in src/math.ts. Please write tests for `add` and `multiply` in src/math.test.ts using vitest's `describe` / `it` / `expect` API. Cover the obvious cases (positive numbers, zero, negatives) — three or four tests is enough. Don't run the tests; just write the file.

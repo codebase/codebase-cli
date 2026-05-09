@@ -32,7 +32,7 @@
  * runner does not log in for you — that's a one-time setup step.
  */
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -266,18 +266,13 @@ function collectToolNames(agentJson) {
 
 function listScenarios() {
 	if (!existsSync(SCENARIOS_DIR)) return [];
-	const entries = readdirSyncSafe(SCENARIOS_DIR);
-	return entries
-		.filter((name) => existsSync(join(SCENARIOS_DIR, name, "prompt.txt")))
-		.sort();
-}
-
-function readdirSyncSafe(dir) {
+	let entries;
 	try {
-		return require("node:fs").readdirSync(dir);
+		entries = readdirSync(SCENARIOS_DIR);
 	} catch {
 		return [];
 	}
+	return entries.filter((name) => existsSync(join(SCENARIOS_DIR, name, "prompt.txt"))).sort();
 }
 
 function appendJsonl(path, record) {

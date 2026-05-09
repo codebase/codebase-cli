@@ -1,0 +1,1 @@
+Read the source files in this project and explain what the codebase does. Specifically: what does src/index.ts do, and how does src/auth.ts relate to it? Don't change any files — just explain.
