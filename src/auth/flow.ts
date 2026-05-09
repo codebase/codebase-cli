@@ -228,10 +228,28 @@ function tokenToCredentials(token: TokenResponse, config: OAuthConfig): Credenti
  *
  * Returns ready-to-save Credentials.
  */
+export interface RunOAuthLoginOptions {
+	/** Override the browser-open path (tests). */
+	openBrowserFn?: (url: string) => Promise<void>;
+	/**
+	 * Notification that the user must complete sign-in manually —
+	 * either because the session is headless (SSH / no DISPLAY) or
+	 * because the auto-open command failed. The local callback server
+	 * STAYS RUNNING after this fires so the user can paste the URL
+	 * into a browser themselves and the flow completes once the
+	 * callback hits 127.0.0.1.
+	 */
+	onManualUrl?: (url: string, reason: string) => void;
+}
+
 export async function runOAuthLogin(
 	config: OAuthConfig,
-	openBrowserFn: (url: string) => Promise<void> = openBrowser,
+	options: RunOAuthLoginOptions | ((url: string) => Promise<void>) = {},
 ): Promise<Credentials> {
+	// Backwards-compat: callers used to pass a bare openBrowserFn.
+	const opts: RunOAuthLoginOptions = typeof options === "function" ? { openBrowserFn: options } : options;
+	const openBrowserFn = opts.openBrowserFn ?? openBrowser;
+
 	const verifier = generateCodeVerifier();
 	const challenge = generateCodeChallenge(verifier);
 	const state = generateState();
@@ -247,18 +265,33 @@ export async function runOAuthLogin(
 
 	const callbackPromise = awaitCallback(server, state, config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-	try {
-		await openBrowserFn(authUrl);
-	} catch (err) {
-		server.close();
-		throw new Error(
-			`couldn't open browser automatically: ${err instanceof Error ? err.message : String(err)}. ` +
-				`Open this URL manually:\n${authUrl}`,
-		);
+	if (isHeadlessSession()) {
+		opts.onManualUrl?.(authUrl, "headless session detected — open the URL manually in your browser");
+	} else {
+		try {
+			await openBrowserFn(authUrl);
+		} catch (err) {
+			// DON'T tear down the server: the user can still complete
+			// sign-in by opening the URL themselves. Surface the URL via
+			// onManualUrl and continue waiting for the callback.
+			opts.onManualUrl?.(authUrl, `auto-open failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
 	}
 
 	const { code } = await callbackPromise;
 	return exchangeCode(config, { code, codeVerifier: verifier, redirectUri });
+}
+
+/**
+ * Heuristic: is this process running somewhere that obviously can't
+ * launch a GUI browser? We bail out of the auto-open attempt instead
+ * of letting xdg-open ENOENT or `open` hang on a headless macOS box.
+ */
+function isHeadlessSession(): boolean {
+	const env = process.env;
+	if (env.SSH_CONNECTION || env.SSH_TTY || env.SSH_CLIENT) return true;
+	if (process.platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY) return true;
+	return false;
 }
 
 /** Best-effort browser open. Falls back to printing the URL on platforms we can't detect. */

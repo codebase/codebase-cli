@@ -40,8 +40,14 @@ type Mode =
 	| { kind: "byok-key"; provider: ProviderChoice; buffer: string }
 	| { kind: "error"; message: string };
 
+interface ManualUrlInfo {
+	url: string;
+	reason: string;
+}
+
 export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_BASE }: FirstRunSetupProps) {
 	const [mode, setMode] = useState<Mode>({ kind: "menu" });
+	const [manualUrl, setManualUrl] = useState<ManualUrlInfo | undefined>(undefined);
 	const credStore = useMemo(() => store ?? new CredentialsStore(), [store]);
 
 	useEffect(() => {
@@ -50,7 +56,12 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 		(async () => {
 			try {
 				const config = oauthConfigForBase(authBase);
-				const creds = await runOAuthLogin(config);
+				const creds = await runOAuthLogin(config, {
+					onManualUrl: (url, reason) => {
+						if (cancelled) return;
+						setManualUrl({ url, reason });
+					},
+				});
 				if (cancelled) return;
 				credStore.save({
 					accessToken: creds.accessToken,
@@ -65,6 +76,7 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 			} catch (err) {
 				if (cancelled) return;
 				setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+				setManualUrl(undefined);
 			}
 		})();
 		return () => {
@@ -151,12 +163,12 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 			<Box marginBottom={1}>
 				<Text dimColor>Pick how you want to power the agent. You can change this later via `codebase auth`.</Text>
 			</Box>
-			{renderBody(mode, authBase)}
+			{renderBody(mode, authBase, manualUrl)}
 		</Box>
 	);
 }
 
-function renderBody(mode: Mode, authBase: string): React.ReactNode {
+function renderBody(mode: Mode, authBase: string, manualUrl: ManualUrlInfo | undefined): React.ReactNode {
 	if (mode.kind === "menu") {
 		return (
 			<Box flexDirection="column">
@@ -178,6 +190,28 @@ function renderBody(mode: Mode, authBase: string): React.ReactNode {
 		);
 	}
 	if (mode.kind === "oauth-running") {
+		if (manualUrl) {
+			return (
+				<Box flexDirection="column">
+					<Text bold color="yellow">
+						Open this URL in your browser to sign in:
+					</Text>
+					<Box marginTop={1}>
+						<Text dimColor>({manualUrl.reason})</Text>
+					</Box>
+					<Box marginTop={1}>
+						<Text>{osc8Link(manualUrl.url, "→ Click here to sign in")}</Text>
+					</Box>
+					<Box marginTop={1} flexDirection="column">
+						<Text dimColor>Or copy the URL below and paste it into a browser:</Text>
+						<Text>{manualUrl.url}</Text>
+					</Box>
+					<Box marginTop={1}>
+						<Text dimColor>Waiting for the browser to redirect back here. (Ctrl-C to cancel.)</Text>
+					</Box>
+				</Box>
+			);
+		}
 		return (
 			<Box flexDirection="column">
 				<Text>
@@ -247,6 +281,19 @@ function renderBody(mode: Mode, authBase: string): React.ReactNode {
 
 // Mirrors src/auth/cli.ts's defaultOAuthConfig — see that file for the
 // canonical shape and the OAuth alignment audit.
+/**
+ * Wrap text in an OSC 8 hyperlink escape so it renders as a single
+ * clickable element regardless of how the terminal wraps the visible
+ * text. Modern terminals (iTerm2, recent Terminal.app, Kitty,
+ * Wezterm, Alacritty, VSCode terminal) honor this; older terminals
+ * just see the display text. We always render the bare URL on a
+ * separate line below as a copy-paste fallback.
+ */
+function osc8Link(url: string, displayText: string): string {
+	const ESC = "";
+	return `${ESC}]8;;${url}${ESC}\\${displayText}${ESC}]8;;${ESC}\\`;
+}
+
 function oauthConfigForBase(base: string): OAuthConfig {
 	const trimmed = base.replace(/\/+$/, "");
 	return {
