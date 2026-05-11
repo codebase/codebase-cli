@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
 	backspace,
 	deleteForward,
@@ -37,6 +37,19 @@ interface InputProps {
 
 const MAX_SUGGESTIONS = 6;
 
+const PLACEHOLDERS = [
+	"Ask anything · / for commands",
+	"Try /help to see what I can do",
+	"Tell me what to build · / for commands",
+	"Paste a stack trace, a TODO, or a question",
+	"What are we working on?",
+];
+
+/** Pick a placeholder once per Input mount so it stays put for the session. */
+function pickPlaceholder(): string {
+	return PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)];
+}
+
 /**
  * Single-line input with Emacs / readline editing. Cursor positioning,
  * kill ring with Ctrl-K/U/W/Y, and Ctrl-Z undo. Stay in tight feedback
@@ -67,6 +80,8 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 	 */
 	const [historyIdx, setHistoryIdx] = useState(-1);
 	const [liveBuffer, setLiveBuffer] = useState<string | null>(null);
+	// Stable per-mount placeholder so the hint doesn't flicker between renders.
+	const placeholderRef = useRef<string>(pickPlaceholder());
 
 	// Autocomplete only fires when the buffer starts with `/` AND there's
 	// no whitespace yet (so once the user types a space, they're past the
@@ -201,7 +216,16 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 			) : null}
 			<Box paddingX={1}>
 				<Text color={disabled ? "gray" : "cyan"}>{disabled ? "·" : ">"} </Text>
-				{disabled ? <Text>{state.buffer}</Text> : <RenderedBuffer buffer={state.buffer} cursor={state.cursor} />}
+				{disabled ? (
+					<Text>{state.buffer}</Text>
+				) : state.buffer.length === 0 ? (
+					<>
+						<Text color="cyan">▎</Text>
+						<Text dimColor>{placeholderRef.current}</Text>
+					</>
+				) : (
+					<RenderedBuffer buffer={state.buffer} cursor={state.cursor} />
+				)}
 			</Box>
 		</Box>
 	);
