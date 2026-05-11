@@ -73,8 +73,10 @@ function MessageBody({
 	tools?: ReadonlyMap<string, ToolExecution>;
 }) {
 	if (message.role === "user") {
-		const text = typeof message.content === "string" ? message.content : renderUserContent(message.content);
-		return <WrappedLines text={text} width={width} keyPrefix="user" />;
+		if (typeof message.content === "string") {
+			return <WrappedLines text={message.content} width={width} keyPrefix="user" />;
+		}
+		return <UserBlocks blocks={message.content} width={width} />;
 	}
 
 	if (message.role === "assistant") {
@@ -484,13 +486,45 @@ function WrappedLines({ text, width, keyPrefix, color, dimColor, italic }: Wrapp
 	);
 }
 
-function renderUserContent(content: unknown): string {
-	if (!Array.isArray(content)) return "";
-	return content
-		.map((block: { type: string; text?: string; mimeType?: string }) =>
-			block.type === "text" ? (block.text ?? "") : `[image:${block.mimeType ?? "?"}]`,
-		)
-		.join("");
+/**
+ * Render an array-content user message — typically text + one or more
+ * image attachments. Text blocks pass through `WrappedLines`; image
+ * blocks render as a dim "image (PNG, 142 KB)" line so the user can
+ * see at a glance that an image was sent.
+ */
+function UserBlocks({
+	blocks,
+	width,
+}: {
+	blocks: unknown;
+	width: number;
+}) {
+	if (!Array.isArray(blocks)) return null;
+	const rows: ReactNode[] = [];
+	for (let i = 0; i < blocks.length; i++) {
+		const b = blocks[i] as { type: string; text?: string; mimeType?: string; data?: string };
+		if (b.type === "text" && b.text) {
+			rows.push(<WrappedLines key={`u-t-${i}`} text={b.text} width={width} keyPrefix={`u-t-${i}`} />);
+			continue;
+		}
+		if (b.type === "image") {
+			const subtype = (b.mimeType ?? "image/?").split("/")[1]?.toUpperCase() ?? "?";
+			const size = b.data ? formatBytes(Math.floor((b.data.length * 3) / 4)) : "";
+			rows.push(
+				<Text key={`u-i-${i}`} dimColor>
+					📷 image ({subtype}
+					{size ? `, ${size}` : ""})
+				</Text>,
+			);
+		}
+	}
+	return <>{rows}</>;
+}
+
+function formatBytes(n: number): string {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+	return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /**
