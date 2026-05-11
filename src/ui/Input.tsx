@@ -27,6 +27,12 @@ interface InputProps {
 	onAbort?: () => void;
 	/** Slash command list for autocomplete. Optional; without it, autocomplete is off. */
 	commands?: readonly SlashCommandSuggestion[];
+	/**
+	 * Prior user inputs, chronological (oldest first). Navigated with ↑/↓
+	 * when the slash-command popup is closed and the cursor is at the
+	 * start of the buffer (or the buffer is empty).
+	 */
+	history?: readonly string[];
 }
 
 const MAX_SUGGESTIONS = 6;
@@ -49,9 +55,18 @@ const MAX_SUGGESTIONS = 6;
  *   Ctrl-Z          undo
  *   Ctrl-C          abort (busy → cancel turn, idle → exit app)
  */
-export function Input({ disabled, onSubmit, onAbort, commands }: InputProps) {
+export function Input({ disabled, onSubmit, onAbort, commands, history }: InputProps) {
 	const [state, setState] = useState(initialInputState());
 	const [suggestionIdx, setSuggestionIdx] = useState(0);
+	/**
+	 * History cursor:
+	 *   -1            → live buffer (no history navigation in progress)
+	 *   0..N-1        → indexing from the newest backwards (0 = most recent)
+	 * We snapshot the live buffer the first time the user steps into
+	 * history so ↓-past-newest returns to whatever they were typing.
+	 */
+	const [historyIdx, setHistoryIdx] = useState(-1);
+	const [liveBuffer, setLiveBuffer] = useState<string | null>(null);
 
 	// Autocomplete only fires when the buffer starts with `/` AND there's
 	// no whitespace yet (so once the user types a space, they're past the
@@ -95,6 +110,36 @@ export function Input({ disabled, onSubmit, onAbort, commands }: InputProps) {
 			}
 		}
 
+		// History navigation: only when autocomplete is closed and the
+		// cursor sits at the start of the buffer (or buffer is empty).
+		// That way ↑/↓ in the middle of a long line still behave as
+		// cursor moves, matching shell readline.
+		if (history && history.length > 0 && !autocompleteActive && state.cursor === 0) {
+			if (key.upArrow) {
+				const nextIdx = historyIdx < 0 ? 0 : Math.min(historyIdx + 1, history.length - 1);
+				if (historyIdx < 0) setLiveBuffer(state.buffer);
+				const entry = history[history.length - 1 - nextIdx] ?? "";
+				setHistoryIdx(nextIdx);
+				setState({ ...initialInputState(), buffer: entry, cursor: entry.length });
+				return;
+			}
+			if (key.downArrow) {
+				if (historyIdx < 0) return; // already at live buffer
+				const nextIdx = historyIdx - 1;
+				if (nextIdx < 0) {
+					const restored = liveBuffer ?? "";
+					setHistoryIdx(-1);
+					setLiveBuffer(null);
+					setState({ ...initialInputState(), buffer: restored, cursor: restored.length });
+				} else {
+					const entry = history[history.length - 1 - nextIdx] ?? "";
+					setHistoryIdx(nextIdx);
+					setState({ ...initialInputState(), buffer: entry, cursor: entry.length });
+				}
+				return;
+			}
+		}
+
 		if (key.return) {
 			// Enter on a single-suggestion autocomplete still submits — if
 			// the user wanted to complete, they'd Tab. If they hit Enter on
@@ -106,6 +151,8 @@ export function Input({ disabled, onSubmit, onAbort, commands }: InputProps) {
 				onSubmit(trimmed);
 				setState(initialInputState());
 				setSuggestionIdx(0);
+				setHistoryIdx(-1);
+				setLiveBuffer(null);
 			}
 			return;
 		}
@@ -136,6 +183,13 @@ export function Input({ disabled, onSubmit, onAbort, commands }: InputProps) {
 		// Printable text — Ink's useInput delivers individual chars (or pasted runs)
 		if (input && !key.ctrl && !key.meta) {
 			setSuggestionIdx(0);
+			// Once the user starts editing on top of a recalled history
+			// entry, snap out of history mode — the entry is now their
+			// own buffer and ↓ shouldn't try to bring it back.
+			if (historyIdx >= 0) {
+				setHistoryIdx(-1);
+				setLiveBuffer(null);
+			}
 			setState(insertChar(state, input));
 		}
 	});

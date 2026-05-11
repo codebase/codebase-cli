@@ -95,6 +95,19 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		[registry],
 	);
 
+	const inputHistory = useMemo(() => {
+		const out: string[] = [];
+		for (const m of state.messages) {
+			if (m.role !== "user") continue;
+			const text = typeof m.content === "string" ? m.content : extractUserText(m.content);
+			if (text.trim().length === 0) continue;
+			// Collapse adjacent duplicates so ↑↑↑ doesn't dwell on a repeat.
+			if (out[out.length - 1] === text) continue;
+			out.push(text);
+		}
+		return out;
+	}, [state.messages]);
+
 	useEffect(() => {
 		const unsubscribe = bundle.subscribe((event) => {
 			dispatch({ type: "agent-event", event });
@@ -279,10 +292,25 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					onCancel={() => bundle.userQueries.cancel(userQuery.id)}
 				/>
 			) : (
-				<Input disabled={busy} onSubmit={handleSubmit} onAbort={handleAbort} commands={commandSuggestions} />
+				<Input
+					disabled={busy}
+					onSubmit={handleSubmit}
+					onAbort={handleAbort}
+					commands={commandSuggestions}
+					history={inputHistory}
+				/>
 			)}
 		</Box>
 	);
+}
+
+/** Extract the user-visible text from a content array (image messages). */
+function extractUserText(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((b: { type?: string }) => b?.type === "text")
+		.map((b: { text?: string }) => b.text ?? "")
+		.join("");
 }
 
 /**
