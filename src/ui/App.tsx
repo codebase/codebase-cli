@@ -161,7 +161,10 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				bundle,
 				state: state as ChatState,
 				emit: appendStatus,
-				clearDisplay: () => dispatch({ type: "reset" }),
+				clearDisplay: () => {
+					dispatch({ type: "reset" });
+					setStatusLines([]);
+				},
 				exit: onExit,
 				// Inject the registry so /help can list commands.
 				// biome-ignore lint/suspicious/noExplicitAny: cross-cutting injection
