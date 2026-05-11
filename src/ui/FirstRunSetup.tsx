@@ -34,7 +34,7 @@ interface FirstRunSetupProps {
 }
 
 const MENU_OPTIONS = [
-	{ key: "oauth", label: "Sign in with codebase.design", hint: "OAuth via browser · free credits · curated skills" },
+	{ key: "oauth", label: "Login to Codebase", hint: "free credits · Codebase Auto model · curated skills" },
 	{ key: "byok", label: "Bring your own LLM key", hint: "paste an Anthropic / OpenAI / Groq / etc. key" },
 	{ key: "quit", label: "Quit", hint: "exit the wizard" },
 ] as const;

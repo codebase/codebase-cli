@@ -1,9 +1,13 @@
+import { basename } from "node:path";
 import { Box, Text } from "ink";
 import type { ChatState } from "../types.js";
 import { Throbber } from "./Throbber.js";
 
 interface StatusProps {
 	state: ChatState;
+	cwd?: string;
+	/** Context window in tokens; used to render the % used. */
+	contextWindow?: number;
 }
 
 const STATUS_LABEL: Record<ChatState["status"], string> = {
@@ -24,11 +28,21 @@ const STATUS_COLOR: Record<ChatState["status"], string> = {
 	error: "red",
 };
 
-export function Status({ state }: StatusProps) {
+/**
+ * Bottom status line — matches Claude Code's pattern: spinner + state
+ * on the left, model + cwd + context % + cost on the right. Stays on
+ * one row in normal terminal widths; the cwd basename is the only
+ * dynamic-length piece so we always show what matters.
+ */
+export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
 	const label = STATUS_LABEL[state.status];
 	const color = STATUS_COLOR[state.status];
 	const u = state.usage;
+	const usedTokens = u.input + u.cacheRead;
+	const ctxPct = contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
+	const cwdLabel = cwd ? basename(cwd) || "/" : "";
+	const modelLabel = state.model.name || state.model.id;
 
 	return (
 		<Box flexDirection="column">
@@ -49,7 +63,8 @@ export function Status({ state }: StatusProps) {
 				</Box>
 				<Box>
 					<Text dimColor>
-						{state.model.provider}/{state.model.id} · ↓{u.input} ↑{u.output} ${formatCost(u.cost.total)}
+						{modelLabel}
+						{cwdLabel ? ` · ${cwdLabel}` : ""} · {ctxPct}% ctx · ${formatCost(u.cost.total)}
 					</Text>
 				</Box>
 			</Box>

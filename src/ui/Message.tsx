@@ -71,7 +71,7 @@ function MessageBody({ message, width }: { message: AgentMessage; width: number 
 						return (
 							<WrappedLines
 								key={key}
-								text={`→ ${block.name}(${summarizeArgs(block.arguments)})`}
+								text={`▸ ${toolActionLabel(block.name, block.arguments)}`}
 								width={width}
 								keyPrefix={key}
 								color="magenta"
@@ -155,4 +155,85 @@ function summarizeArgs(args: unknown): string {
 			return `${k}=${s}`;
 		})
 		.join(", ");
+}
+
+/**
+ * Render a tool call as a human-friendly action label, the way Claude
+ * Code formats them: present-tense verb + the salient argument
+ * (file path, command, URL, search query, etc.) instead of the raw
+ * `toolName(k1=v1, k2=v2)` shape. Falls back to the verbose form for
+ * tools we don't have a special case for.
+ */
+function toolActionLabel(name: string, args: unknown): string {
+	const a = (args ?? {}) as Record<string, unknown>;
+	const str = (k: string): string => (typeof a[k] === "string" ? (a[k] as string) : "");
+	const path = str("path") || str("file_path");
+
+	switch (name) {
+		case "read_file":
+			return `Reading ${path}`;
+		case "write_file":
+			return `Writing ${path}`;
+		case "edit_file":
+			return `Editing ${path}`;
+		case "multi_edit":
+			return `Editing ${path}`;
+		case "notebook_edit":
+			return `Editing notebook ${path}`;
+		case "list_files":
+			return `Listing ${path || "."}`;
+		case "glob":
+			return `Searching ${str("pattern")}`;
+		case "grep":
+			return `Searching for "${str("pattern")}"`;
+		case "shell":
+			return `Running: ${truncate(str("command") || str("cmd"), 60)}`;
+		case "web_fetch":
+			return `Fetching ${str("url")}`;
+		case "web_search":
+			return `Searching: ${truncate(str("query"), 60)}`;
+		case "git_status":
+			return "git status";
+		case "git_diff":
+			return `git diff${str("target") ? ` ${str("target")}` : ""}`;
+		case "git_log":
+			return "git log";
+		case "git_commit":
+			return `git commit: ${truncate(str("message"), 50)}`;
+		case "git_branch":
+			return str("name") ? `git branch ${str("name")}` : "git branches";
+		case "enter_worktree":
+			return `Entering worktree ${str("branch") || str("name")}`;
+		case "exit_worktree":
+			return "Leaving worktree";
+		case "enter_plan_mode":
+			return "Entering plan mode";
+		case "exit_plan_mode":
+			return "Exiting plan mode";
+		case "dispatch_agent":
+			return `Dispatching subagent: ${truncate(str("task"), 60)}`;
+		case "ask_user":
+			return `Asking: ${truncate(str("question"), 60)}`;
+		case "create_task":
+			return `Task: ${truncate(str("subject"), 60)}`;
+		case "update_task":
+			return `Updating task ${str("taskId")}`;
+		case "list_tasks":
+			return "Listing tasks";
+		case "get_task":
+			return `Reading task ${str("taskId")}`;
+		case "save_memory":
+			return `Saving memory: ${str("name") || str("type")}`;
+		case "read_memory":
+			return str("filename") ? `Reading memory ${str("filename")}` : "Reading MEMORY.md";
+		case "config":
+			return str("path") ? `config(${str("path")})` : "Reading config";
+		default:
+			return `${name}(${summarizeArgs(args)})`;
+	}
+}
+
+function truncate(s: string, n: number): string {
+	if (s.length <= n) return s;
+	return `${s.slice(0, n - 1)}…`;
 }

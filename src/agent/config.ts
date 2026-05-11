@@ -138,23 +138,44 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 }
 
 /**
- * Build a model whose baseUrl points at the codebase.foundation
- * inference proxy. The proxy MUST mimic the chosen provider's wire
- * protocol (Anthropic Messages, OpenAI Responses, etc.) — what we send
- * here is identical to a direct call, the bearer token is the only
- * thing that changes.
+ * Build a model that routes through codebase.design's inference proxy.
+ *
+ * Default when signed in via OAuth: "Codebase Auto" — the in-house
+ * MiniMax-M2.7 served via the openai-compat protocol. This matches
+ * what the web app calls the same model (`codebase` provider in
+ * web/backend/providers/registry.js).
+ *
+ * Override via env: CODEBASE_PROVIDER + CODEBASE_MODEL still pick a
+ * specific upstream from pi-ai's registry, also routed through the
+ * proxy. The proxy dispatches by the model id in the request body +
+ * the bearer scope on the token, so this works for any model the
+ * user's account has access to.
  */
 function buildProxiedConfig(env: NodeJS.ProcessEnv, accessToken: string): ResolvedConfig | null {
 	const explicitProvider = env.CODEBASE_PROVIDER as KnownProvider | undefined;
 	const explicitModel = env.CODEBASE_MODEL;
-	const provider = explicitProvider ?? "anthropic";
-	const modelId = explicitModel ?? DEFAULT_MODELS[provider];
-	if (!modelId) return null;
-
-	const baseModel = getModel(provider, modelId as never) as Model<string> | undefined;
-	if (!baseModel) return null;
-
 	const proxyBase = (env.CODEBASE_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE).replace(/\/+$/, "");
+
+	// Default: "Codebase Auto" — synthesized openai-compat model.
+	// Can't use pi-ai's registry here because "codebase" isn't a
+	// KnownProvider; clone a known chat-completions model and override.
+	if (!explicitProvider) {
+		const template = getModel("groq", "llama-3.3-70b-versatile") as Model<string> | undefined;
+		if (!template) return null;
+		const model: Model<string> = {
+			...template,
+			id: "MiniMax-M2.7",
+			name: "Codebase Auto",
+			baseUrl: proxyBase,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		};
+		return { model, apiKey: accessToken, source: "proxy" };
+	}
+
+	const modelId = explicitModel ?? DEFAULT_MODELS[explicitProvider];
+	if (!modelId) return null;
+	const baseModel = getModel(explicitProvider, modelId as never) as Model<string> | undefined;
+	if (!baseModel) return null;
 	const proxiedModel: Model<string> = { ...baseModel, baseUrl: proxyBase };
 	return { model: proxiedModel, apiKey: accessToken, source: "proxy" };
 }

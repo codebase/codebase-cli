@@ -256,7 +256,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					))}
 				</Box>
 			) : null}
-			<Status state={state} />
+			<Status state={state} cwd={bundle.toolContext.cwd} />
 			{permRequest ? (
 				<Permission
 					request={permRequest}
