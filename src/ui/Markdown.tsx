@@ -9,14 +9,15 @@ import { wrapText } from "./wrap.js";
  *   `inline code`    → cyan span
  *   ```code fence``` → indented cyan block (no syntax highlighting yet)
  *   # heading        → bold span (one of three levels)
+ *   - / * / 1. item  → bullet/ordered list with indented continuations
+ *   > quote          → dim, left-bar quoted block
  *
  * Anything we don't recognize falls through as plain text. The
  * renderer pre-wraps each line so terminal select-copy still gives
  * clean line endings, same invariant as `WrappedLines`.
  *
- * Not handled (yet): bullet lists, ordered lists, blockquotes, links,
- * tables. They get rendered as plain text. We'll add them when they
- * actually show up in our scenarios.
+ * Not handled (yet): nested lists past 2 levels, links, tables. They
+ * render with shallow indentation only.
  */
 
 interface MarkdownProps {
@@ -30,7 +31,15 @@ type Block =
 	| { kind: "paragraph"; spans: Span[] }
 	| { kind: "heading"; level: 1 | 2 | 3; spans: Span[] }
 	| { kind: "code-block"; lang?: string; text: string }
+	| { kind: "list"; ordered: boolean; items: ListItem[] }
+	| { kind: "quote"; spans: Span[] }
 	| { kind: "blank" };
+
+interface ListItem {
+	marker: string;
+	indent: number;
+	spans: Span[];
+}
 
 export function Markdown({ text, width, keyPrefix }: MarkdownProps) {
 	const blocks = parseBlocks(text);
@@ -67,7 +76,88 @@ function MarkdownBlock({ block, width, keyPrefix }: { block: Block; width: numbe
 	if (block.kind === "heading") {
 		return <SpanLine spans={block.spans} width={width} bold color="cyan" keyPrefix={keyPrefix} />;
 	}
+	if (block.kind === "list") {
+		return (
+			<Box flexDirection="column">
+				{block.items.map((item, i) => (
+					<ListRow
+						key={`${keyPrefix}-li-${i}-${item.marker}`}
+						item={item}
+						width={width}
+						keyPrefix={`${keyPrefix}-li-${i}`}
+					/>
+				))}
+			</Box>
+		);
+	}
+	if (block.kind === "quote") {
+		// Use SpanLine to preserve inline styling, but wrap in a left-bar gutter
+		// so block-quotes read like one in a terminal.
+		return (
+			<Box flexDirection="row">
+				<Box marginRight={1}>
+					<Text dimColor>│</Text>
+				</Box>
+				<Box flexDirection="column" flexGrow={1}>
+					<SpanLine spans={block.spans} width={Math.max(20, width - 2)} keyPrefix={keyPrefix} dim />
+				</Box>
+			</Box>
+		);
+	}
 	return <SpanLine spans={block.spans} width={width} keyPrefix={keyPrefix} />;
+}
+
+/**
+ * One list-item row: marker in cyan (e.g. "•" / "1.") + the item body
+ * wrapped to the remaining width, with continuation lines indented
+ * under the body so wrapped lines hang neatly past the marker.
+ */
+function ListRow({ item, width, keyPrefix }: { item: ListItem; width: number; keyPrefix: string }) {
+	const markerCol = item.marker.length + 1; // marker + the gap space
+	const indentCols = item.indent * 2;
+	const bodyWidth = Math.max(10, width - markerCol - indentCols);
+	const plain = item.spans.map((s) => s.text).join("");
+	const wrapped = bodyWidth > 0 ? wrapText(plain, bodyWidth) : [plain];
+	let consumed = 0;
+	return (
+		<Box flexDirection="column">
+			{wrapped.map((line, lineIdx) => {
+				const chunks = sliceSpans(item.spans, consumed, consumed + line.length);
+				consumed += line.length;
+				if (lineIdx < wrapped.length - 1 && plain[consumed] === " ") consumed += 1;
+				const rowKey = `${keyPrefix}-row-${lineIdx}-${line.slice(0, 8)}`;
+				return (
+					<Box key={rowKey} flexDirection="row">
+						<Text>{" ".repeat(indentCols)}</Text>
+						{lineIdx === 0 ? (
+							<Text color="cyan">
+								{item.marker}
+								{" "}
+							</Text>
+						) : (
+							<Text>{" ".repeat(markerCol)}</Text>
+						)}
+						<Box flexGrow={1}>
+							{/* biome-ignore lint/suspicious/noArrayIndexKey: pure presentational */}
+							<Text>
+								{chunks.map((c, ci) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: pure presentational
+									<Text
+										key={`${rowKey}-c${ci}`}
+										bold={c.kind === "bold"}
+										italic={c.kind === "italic"}
+										color={c.kind === "code" ? "cyan" : undefined}
+									>
+										{c.text}
+									</Text>
+								))}
+							</Text>
+						</Box>
+					</Box>
+				);
+			})}
+		</Box>
+	);
 }
 
 /**
@@ -82,12 +172,14 @@ function SpanLine({
 	width,
 	bold,
 	color,
+	dim,
 	keyPrefix,
 }: {
 	spans: Span[];
 	width: number;
 	bold?: boolean;
 	color?: string;
+	dim?: boolean;
 	keyPrefix: string;
 }) {
 	// For the first cut: serialize spans into one rich-text line, wrap
@@ -114,6 +206,7 @@ function SpanLine({
 								key={`${rowKey}-c${ci}`}
 								bold={bold || c.kind === "bold"}
 								italic={c.kind === "italic"}
+								dimColor={dim}
 								color={c.kind === "code" ? "cyan" : color}
 							>
 								{c.text}
@@ -181,7 +274,49 @@ function parseBlocks(text: string): Block[] {
 			i++;
 			continue;
 		}
-		// Paragraph (consume until blank line, fence, or heading).
+		// List (bulleted or ordered). Consumes consecutive list rows + any
+		// continuation lines that are deeper-indented than the list marker.
+		const listProbe = matchListLine(line);
+		if (listProbe) {
+			const items: ListItem[] = [];
+			let ordered = listProbe.ordered;
+			while (i < lines.length) {
+				const row = matchListLine(lines[i]);
+				if (!row) break;
+				ordered = ordered || row.ordered;
+				const itemLines = [row.body];
+				i++;
+				// Continuation lines: indented, non-empty, non-list rows.
+				while (i < lines.length) {
+					const peek = lines[i];
+					if (peek.trim() === "") break;
+					if (matchListLine(peek)) break;
+					if (peek.match(/^#{1,3}\s+/)) break;
+					if (peek.match(/^```/)) break;
+					itemLines.push(peek.trim());
+					i++;
+				}
+				items.push({
+					marker: row.marker,
+					indent: row.indent,
+					spans: parseInline(itemLines.join(" ")),
+				});
+			}
+			blocks.push({ kind: "list", ordered, items });
+			continue;
+		}
+		// Block-quote (single-line for now; runs collapse on blank line).
+		if (line.match(/^>\s?/)) {
+			const quoteLines: string[] = [line.replace(/^>\s?/, "")];
+			i++;
+			while (i < lines.length && lines[i].match(/^>\s?/)) {
+				quoteLines.push(lines[i].replace(/^>\s?/, ""));
+				i++;
+			}
+			blocks.push({ kind: "quote", spans: parseInline(quoteLines.join(" ")) });
+			continue;
+		}
+		// Paragraph (consume until blank line, fence, list, quote, or heading).
 		const paraLines: string[] = [line];
 		i++;
 		while (i < lines.length) {
@@ -189,12 +324,30 @@ function parseBlocks(text: string): Block[] {
 			if (peek.trim() === "") break;
 			if (peek.match(/^```/)) break;
 			if (peek.match(/^#{1,3}\s+/)) break;
+			if (matchListLine(peek)) break;
+			if (peek.match(/^>\s?/)) break;
 			paraLines.push(peek);
 			i++;
 		}
 		blocks.push({ kind: "paragraph", spans: parseInline(paraLines.join(" ")) });
 	}
 	return blocks;
+}
+
+/**
+ * Detect a list row and return its marker, body, indent depth, and
+ * kind. Matches `- foo`, `* foo`, `+ foo`, and ordered `12. foo`. The
+ * leading-whitespace count maps to a 2-space-per-level indent: 0 or 1
+ * leading spaces stay at level 0, 2-3 → 1, 4-5 → 2, etc.
+ */
+function matchListLine(line: string): { marker: string; body: string; indent: number; ordered: boolean } | null {
+	const m = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+	if (!m) return null;
+	const indent = Math.floor(m[1].length / 2);
+	const raw = m[2];
+	const ordered = /^\d+\./.test(raw);
+	const marker = ordered ? raw : "•";
+	return { marker, body: m[3], indent, ordered };
 }
 
 /**
