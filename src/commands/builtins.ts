@@ -10,13 +10,19 @@ import type { Command } from "./types.js";
 
 const help: Command = {
 	name: "help",
-	description: "List available slash commands.",
+	description: "List available slash commands and keyboard shortcuts.",
 	handler: (_args, ctx) => {
-		const lines: string[] = ["available slash commands:"];
+		const lines: string[] = [];
+		lines.push("Keyboard shortcuts:");
+		lines.push("  /          slash-command autocomplete (Tab to complete, ↑↓ to choose)");
+		lines.push("  !cmd       run a shell command directly (e.g. !git status)");
+		lines.push("  @path      inline a file's contents into the next prompt");
+		lines.push("  ↑/↓        recall prior prompts (at line start)");
+		lines.push("  \\<Enter>   insert a newline instead of submitting");
+		lines.push("  Ctrl-C     cancel turn (busy) · twice to exit (idle)");
+		lines.push("");
+		lines.push("Slash commands:");
 		const reg = (ctx as unknown as { registry?: { list: () => Command[] } }).registry;
-		// builtins() is built before registry is constructed, so the registry
-		// reference is injected via ctx by the App. If absent (e.g. in tests),
-		// we print just this message.
 		if (reg) {
 			for (const cmd of reg.list()) {
 				const aliasPart = cmd.aliases?.length ? ` (${cmd.aliases.map((a) => `/${a}`).join(", ")})` : "";
