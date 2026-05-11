@@ -7,6 +7,7 @@ import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
 import { App } from "./ui/App.js";
+import { installTerminalRestoreHandlers } from "./ui/terminal-restore.js";
 
 // Auto-load .env files before any subsystem reads process.env.
 loadDotEnv();
@@ -58,6 +59,7 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runHeadless({ prompt, outputFormat, autoApprove }).then((code) => process.exit(code));
 } else {
 	const instance = render(<App />);
+	installTerminalRestoreHandlers(instance);
 	instance.waitUntilExit().catch(() => {
 		process.exit(1);
 	});
