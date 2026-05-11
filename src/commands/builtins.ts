@@ -490,6 +490,27 @@ const mcp: Command = {
 	},
 };
 
+const redo: Command = {
+	name: "redo",
+	aliases: ["retry"],
+	description: "Resend the last user prompt to the agent (e.g. after an error or aborted turn).",
+	handler: (_args, ctx) => {
+		const lastUser = [...ctx.state.messages].reverse().find((m) => m.role === "user");
+		if (!lastUser) {
+			ctx.emit("nothing to redo — no prior user prompts.");
+			return { handled: true };
+		}
+		const text = typeof lastUser.content === "string" ? lastUser.content : "";
+		if (!text) {
+			ctx.emit("can't redo — the last user message had non-text content.");
+			return { handled: true };
+		}
+		ctx.emit(`(redo) ${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`);
+		void ctx.bundle.agent.prompt(text).catch(() => undefined);
+		return { handled: true };
+	},
+};
+
 const pwd: Command = {
 	name: "pwd",
 	aliases: ["cwd"],
@@ -523,5 +544,6 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	projects,
 	mcp,
 	pwd,
+	redo,
 	exit,
 ];
