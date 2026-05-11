@@ -58,7 +58,11 @@ const STATUS_COLOR: Record<ChatState["status"], string> = {
 export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
 	const verb = useThinkingVerb(state.status === "thinking");
-	const label = state.status === "thinking" ? verb : STATUS_LABEL[state.status];
+	let label = state.status === "thinking" ? verb : STATUS_LABEL[state.status];
+	if (state.status === "tool") {
+		const running = findRunningTool(state);
+		if (running) label = `${STATUS_LABEL.tool} · ${running}`;
+	}
 	const color = STATUS_COLOR[state.status];
 	const tokRate = useTokenRate(state);
 	const u = state.usage;
@@ -95,6 +99,22 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 			</Box>
 		</Box>
 	);
+}
+
+/**
+ * Pluck the most-recently-started in-flight tool so the status bar can
+ * say "Working · shell" instead of just "Working". Falls back to no
+ * tool name when the map is empty — keeps the bar terse.
+ */
+function findRunningTool(state: ChatState): string | undefined {
+	let best: { name: string; startedAt: number } | undefined;
+	for (const tool of state.tools.values()) {
+		if (tool.status !== "running") continue;
+		if (!best || tool.startedAt > best.startedAt) {
+			best = { name: tool.name, startedAt: tool.startedAt };
+		}
+	}
+	return best?.name;
 }
 
 /**
