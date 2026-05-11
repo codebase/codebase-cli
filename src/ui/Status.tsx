@@ -69,11 +69,7 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 
 	return (
 		<Box flexDirection="column">
-			{state.error ? (
-				<Box paddingX={1}>
-					<Text color="red">! {state.error}</Text>
-				</Box>
-			) : null}
+			{state.error ? <ErrorCard message={state.error} /> : null}
 			<Box paddingX={1} justifyContent="space-between">
 				<Box>
 					{busy ? (
@@ -169,6 +165,38 @@ function useThinkingVerb(active: boolean): string {
 		return () => clearInterval(id);
 	}, [active]);
 	return verb;
+}
+
+/**
+ * Boxed error card. Headers the error with ERROR + a one-line summary,
+ * then shows the rest of the message body (if multi-line) in dim text.
+ * Matches Claude Code's pattern of giving fatal errors visual weight
+ * so the user doesn't miss them in a busy transcript.
+ */
+function ErrorCard({ message }: { message: string }) {
+	const lines = message.split("\n");
+	const head = lines[0] ?? message;
+	const body = lines.slice(1).filter((l) => l.trim().length > 0);
+	return (
+		<Box flexDirection="column" borderStyle="round" borderColor="red" paddingX={1} marginY={0}>
+			<Box>
+				<Text color="red" bold>
+					ERROR
+				</Text>
+				<Text> </Text>
+				<Text>{head}</Text>
+			</Box>
+			{body.length > 0 ? (
+				<Box flexDirection="column" marginTop={1}>
+					{body.map((line, i) => (
+						<Text key={`err-${i}-${line.slice(0, 12)}`} dimColor>
+							{line}
+						</Text>
+					))}
+				</Box>
+			) : null}
+		</Box>
+	);
 }
 
 function formatCost(value: number): string {
