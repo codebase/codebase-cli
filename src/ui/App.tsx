@@ -1,6 +1,4 @@
 import { spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
 import { Box, Text, useApp } from "ink";
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
@@ -22,6 +20,7 @@ import { ANSWER_START_BUILDING, type QAPair } from "../plan/types.js";
 import type { Task } from "../tools/task-store.js";
 import type { ChatState } from "../types.js";
 import { type UserQuery, UserQueryCancelled } from "../user-queries/store.js";
+import { buildAttachmentPrompt, collectAttachments } from "./attachments.js";
 import { FirstRunSetup } from "./FirstRunSetup.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
@@ -346,69 +345,6 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			)}
 		</Box>
 	);
-}
-
-interface Attachment {
-	token: string;
-	relPath: string;
-	absPath: string;
-	content: string;
-}
-
-const MAX_ATTACHMENT_BYTES = 128 * 1024;
-const MAX_ATTACHMENTS = 8;
-
-/**
- * Scan the prompt for `@<path>` tokens and resolve each to a readable
- * file under (or adjacent to) the cwd. Returns one entry per resolved
- * file; unresolved `@` mentions don't appear here and stay as literal
- * text — we never silently drop or rewrite user input.
- */
-function collectAttachments(text: string, cwd: string): Attachment[] {
-	const out: Attachment[] = [];
-	const seen = new Set<string>();
-	const pattern = /@([A-Za-z0-9_./-]+)/g;
-	for (const match of text.matchAll(pattern)) {
-		if (out.length >= MAX_ATTACHMENTS) break;
-		const rel = match[1];
-		if (!rel || rel.length > 256) continue;
-		// Skip plain email-style @mentions ("@alice") — they don't look like
-		// paths (no slash, no extension) and shouldn't auto-attach.
-		if (!rel.includes("/") && !rel.includes(".")) continue;
-		const abs = isAbsolute(rel) ? rel : join(cwd, rel);
-		if (seen.has(abs)) continue;
-		seen.add(abs);
-		try {
-			const stat = statSync(abs);
-			if (!stat.isFile()) continue;
-			if (stat.size > MAX_ATTACHMENT_BYTES) continue;
-			const content = readFileSync(abs, "utf8");
-			out.push({ token: match[0], relPath: rel, absPath: abs, content });
-		} catch {
-			// File doesn't exist or isn't readable — leave the token in text.
-		}
-	}
-	return out;
-}
-
-/**
- * Build the agent-bound prompt with attachments inlined as fenced code
- * blocks above the user's actual ask. The original `@path` tokens stay
- * in the text so the model can correlate the references with the
- * attached content.
- */
-function buildAttachmentPrompt(text: string, attachments: readonly Attachment[]): string {
-	const parts: string[] = ["Attached files (auto-inlined from @ mentions):", ""];
-	for (const a of attachments) {
-		parts.push(`### ${a.relPath}`);
-		parts.push("```");
-		parts.push(a.content);
-		parts.push("```");
-		parts.push("");
-	}
-	parts.push("---");
-	parts.push(text);
-	return parts.join("\n");
 }
 
 /**
