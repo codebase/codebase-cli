@@ -173,8 +173,109 @@ function ToolCallLine({
 	const isError = status === "error";
 	const glyph = isError ? "✗" : "✓";
 	const past = toolActionPast(name, args);
+	const diff = !isError ? diffSummary(name, args) : null;
 	return (
-		<WrappedLines text={`${glyph} ${past}`} width={width} keyPrefix={keyPrefix} color={isError ? "red" : "magenta"} />
+		<>
+			<WrappedLines
+				text={`${glyph} ${past}`}
+				width={width}
+				keyPrefix={keyPrefix}
+				color={isError ? "red" : "magenta"}
+			/>
+			{diff ? <DiffSummary diff={diff} width={width} keyPrefix={`${keyPrefix}-diff`} /> : null}
+		</>
+	);
+}
+
+interface DiffInfo {
+	added: number;
+	removed: number;
+	hunks: Array<{ minus: string; plus: string }>;
+}
+
+/**
+ * Build a diff summary for a completed file-edit tool call from the
+ * tool's args. We have old_string + new_string right there, so no
+ * filesystem round-trip needed. Limits the hunk preview to 6 lines
+ * total (the small-diff sweet spot) so noisy refactors collapse to
+ * just the +/- counts.
+ */
+function diffSummary(name: string, args: unknown): DiffInfo | null {
+	const a = (args ?? {}) as Record<string, unknown>;
+	if (name === "edit_file") {
+		const oldStr = typeof a.old_string === "string" ? a.old_string : "";
+		const newStr = typeof a.new_string === "string" ? a.new_string : "";
+		if (!oldStr && !newStr) return null;
+		return countDiff(oldStr, newStr);
+	}
+	if (name === "multi_edit") {
+		const edits = Array.isArray(a.edits) ? a.edits : [];
+		let added = 0;
+		let removed = 0;
+		const hunks: DiffInfo["hunks"] = [];
+		for (const e of edits) {
+			if (!e || typeof e !== "object") continue;
+			const ed = e as Record<string, unknown>;
+			const oldStr = typeof ed.old_string === "string" ? ed.old_string : "";
+			const newStr = typeof ed.new_string === "string" ? ed.new_string : "";
+			const sub = countDiff(oldStr, newStr);
+			added += sub.added;
+			removed += sub.removed;
+			hunks.push(...sub.hunks);
+		}
+		if (added === 0 && removed === 0) return null;
+		return { added, removed, hunks: hunks.slice(0, 6) };
+	}
+	if (name === "write_file") {
+		const content = typeof a.content === "string" ? a.content : "";
+		if (!content) return null;
+		const lines = content.split("\n").length;
+		return { added: lines, removed: 0, hunks: [] };
+	}
+	return null;
+}
+
+function countDiff(oldStr: string, newStr: string): DiffInfo {
+	const oldLines = oldStr ? oldStr.split("\n") : [];
+	const newLines = newStr ? newStr.split("\n") : [];
+	const hunks: DiffInfo["hunks"] = [];
+	const maxRows = Math.max(oldLines.length, newLines.length);
+	for (let i = 0; i < maxRows; i++) {
+		const minus = oldLines[i] ?? "";
+		const plus = newLines[i] ?? "";
+		if (minus === plus) continue;
+		hunks.push({ minus, plus });
+	}
+	return { added: newLines.length, removed: oldLines.length, hunks: hunks.slice(0, 6) };
+}
+
+/**
+ * Render the +N -M summary line, then up to 6 alternating - / + lines
+ * for the actual diff. Beyond 6 lines, just shows the counts — keeps
+ * the transcript from drowning in a 200-line refactor.
+ */
+function DiffSummary({ diff, width, keyPrefix }: { diff: DiffInfo; width: number; keyPrefix: string }) {
+	const counts = `    +${diff.added} -${diff.removed}`;
+	return (
+		<Box flexDirection="column" marginLeft={2}>
+			<Text dimColor>{counts}</Text>
+			{diff.hunks.map((h) => (
+				<Box key={`${keyPrefix}-h-${h.minus.slice(0, 16)}-${h.plus.slice(0, 16)}`} flexDirection="column">
+					{h.minus ? (
+						<Text color="red">
+							{"    - "}
+							{truncate(h.minus, Math.max(20, width - 8))}
+						</Text>
+					) : null}
+					{h.plus ? (
+						<Text color="green">
+							{"    + "}
+							{truncate(h.plus, Math.max(20, width - 8))}
+						</Text>
+					) : null}
+				</Box>
+			))}
+		</Box>
 	);
 }
 
