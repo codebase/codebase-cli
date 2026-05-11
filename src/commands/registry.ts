@@ -57,11 +57,52 @@ export class CommandRegistry {
 
 		const command = this.get(name);
 		if (!command) {
-			ctx.emit(`unknown command: /${name}. Try /help.`);
+			const suggestion = this.suggestClosest(name);
+			ctx.emit(
+				suggestion ? `unknown command: /${name}. Did you mean /${suggestion}?` : `unknown command: /${name}. Try /help.`,
+			);
 			return { handled: true };
 		}
 		return command.handler(args, ctx);
 	}
+
+	/**
+	 * Return the registered command name with the smallest edit distance
+	 * to `query` when it's a likely typo (distance ≤ 2 or ≤ ceil(len/3),
+	 * whichever is greater). Returns undefined when nothing's close
+	 * enough — better to print "Try /help" than to mis-suggest.
+	 */
+	private suggestClosest(query: string): string | undefined {
+		const q = normalize(query);
+		if (!q) return undefined;
+		const threshold = Math.max(2, Math.ceil(q.length / 3));
+		let best: { name: string; dist: number } | undefined;
+		for (const name of new Set(Array.from(this.commands.values()).map((c) => c.name))) {
+			const dist = levenshtein(q, name);
+			if (dist <= threshold && (!best || dist < best.dist)) {
+				best = { name, dist };
+			}
+		}
+		return best?.name;
+	}
+}
+
+function levenshtein(a: string, b: string): number {
+	if (a === b) return 0;
+	if (a.length === 0) return b.length;
+	if (b.length === 0) return a.length;
+	const prev = new Array(b.length + 1);
+	const curr = new Array(b.length + 1);
+	for (let j = 0; j <= b.length; j++) prev[j] = j;
+	for (let i = 1; i <= a.length; i++) {
+		curr[0] = i;
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+		}
+		for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+	}
+	return prev[b.length];
 }
 
 function normalize(name: string): string {

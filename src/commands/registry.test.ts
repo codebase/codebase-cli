@@ -83,6 +83,14 @@ describe("CommandRegistry", () => {
 		expect(ctx.emit).toHaveBeenCalledWith(expect.stringMatching(/unknown command/));
 	});
 
+	it("suggests the closest command on a typo", async () => {
+		const reg = new CommandRegistry();
+		reg.register({ name: "compact", description: "", handler: () => ({ handled: true }) });
+		const ctx = fakeCtx();
+		await reg.dispatch("/conpact", ctx);
+		expect(ctx.emit).toHaveBeenCalledWith(expect.stringMatching(/Did you mean \/compact\?/));
+	});
+
 	it("trims whitespace around the args", async () => {
 		const handler = vi.fn(() => ({ handled: true }));
 		const reg = new CommandRegistry();
