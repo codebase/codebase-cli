@@ -62,7 +62,7 @@ export function Welcome({ modelName, source, cwd, resumedFrom }: WelcomeProps) {
 		<Box flexDirection="column" paddingX={1} marginBottom={1}>
 			<Box flexDirection="row">
 				<Box marginRight={2}>
-					<PixelC animate={false} />
+					<PixelC />
 				</Box>
 				<Box flexDirection="column" justifyContent="center">
 					<Text bold color="cyan">

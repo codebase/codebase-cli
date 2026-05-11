@@ -203,15 +203,13 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 }
 
 /**
- * Branded header — animated pixel C + "codebase" wordmark. The C
- * pulses while the wizard is open (each row brightens in sequence)
- * so the boot screen feels alive without overwhelming.
+ * Branded header — static pixel C + "codebase" wordmark.
  */
-function BrandHeader({ animate = true }: { animate?: boolean }): React.ReactNode {
+function BrandHeader(): React.ReactNode {
 	return (
 		<Box flexDirection="row" marginBottom={1}>
 			<Box marginRight={2}>
-				<PixelC animate={animate} />
+				<PixelC />
 			</Box>
 			<Box flexDirection="column" justifyContent="center">
 				<Text bold color="cyan">
