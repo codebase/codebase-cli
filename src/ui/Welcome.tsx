@@ -1,6 +1,34 @@
+import { execSync } from "node:child_process";
 import { basename } from "node:path";
 import { Box, Text } from "ink";
 import { PixelC } from "./PixelC.js";
+
+/**
+ * Best-effort git probe for the welcome banner. Returns null if the
+ * cwd isn't a git repo (or if `git` isn't on PATH), so non-git
+ * projects get a cleaner banner instead of an empty line. We swallow
+ * all errors — the banner is decorative; a slow / failing git
+ * shouldn't block startup.
+ */
+function readGitInfo(cwd: string): { branch: string; dirty: number } | null {
+	try {
+		const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+		if (!branch) return null;
+		const status = execSync("git status --porcelain", {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		const dirty = status.split("\n").filter((l) => l.trim().length > 0).length;
+		return { branch, dirty };
+	} catch {
+		return null;
+	}
+}
 
 /** Humanize an absolute timestamp into "5m ago" / "3h ago" / "2d ago" — sub-minute reads as "just now". */
 function formatAgo(ts: number): string {
@@ -28,6 +56,7 @@ interface WelcomeProps {
 export function Welcome({ modelName, source, cwd, resumedFrom }: WelcomeProps) {
 	const cwdLabel = basename(cwd) || cwd;
 	const sourceLabel = source === "proxy" ? "signed in via codebase.design" : source === "byok" ? "BYOK" : `${source}`;
+	const gitInfo = readGitInfo(cwd);
 
 	return (
 		<Box flexDirection="column" paddingX={1} marginBottom={1}>
@@ -43,6 +72,12 @@ export function Welcome({ modelName, source, cwd, resumedFrom }: WelcomeProps) {
 					<Text dimColor>
 						{cwdLabel} · {sourceLabel}
 					</Text>
+					{gitInfo ? (
+						<Text dimColor>
+							{gitInfo.branch}
+							{gitInfo.dirty > 0 ? ` · ${gitInfo.dirty} uncommitted change${gitInfo.dirty === 1 ? "" : "s"}` : " · clean"}
+						</Text>
+					) : null}
 				</Box>
 			</Box>
 			{resumedFrom ? (
