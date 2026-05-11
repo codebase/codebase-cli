@@ -90,6 +90,11 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		return reg;
 	}, []);
 
+	const commandSuggestions = useMemo(
+		() => registry.list().map((c) => ({ name: c.name, description: c.description })),
+		[registry],
+	);
+
 	useEffect(() => {
 		const unsubscribe = bundle.subscribe((event) => {
 			dispatch({ type: "agent-event", event });
@@ -274,7 +279,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					onCancel={() => bundle.userQueries.cancel(userQuery.id)}
 				/>
 			) : (
-				<Input disabled={busy} onSubmit={handleSubmit} onAbort={handleAbort} />
+				<Input disabled={busy} onSubmit={handleSubmit} onAbort={handleAbort} commands={commandSuggestions} />
 			)}
 		</Box>
 	);
