@@ -1,5 +1,5 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Model, Usage } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, Usage } from "@earendil-works/pi-ai";
 
 /**
  * Wire shape for `codebase app-server`. Newline-delimited JSON on
@@ -23,7 +23,7 @@ import type { Model, Usage } from "@earendil-works/pi-ai";
 
 export type RpcCommand =
 	| { id?: string; type: "initialize"; clientInfo: ClientInfo }
-	| { id?: string; type: "prompt"; message: string }
+	| { id?: string; type: "prompt"; message: string; images?: readonly ImageContent[] }
 	| { id?: string; type: "abort" }
 	| { id?: string; type: "get_state" }
 	| { id?: string; type: "get_messages" }

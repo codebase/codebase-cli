@@ -194,9 +194,12 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 					return buildErrorResponse(c.id, c.type, "a prompt is already in flight — abort first");
 				}
 				// Fire-and-forget; the response just acknowledges receipt.
-				// The real work surfaces via the agent event stream.
+				// The real work surfaces via the agent event stream. Pi's
+				// `prompt(text, images?)` overload handles multimodal input
+				// transparently — base64-encoded image bytes plus mimeType.
+				const images = c.images && c.images.length > 0 ? [...c.images] : undefined;
 				inFlightPrompt = bundle.agent
-					.prompt(c.message)
+					.prompt(c.message, images)
 					.catch((err: unknown) => {
 						send(buildErrorResponse(undefined, "prompt", err instanceof Error ? err.message : String(err)));
 					})

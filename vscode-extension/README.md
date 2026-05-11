@@ -105,9 +105,18 @@ npm run compile         # tsc → out/
 # an Extension Development Host with the extension loaded.
 ```
 
+## Image input
+
+Three ways to attach images to a prompt:
+
+- **Paste** (`Cmd-V` / `Ctrl-V` in the chat input) — most useful for screenshots from the clipboard.
+- **Drag-and-drop** an image file anywhere on the panel.
+- **Click the 📎 Image button** — opens a file picker (PNG, JPG, GIF, WebP).
+
+Up to 8 images per message, 8 MB per image. Thumbnails appear above the input; click the × to remove one before sending. Images get base64-encoded and sent to whichever multimodal model your provider supports (Claude Sonnet/Opus, GPT-4o, etc.).
+
 ## Known limitations
 
-- **No image input yet** — the protocol supports it, the webview doesn't.
 - **No `set_model` mid-session** — pick the model at startup via env vars.
 - **No diff viewer** — file edits show as a tool call line; open the file to see the change.
 - **Auto-approve by default** — the extension currently auto-approves

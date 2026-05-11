@@ -14,6 +14,12 @@ export interface RpcClientOptions {
 	env?: NodeJS.ProcessEnv;
 }
 
+export interface ImageContent {
+	type: "image";
+	data: string;
+	mimeType: string;
+}
+
 export interface ServerEvent {
 	type: string;
 	[k: string]: unknown;
@@ -107,8 +113,10 @@ export class RpcClient extends EventEmitter {
 		return this.request("initialize", { clientInfo });
 	}
 
-	async prompt(message: string): Promise<unknown> {
-		return this.request("prompt", { message });
+	async prompt(message: string, images?: readonly ImageContent[]): Promise<unknown> {
+		const params: Record<string, unknown> = { message };
+		if (images && images.length > 0) params.images = images;
+		return this.request("prompt", params);
 	}
 
 	async abort(): Promise<unknown> {

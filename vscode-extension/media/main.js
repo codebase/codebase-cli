@@ -13,6 +13,13 @@ const composer = /** @type {HTMLFormElement} */ (document.getElementById("compos
 const input = /** @type {HTMLTextAreaElement} */ (document.getElementById("input"));
 const sendBtn = /** @type {HTMLButtonElement} */ (document.getElementById("send"));
 const abortBtn = /** @type {HTMLButtonElement} */ (document.getElementById("abort"));
+const attachBtn = /** @type {HTMLButtonElement} */ (document.getElementById("attach"));
+const attachmentsEl = /** @type {HTMLElement} */ (document.getElementById("attachments"));
+
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB per image, conservative
+const MAX_IMAGES = 8;
+/** @type {{data: string, mimeType: string, name?: string}[]} */
+const pendingImages = [];
 
 let assistantBuffer = "";
 /** @type {HTMLElement | null} */
@@ -62,6 +69,11 @@ window.addEventListener("message", (e) => {
 		case "focus":
 			input.focus();
 			return;
+		case "images_picked":
+			if (Array.isArray(msg.images)) {
+				for (const img of msg.images) addImage(img.data, img.mimeType, img.name);
+			}
+			return;
 		case "agent_event":
 			handleAgentEvent(msg.event);
 			return;
@@ -71,14 +83,110 @@ window.addEventListener("message", (e) => {
 composer.addEventListener("submit", (e) => {
 	e.preventDefault();
 	const message = input.value.trim();
-	if (!message) return;
-	renderUser(message);
+	if (!message && pendingImages.length === 0) return;
+	renderUser(message, pendingImages);
+	const images = pendingImages.map((i) => ({ data: i.data, mimeType: i.mimeType }));
+	pendingImages.length = 0;
+	renderAttachments();
 	input.value = "";
 	autoresize();
 	abortBtn.disabled = false;
 	setStatus("thinking");
-	vscode.postMessage({ type: "prompt", message });
+	vscode.postMessage({ type: "prompt", message, images: images.length > 0 ? images : undefined });
 });
+
+attachBtn.addEventListener("click", () => {
+	vscode.postMessage({ type: "pick_images" });
+});
+
+input.addEventListener("paste", (e) => {
+	if (!e.clipboardData) return;
+	let consumed = false;
+	for (const item of e.clipboardData.items) {
+		if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+		const file = item.getAsFile();
+		if (!file) continue;
+		readFileAsImage(file);
+		consumed = true;
+	}
+	if (consumed) e.preventDefault();
+});
+
+const dropTarget = document.body;
+["dragenter", "dragover"].forEach((ev) => {
+	dropTarget.addEventListener(ev, (e) => {
+		const dt = /** @type {DragEvent} */ (e).dataTransfer;
+		if (!dt) return;
+		if ([...dt.items].some((i) => i.kind === "file" && i.type.startsWith("image/"))) {
+			e.preventDefault();
+			dropTarget.classList.add("dragover");
+		}
+	});
+});
+["dragleave", "drop"].forEach((ev) => {
+	dropTarget.addEventListener(ev, () => dropTarget.classList.remove("dragover"));
+});
+dropTarget.addEventListener("drop", (e) => {
+	const dt = e.dataTransfer;
+	if (!dt) return;
+	const files = [...dt.files].filter((f) => f.type.startsWith("image/"));
+	if (files.length === 0) return;
+	e.preventDefault();
+	for (const f of files) readFileAsImage(f);
+});
+
+function readFileAsImage(file) {
+	if (file.size > MAX_IMAGE_BYTES) {
+		renderError(`image too large (${(file.size / 1024 / 1024).toFixed(1)} MB) — max ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
+		return;
+	}
+	const reader = new FileReader();
+	reader.onload = () => {
+		const result = reader.result;
+		if (typeof result !== "string") return;
+		const comma = result.indexOf(",");
+		const base64 = comma >= 0 ? result.slice(comma + 1) : result;
+		addImage(base64, file.type || "image/png", file.name);
+	};
+	reader.readAsDataURL(file);
+}
+
+function addImage(data, mimeType, name) {
+	if (pendingImages.length >= MAX_IMAGES) {
+		renderError(`max ${MAX_IMAGES} images per message`);
+		return;
+	}
+	pendingImages.push({ data, mimeType, name });
+	renderAttachments();
+}
+
+function renderAttachments() {
+	if (pendingImages.length === 0) {
+		attachmentsEl.hidden = true;
+		attachmentsEl.innerHTML = "";
+		return;
+	}
+	attachmentsEl.hidden = false;
+	attachmentsEl.innerHTML = "";
+	pendingImages.forEach((img, idx) => {
+		const wrap = document.createElement("div");
+		wrap.className = "thumb";
+		const im = document.createElement("img");
+		im.src = `data:${img.mimeType};base64,${img.data}`;
+		im.alt = img.name || `image ${idx + 1}`;
+		const rm = document.createElement("button");
+		rm.type = "button";
+		rm.textContent = "×";
+		rm.title = "Remove";
+		rm.addEventListener("click", () => {
+			pendingImages.splice(idx, 1);
+			renderAttachments();
+		});
+		wrap.appendChild(im);
+		wrap.appendChild(rm);
+		attachmentsEl.appendChild(wrap);
+	});
+}
 
 abortBtn.addEventListener("click", () => {
 	vscode.postMessage({ type: "abort" });
@@ -144,10 +252,25 @@ function handleAgentEvent(event) {
 
 // ── rendering ───────────────────────────────────────────────────────
 
-function renderUser(text) {
+function renderUser(text, images) {
 	const el = document.createElement("div");
 	el.className = "msg msg-user";
-	el.textContent = text;
+	if (text) {
+		const p = document.createElement("div");
+		p.textContent = text;
+		el.appendChild(p);
+	}
+	if (images && images.length > 0) {
+		const row = document.createElement("div");
+		row.className = "user-images";
+		for (const img of images) {
+			const im = document.createElement("img");
+			im.src = `data:${img.mimeType};base64,${img.data}`;
+			im.alt = img.name || "image";
+			row.appendChild(im);
+		}
+		el.appendChild(row);
+	}
 	transcript.appendChild(el);
 	scrollToBottom();
 }

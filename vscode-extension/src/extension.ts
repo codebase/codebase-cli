@@ -1,5 +1,25 @@
 import * as vscode from "vscode";
-import { RpcClient } from "./rpcClient.js";
+import { type ImageContent, RpcClient } from "./rpcClient.js";
+
+const SUPPORTED_IMAGE_MIME: Record<string, string> = {
+	".png": "image/png",
+	".jpg": "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif": "image/gif",
+	".webp": "image/webp",
+};
+
+function sanitizeImages(raw: unknown[]): ImageContent[] {
+	const out: ImageContent[] = [];
+	for (const item of raw) {
+		if (!item || typeof item !== "object") continue;
+		const r = item as Record<string, unknown>;
+		if (typeof r.data === "string" && typeof r.mimeType === "string" && r.data.length > 0) {
+			out.push({ type: "image", data: r.data, mimeType: r.mimeType });
+		}
+	}
+	return out;
+}
 
 const EXTENSION_NAME = "codebase";
 
@@ -67,10 +87,14 @@ class ChatPanelProvider implements vscode.WebviewViewProvider {
 						return;
 					}
 					try {
-						await client.prompt(String(msg.message ?? ""));
+						const images = Array.isArray(msg.images) ? sanitizeImages(msg.images) : undefined;
+						await client.prompt(String(msg.message ?? ""), images);
 					} catch (e) {
 						this.post({ type: "error", message: e instanceof Error ? e.message : String(e) });
 					}
+					return;
+				case "pick_images":
+					await this.pickImagesFromDisk();
 					return;
 				case "abort":
 					if (client?.isReady) await client.abort().catch(() => undefined);
@@ -86,6 +110,35 @@ class ChatPanelProvider implements vscode.WebviewViewProvider {
 
 	focusInput(): void {
 		this.post({ type: "focus" });
+	}
+
+	private async pickImagesFromDisk(): Promise<void> {
+		const picked = await vscode.window.showOpenDialog({
+			canSelectMany: true,
+			canSelectFolders: false,
+			openLabel: "Attach to Codebase",
+			filters: { Images: ["png", "jpg", "jpeg", "gif", "webp"] },
+		});
+		if (!picked || picked.length === 0) return;
+		const images: ImageContent[] = [];
+		for (const uri of picked) {
+			try {
+				const bytes = await vscode.workspace.fs.readFile(uri);
+				const lower = uri.path.toLowerCase();
+				const ext = lower.slice(lower.lastIndexOf("."));
+				const mimeType = SUPPORTED_IMAGE_MIME[ext] ?? "image/png";
+				images.push({
+					type: "image",
+					data: Buffer.from(bytes).toString("base64"),
+					mimeType,
+				});
+			} catch (e) {
+				this.output.appendLine(`could not read ${uri.fsPath}: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		}
+		if (images.length > 0) {
+			this.post({ type: "images_picked", images });
+		}
 	}
 
 	restart(): void {
@@ -176,8 +229,11 @@ class ChatPanelProvider implements vscode.WebviewViewProvider {
 <div id="transcript"></div>
 <div id="permission" hidden></div>
 <form id="composer">
-	<textarea id="input" rows="3" placeholder="Ask codebase…"></textarea>
+	<div id="attachments" hidden></div>
+	<textarea id="input" rows="3" placeholder="Ask codebase… (paste an image with Cmd-V)"></textarea>
 	<div id="composer-row">
+		<button type="button" id="attach" title="Attach images (PNG/JPG/GIF/WebP)">📎 Image</button>
+		<div class="spacer"></div>
 		<button type="button" id="abort" disabled>Abort</button>
 		<button type="submit" id="send">Send</button>
 	</div>
