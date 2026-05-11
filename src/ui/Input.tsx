@@ -37,7 +37,7 @@ interface InputProps {
 
 const MAX_SUGGESTIONS = 6;
 
-const PLACEHOLDERS = [
+const PLACEHOLDERS_FRESH = [
 	"Ask anything · / for commands",
 	"Try /help to see what I can do",
 	"Tell me what to build · / for commands",
@@ -45,9 +45,21 @@ const PLACEHOLDERS = [
 	"What are we working on?",
 ];
 
-/** Pick a placeholder once per Input mount so it stays put for the session. */
-function pickPlaceholder(): string {
-	return PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)];
+const PLACEHOLDERS_RETURNING = [
+	"Welcome back · ↑ for prior prompts",
+	"Picking up where you left off · ↑ for history",
+	"What's next? · ↑ recalls past prompts",
+	"Ready when you are · / for commands · ↑ for history",
+];
+
+/**
+ * Pick a placeholder once per Input mount. The returning-user variants
+ * mention ↑ for history so users with persisted prompts learn the
+ * shortcut; fresh sessions emphasize / and free-form prompts.
+ */
+function pickPlaceholder(hasHistory: boolean): string {
+	const pool = hasHistory ? PLACEHOLDERS_RETURNING : PLACEHOLDERS_FRESH;
+	return pool[Math.floor(Math.random() * pool.length)];
 }
 
 /**
@@ -81,7 +93,7 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 	const [historyIdx, setHistoryIdx] = useState(-1);
 	const [liveBuffer, setLiveBuffer] = useState<string | null>(null);
 	// Stable per-mount placeholder so the hint doesn't flicker between renders.
-	const placeholderRef = useRef<string>(pickPlaceholder());
+	const placeholderRef = useRef<string>(pickPlaceholder((history?.length ?? 0) > 0));
 
 	// Autocomplete only fires when the buffer starts with `/` AND there's
 	// no whitespace yet (so once the user types a space, they're past the
