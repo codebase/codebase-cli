@@ -202,29 +202,35 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 }
 
 /**
- * Branded header — the C mark + wordmark in cyan. Renders as a small
- * ASCII glyph on the left and "codebase" wordmark on the right so the
- * wizard feels like a product, not a config dump.
+ * Branded header — pixel C logo matching web/public/favicon.svg (3
+ * pixels on top, 3 on left, 3 on bottom — 9 large pixels total). Each
+ * SVG pixel is rendered as two block chars wide here to keep the C
+ * proportional in a 1:2 cell ratio terminal.
  */
 function BrandHeader(): React.ReactNode {
+	const fill = "██";
+	const gap = "  ";
+	const rows = [
+		{ id: "top", text: `${gap}${fill}${fill}${fill}` },
+		{ id: "left-1", text: fill },
+		{ id: "left-2", text: fill },
+		{ id: "left-3", text: fill },
+		{ id: "bottom", text: `${gap}${fill}${fill}${fill}` },
+	];
 	return (
 		<Box flexDirection="row" marginBottom={1}>
 			<Box flexDirection="column" marginRight={2}>
-				<Text bold color="cyan">
-					{"╭─╮"}
-				</Text>
-				<Text bold color="cyan">
-					{"│  "}
-				</Text>
-				<Text bold color="cyan">
-					{"╰─╯"}
-				</Text>
+				{rows.map((row) => (
+					<Text key={row.id} bold color="cyan">
+						{row.text}
+					</Text>
+				))}
 			</Box>
 			<Box flexDirection="column" justifyContent="center">
 				<Text bold color="cyan">
 					codebase
 				</Text>
-				<Text dimColor>AI coding agent · CLI {process.env.CODEBASE_VERSION ?? ""}</Text>
+				<Text dimColor>AI coding agent · CLI</Text>
 			</Box>
 		</Box>
 	);

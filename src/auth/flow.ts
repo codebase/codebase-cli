@@ -165,12 +165,12 @@ body {
 	text-align: center;
 }
 .logo {
-	width: 56px;
-	height: 56px;
+	width: 64px;
+	height: 64px;
 	margin: 0 auto 24px;
 	display: block;
 }
-.logo path { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.logo rect { fill: currentColor; }
 .icon {
 	width: 48px;
 	height: 48px;
@@ -223,8 +223,10 @@ h1 {
 </head>
 <body>
 <div class="card">
-	<svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
-		<path d="M44 18a18 18 0 1 0 0 28" />
+	<svg class="logo" viewBox="7 6 6 7" shape-rendering="crispEdges" aria-hidden="true">
+		<rect width="1" height="1" x="9" y="7" /><rect width="1" height="1" x="10" y="7" /><rect width="1" height="1" x="11" y="7" />
+		<rect width="1" height="1" x="8" y="8" /><rect width="1" height="1" x="8" y="9" /><rect width="1" height="1" x="8" y="10" />
+		<rect width="1" height="1" x="9" y="11" /><rect width="1" height="1" x="10" y="11" /><rect width="1" height="1" x="11" y="11" />
 	</svg>
 	<div class="brand">codebase</div>
 	<div class="icon" aria-hidden="true">${ok ? "✓" : "!"}</div>
