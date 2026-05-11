@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { Box, Text } from "ink";
+import { useEffect, useState } from "react";
 import type { ChatState } from "../types.js";
 import { Throbber } from "./Throbber.js";
 
@@ -10,11 +11,31 @@ interface StatusProps {
 	contextWindow?: number;
 }
 
+/**
+ * Playful verbs we cycle through while the agent is thinking — the
+ * Claude Code signature. They all read as "the model is working".
+ * Kept ASCII-clean so they line up in any terminal font.
+ */
+const THINKING_VERBS = [
+	"Thinking",
+	"Pondering",
+	"Synthesizing",
+	"Cogitating",
+	"Ruminating",
+	"Deliberating",
+	"Mulling",
+	"Marinating",
+	"Brewing",
+	"Contemplating",
+	"Reasoning",
+	"Considering",
+];
+
 const STATUS_LABEL: Record<ChatState["status"], string> = {
 	idle: "ready",
-	thinking: "thinking",
-	streaming: "responding",
-	tool: "tool",
+	thinking: "Thinking",
+	streaming: "Writing",
+	tool: "Working",
 	aborted: "aborted",
 	error: "error",
 };
@@ -36,7 +57,8 @@ const STATUS_COLOR: Record<ChatState["status"], string> = {
  */
 export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
-	const label = STATUS_LABEL[state.status];
+	const verb = useThinkingVerb(state.status === "thinking");
+	const label = state.status === "thinking" ? verb : STATUS_LABEL[state.status];
 	const color = STATUS_COLOR[state.status];
 	const u = state.usage;
 	const usedTokens = u.input + u.cacheRead;
@@ -70,6 +92,34 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 			</Box>
 		</Box>
 	);
+}
+
+/**
+ * While the agent is thinking, swap the verb every 3 seconds. We pick
+ * the next verb at random (excluding the current one) instead of
+ * cycling in order so the same word doesn't reappear at predictable
+ * beats. When the status leaves thinking we drop back to the first
+ * verb so re-entry starts fresh.
+ */
+function useThinkingVerb(active: boolean): string {
+	const [verb, setVerb] = useState(THINKING_VERBS[0]);
+	useEffect(() => {
+		if (!active) {
+			setVerb(THINKING_VERBS[0]);
+			return;
+		}
+		const id = setInterval(() => {
+			setVerb((current) => {
+				let next = current;
+				while (next === current) {
+					next = THINKING_VERBS[Math.floor(Math.random() * THINKING_VERBS.length)];
+				}
+				return next;
+			});
+		}, 3000);
+		return () => clearInterval(id);
+	}, [active]);
+	return verb;
 }
 
 function formatCost(value: number): string {
