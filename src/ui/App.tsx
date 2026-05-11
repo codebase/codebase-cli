@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { Box, Text, useApp } from "ink";
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
@@ -130,6 +131,18 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
 
 	const handleSubmit = async (text: string) => {
+		// `!cmd` runs a shell command directly — the CC convention for
+		// "I just want to check something real quick" without involving
+		// the LLM. We bypass the agent loop entirely and inject the
+		// output as a synthetic user / toolResult pair so it shows up in
+		// the transcript but doesn't end up in the model's context.
+		if (text.startsWith("!") && text.length > 1) {
+			await runShellEscape(text.slice(1), bundle.toolContext.cwd, (line) =>
+				setStatusLines((prev) => [...prev, line]),
+			);
+			return;
+		}
+
 		// Slash commands first — they bypass the agent.
 		if (text.startsWith("/")) {
 			const result = await registry.dispatch(text, {
@@ -302,6 +315,43 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			)}
 		</Box>
 	);
+}
+
+/**
+ * Run a one-shot `!command` and append its output to the status lines.
+ * This is intentionally divorced from the agent's shell tool — the
+ * agent's tool is for tool-use turns, this is a CLI escape so the user
+ * can `!git status` without spending a turn. Output is capped at 32 KB
+ * to keep the transcript from drowning.
+ */
+async function runShellEscape(command: string, cwd: string, emit: (line: string) => void): Promise<void> {
+	emit(`! ${command}`);
+	return new Promise<void>((resolve) => {
+		const child = spawn(command, { shell: true, cwd, env: process.env });
+		let buffer = "";
+		const MAX = 32 * 1024;
+		const onChunk = (chunk: Buffer) => {
+			if (buffer.length >= MAX) return;
+			buffer += chunk.toString("utf8").slice(0, MAX - buffer.length);
+		};
+		child.stdout?.on("data", onChunk);
+		child.stderr?.on("data", onChunk);
+		child.on("close", (code) => {
+			const trimmed = buffer.trim();
+			if (trimmed.length === 0) {
+				emit(code === 0 ? "(no output)" : `(exit ${code})`);
+			} else {
+				const lines = trimmed.split("\n").slice(0, 60);
+				for (const line of lines) emit(line);
+				if (code !== 0) emit(`(exit ${code})`);
+			}
+			resolve();
+		});
+		child.on("error", (err) => {
+			emit(`! ${err.message}`);
+			resolve();
+		});
+	});
 }
 
 /** Extract the user-visible text from a content array (image messages). */
