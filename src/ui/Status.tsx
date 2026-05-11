@@ -65,6 +65,7 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 	}
 	const color = STATUS_COLOR[state.status];
 	const tokRate = useTokenRate(state);
+	const elapsedSec = useBusyElapsed(busy);
 	const u = state.usage;
 	const usedTokens = u.input + u.cacheRead;
 	const ctxPct = contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
@@ -83,6 +84,7 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 						</>
 					) : null}
 					<Text color={color}>{label}</Text>
+					{elapsedSec !== undefined ? <Text dimColor> ({elapsedSec}s)</Text> : null}
 				</Box>
 				<Box>
 					<Text dimColor>
@@ -99,6 +101,30 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 			</Box>
 		</Box>
 	);
+}
+
+/**
+ * Track how long the agent has been busy. Returns undefined unless the
+ * elapsed time has crossed 3 seconds — short turns shouldn't carry an
+ * "(0s)" suffix on the status bar. Resets cleanly when the agent
+ * goes idle so consecutive turns each start their own timer.
+ */
+function useBusyElapsed(busy: boolean): number | undefined {
+	const startRef = useRef<number | undefined>(undefined);
+	const [tick, setTick] = useState(0);
+	useEffect(() => {
+		if (!busy) {
+			startRef.current = undefined;
+			return;
+		}
+		startRef.current = Date.now();
+		const id = setInterval(() => setTick((t) => t + 1), 1000);
+		return () => clearInterval(id);
+	}, [busy]);
+	if (!busy || !startRef.current) return undefined;
+	const elapsed = Math.floor((Date.now() - startRef.current) / 1000);
+	void tick;
+	return elapsed >= 3 ? elapsed : undefined;
 }
 
 /**
