@@ -125,18 +125,18 @@ afterAll(async () => {
 });
 
 describe("exchangeCode", () => {
-	it("posts the form-encoded body and returns Credentials", async () => {
+	it("posts the JSON body and returns Credentials", async () => {
 		tokenRoutes["/token"] = (req, res) => {
 			let body = "";
 			req.on("data", (chunk) => {
 				body += chunk;
 			});
 			req.on("end", () => {
-				const params = new URLSearchParams(body);
-				expect(params.get("grant_type")).toBe("authorization_code");
-				expect(params.get("code")).toBe("CODE");
-				expect(params.get("code_verifier")).toBe("VERIFIER");
-				expect(params.get("redirect_uri")).toBe("http://localhost/cb");
+				const params = JSON.parse(body);
+				expect(params.grant_type).toBe("authorization_code");
+				expect(params.code).toBe("CODE");
+				expect(params.code_verifier).toBe("VERIFIER");
+				expect(params.redirect_uri).toBe("http://localhost/cb");
 				res.setHeader("Content-Type", "application/json");
 				res.end(
 					JSON.stringify({
@@ -183,9 +183,9 @@ describe("refreshAccessToken", () => {
 				body += chunk;
 			});
 			req.on("end", () => {
-				const params = new URLSearchParams(body);
-				expect(params.get("grant_type")).toBe("refresh_token");
-				expect(params.get("refresh_token")).toBe("OLD_REFRESH");
+				const params = JSON.parse(body);
+				expect(params.grant_type).toBe("refresh_token");
+				expect(params.refresh_token).toBe("OLD_REFRESH");
 				res.setHeader("Content-Type", "application/json");
 				res.end(JSON.stringify({ access_token: "NEW_TOK", expires_in: 600 }));
 			});

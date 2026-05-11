@@ -33,10 +33,16 @@ interface FirstRunSetupProps {
 	authBase?: string;
 }
 
+const MENU_OPTIONS = [
+	{ key: "oauth", label: "Sign in with codebase.design", hint: "OAuth via browser · free credits · curated skills" },
+	{ key: "byok", label: "Bring your own LLM key", hint: "paste an Anthropic / OpenAI / Groq / etc. key" },
+	{ key: "quit", label: "Quit", hint: "exit the wizard" },
+] as const;
+
 type Mode =
-	| { kind: "menu" }
+	| { kind: "menu"; cursor: number }
 	| { kind: "oauth-running" }
-	| { kind: "byok-provider" }
+	| { kind: "byok-provider"; cursor: number }
 	| { kind: "byok-key"; provider: ProviderChoice; buffer: string }
 	| { kind: "error"; message: string };
 
@@ -46,7 +52,7 @@ interface ManualUrlInfo {
 }
 
 export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_BASE }: FirstRunSetupProps) {
-	const [mode, setMode] = useState<Mode>({ kind: "menu" });
+	const [mode, setMode] = useState<Mode>({ kind: "menu", cursor: 0 });
 	const [manualUrl, setManualUrl] = useState<ManualUrlInfo | undefined>(undefined);
 	const credStore = useMemo(() => store ?? new CredentialsStore(), [store]);
 
@@ -91,20 +97,45 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 				return;
 			}
 			if (mode.kind === "menu") {
-				if (input === "1") {
-					setMode({ kind: "oauth-running" });
-				} else if (input === "2") {
-					setMode({ kind: "byok-provider" });
-				} else if (input === "3" || input === "q") {
-					onQuit();
+				if (key.upArrow || (key.shift && key.tab)) {
+					setMode({ kind: "menu", cursor: (mode.cursor - 1 + MENU_OPTIONS.length) % MENU_OPTIONS.length });
+					return;
 				}
+				if (key.downArrow || key.tab) {
+					setMode({ kind: "menu", cursor: (mode.cursor + 1) % MENU_OPTIONS.length });
+					return;
+				}
+				if (key.return) {
+					applyMenuChoice(MENU_OPTIONS[mode.cursor].key);
+					return;
+				}
+				// Number-key fast-path stays for muscle memory.
+				if (input === "1") applyMenuChoice("oauth");
+				else if (input === "2") applyMenuChoice("byok");
+				else if (input === "3" || input === "q") applyMenuChoice("quit");
 				return;
 			}
 			if (mode.kind === "byok-provider") {
 				if (key.escape) {
-					setMode({ kind: "menu" });
+					setMode({ kind: "menu", cursor: 1 });
 					return;
 				}
+				if (key.upArrow || (key.shift && key.tab)) {
+					setMode({
+						kind: "byok-provider",
+						cursor: (mode.cursor - 1 + PROVIDER_CHOICES.length) % PROVIDER_CHOICES.length,
+					});
+					return;
+				}
+				if (key.downArrow || key.tab) {
+					setMode({ kind: "byok-provider", cursor: (mode.cursor + 1) % PROVIDER_CHOICES.length });
+					return;
+				}
+				if (key.return) {
+					setMode({ kind: "byok-key", provider: PROVIDER_CHOICES[mode.cursor], buffer: "" });
+					return;
+				}
+				// Number-key fast-path stays.
 				const idx = Number.parseInt(input, 10) - 1;
 				if (Number.isInteger(idx) && idx >= 0 && idx < PROVIDER_CHOICES.length) {
 					setMode({ kind: "byok-key", provider: PROVIDER_CHOICES[idx], buffer: "" });
@@ -113,7 +144,7 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 			}
 			if (mode.kind === "byok-key") {
 				if (key.escape) {
-					setMode({ kind: "byok-provider" });
+					setMode({ kind: "byok-provider", cursor: 0 });
 					return;
 				}
 				if (key.return) {
@@ -146,20 +177,22 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 			}
 			if (mode.kind === "error") {
 				if (key.return || key.escape || input === " ") {
-					setMode({ kind: "menu" });
+					setMode({ kind: "menu", cursor: 0 });
 				}
 			}
 		},
 		{ isActive: mode.kind !== "oauth-running" },
 	);
 
+	function applyMenuChoice(choice: "oauth" | "byok" | "quit"): void {
+		if (choice === "oauth") setMode({ kind: "oauth-running" });
+		else if (choice === "byok") setMode({ kind: "byok-provider", cursor: 0 });
+		else onQuit();
+	}
+
 	return (
 		<Box flexDirection="column" paddingX={1} paddingY={1}>
-			<Box marginBottom={1}>
-				<Text bold color="cyan">
-					Welcome to codebase
-				</Text>
-			</Box>
+			<BrandHeader />
 			<Box marginBottom={1}>
 				<Text dimColor>Pick how you want to power the agent. You can change this later via `codebase auth`.</Text>
 			</Box>
@@ -168,23 +201,53 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 	);
 }
 
+/**
+ * Branded header — the C mark + wordmark in cyan. Renders as a small
+ * ASCII glyph on the left and "codebase" wordmark on the right so the
+ * wizard feels like a product, not a config dump.
+ */
+function BrandHeader(): React.ReactNode {
+	return (
+		<Box flexDirection="row" marginBottom={1}>
+			<Box flexDirection="column" marginRight={2}>
+				<Text bold color="cyan">
+					{"╭─╮"}
+				</Text>
+				<Text bold color="cyan">
+					{"│  "}
+				</Text>
+				<Text bold color="cyan">
+					{"╰─╯"}
+				</Text>
+			</Box>
+			<Box flexDirection="column" justifyContent="center">
+				<Text bold color="cyan">
+					codebase
+				</Text>
+				<Text dimColor>AI coding agent · CLI {process.env.CODEBASE_VERSION ?? ""}</Text>
+			</Box>
+		</Box>
+	);
+}
+
 function renderBody(mode: Mode, authBase: string, manualUrl: ManualUrlInfo | undefined): React.ReactNode {
 	if (mode.kind === "menu") {
 		return (
 			<Box flexDirection="column">
-				<Text>
-					<Text color="green">1.</Text> Sign in with codebase.design{"  "}
-					<Text dimColor>— OAuth via browser, free Claude credits, account-curated skills</Text>
-				</Text>
-				<Text>
-					<Text color="green">2.</Text> Bring your own LLM key{"   "}
-					<Text dimColor>— paste an Anthropic / OpenAI / Groq / etc. key</Text>
-				</Text>
-				<Text>
-					<Text color="green">3.</Text> Quit
-				</Text>
+				{MENU_OPTIONS.map((opt, i) => {
+					const selected = i === mode.cursor;
+					return (
+						<Text key={opt.key}>
+							<Text color={selected ? "cyan" : "gray"}>{selected ? "▸ " : "  "}</Text>
+							<Text bold={selected} color={selected ? "white" : undefined}>
+								{opt.label}
+							</Text>
+							<Text dimColor>{"   — " + opt.hint}</Text>
+						</Text>
+					);
+				})}
 				<Box marginTop={1}>
-					<Text dimColor>Press 1, 2, or 3.</Text>
+					<Text dimColor>↑↓ to move · Enter to select · 1/2/3 fast-path · Ctrl-C to quit</Text>
 				</Box>
 			</Box>
 		);
@@ -194,20 +257,22 @@ function renderBody(mode: Mode, authBase: string, manualUrl: ManualUrlInfo | und
 			return (
 				<Box flexDirection="column">
 					<Text bold color="yellow">
-						Open this URL in your browser to sign in:
+						Sign in to continue
 					</Text>
 					<Box marginTop={1}>
-						<Text dimColor>({manualUrl.reason})</Text>
+						<Text dimColor>{manualUrl.reason}</Text>
 					</Box>
 					<Box marginTop={1}>
-						<Text>{osc8Link(manualUrl.url, "→ Click here to sign in")}</Text>
+						<Text bold color="cyan">
+							{osc8Link(manualUrl.url, "→ Click here to sign in (cmd-click in most terminals)")}
+						</Text>
 					</Box>
 					<Box marginTop={1} flexDirection="column">
-						<Text dimColor>Or copy the URL below and paste it into a browser:</Text>
-						<Text>{manualUrl.url}</Text>
+						<Text dimColor>If clicking didn't open a browser, copy this URL:</Text>
+						<Text dimColor>{manualUrl.url}</Text>
 					</Box>
 					<Box marginTop={1}>
-						<Text dimColor>Waiting for the browser to redirect back here. (Ctrl-C to cancel.)</Text>
+						<Text dimColor>Waiting for the browser to redirect back. (Ctrl-C to cancel.)</Text>
 					</Box>
 				</Box>
 			);
@@ -227,17 +292,24 @@ function renderBody(mode: Mode, authBase: string, manualUrl: ManualUrlInfo | und
 		return (
 			<Box flexDirection="column">
 				<Text bold>Pick a provider:</Text>
-				<Box flexDirection="column" marginLeft={2} marginTop={1}>
-					{PROVIDER_CHOICES.map((p, i) => (
-						<Text key={p.id}>
-							<Text color="green">{`${i + 1}. `}</Text>
-							{p.label}
-							<Text dimColor>{`  — ${p.hint}`}</Text>
-						</Text>
-					))}
+				<Box flexDirection="column" marginTop={1}>
+					{PROVIDER_CHOICES.map((p, i) => {
+						const selected = i === mode.cursor;
+						return (
+							<Text key={p.id}>
+								<Text color={selected ? "cyan" : "gray"}>{selected ? "▸ " : "  "}</Text>
+								<Text bold={selected} color={selected ? "white" : undefined}>
+									{p.label}
+								</Text>
+								<Text dimColor>{"  — " + p.hint}</Text>
+							</Text>
+						);
+					})}
 				</Box>
 				<Box marginTop={1}>
-					<Text dimColor>Press 1–{PROVIDER_CHOICES.length}, or Esc to go back.</Text>
+					<Text dimColor>
+						↑↓ to move · Enter to select · 1–{PROVIDER_CHOICES.length} fast-path · Esc to go back
+					</Text>
 				</Box>
 			</Box>
 		);

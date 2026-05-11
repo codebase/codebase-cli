@@ -123,33 +123,154 @@ export function awaitCallback(server: Server, expectedState: string, timeoutMs: 
 }
 
 function renderResponse(res: ServerResponse, ok: boolean, message: string): void {
+	const title = ok ? "Signed in" : "Sign-in failed";
+	const accent = ok ? "#22c55e" : "#ef4444";
+	const subtitle = ok ? "You can close this tab." : "Return to your terminal for details.";
+	// Inline SVG logo + minimal CSS. No external deps so the page renders
+	// before any network even on the CLI's localhost-only callback host.
 	const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>codebase</title></head>
-<body style="font-family:system-ui;padding:40px;max-width:560px;margin:auto;">
-<h1>${ok ? "✓" : "✗"} codebase</h1>
-<p>${message}</p>
-</body></html>`;
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>codebase · ${title}</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+	font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+	background: #0a0a0b;
+	color: #f1f1f3;
+	min-height: 100vh;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+}
+@media (prefers-color-scheme: light) {
+	body { background: #fafafa; color: #0a0a0b; }
+	.card { background: #fff; border-color: #e5e5ea; box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06); }
+	.subtitle { color: #6b6b73; }
+	.hint { color: #6b6b73; }
+}
+.card {
+	max-width: 440px;
+	width: 100%;
+	padding: 40px 36px 32px;
+	border: 1px solid #1f1f23;
+	border-radius: 16px;
+	background: #131316;
+	box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 40px rgba(0,0,0,0.4);
+	text-align: center;
+}
+.logo {
+	width: 56px;
+	height: 56px;
+	margin: 0 auto 24px;
+	display: block;
+}
+.logo path { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.icon {
+	width: 48px;
+	height: 48px;
+	margin: 0 auto 12px;
+	border-radius: 999px;
+	background: ${accent}22;
+	color: ${accent};
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 28px;
+	font-weight: 600;
+}
+h1 {
+	font-size: 22px;
+	font-weight: 600;
+	margin: 0 0 4px;
+	letter-spacing: -0.01em;
+}
+.subtitle {
+	color: #a3a3ab;
+	font-size: 14px;
+	margin: 0 0 24px;
+}
+.message {
+	background: rgba(255,255,255,0.04);
+	border: 1px solid rgba(255,255,255,0.06);
+	padding: 12px 14px;
+	border-radius: 8px;
+	font-size: 13px;
+	text-align: left;
+	white-space: pre-wrap;
+}
+@media (prefers-color-scheme: light) {
+	.message { background: #f5f5f7; border-color: #e5e5ea; }
+}
+.hint {
+	margin-top: 18px;
+	font-size: 12px;
+	color: #6b6b73;
+}
+.brand {
+	font-size: 12px;
+	color: #6b6b73;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+	margin-bottom: 8px;
+}
+</style>
+</head>
+<body>
+<div class="card">
+	<svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+		<path d="M44 18a18 18 0 1 0 0 28" />
+	</svg>
+	<div class="brand">codebase</div>
+	<div class="icon" aria-hidden="true">${ok ? "✓" : "!"}</div>
+	<h1>${title}</h1>
+	<p class="subtitle">${subtitle}</p>
+	<div class="message">${escapeHtml(message)}</div>
+	<p class="hint">${ok ? "Your terminal is signed in via codebase.design." : "Try <code>codebase auth login</code> again, or check your terminal for the error."}</p>
+</div>
+</body>
+</html>`;
 	res.statusCode = ok ? 200 : 400;
 	res.setHeader("Content-Type", "text/html; charset=utf-8");
+	res.setHeader("Cache-Control", "no-store");
 	res.end(html);
 }
 
+function escapeHtml(s: string): string {
+	return s
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
+/**
+ * Token endpoints on codebase.design's web app expect JSON bodies —
+ * `app.js` only mounts `express.json()`, no `express.urlencoded()`.
+ * OAuth 2.0 RFC 6749 §4.1.3 says token endpoints MUST accept
+ * form-urlencoded; the web app is non-standard there but it's easier
+ * to send JSON from the CLI than to upstream a middleware change.
+ */
 export async function exchangeCode(
 	config: OAuthConfig,
 	params: { code: string; codeVerifier: string; redirectUri: string },
 ): Promise<Credentials> {
-	const body = new URLSearchParams({
-		grant_type: "authorization_code",
-		client_id: config.clientId,
-		code: params.code,
-		code_verifier: params.codeVerifier,
-		redirect_uri: params.redirectUri,
-	});
-
 	const res = await fetch(config.tokenUrl, {
 		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-		body,
+		headers: { "Content-Type": "application/json", Accept: "application/json" },
+		body: JSON.stringify({
+			grant_type: "authorization_code",
+			client_id: config.clientId,
+			code: params.code,
+			code_verifier: params.codeVerifier,
+			redirect_uri: params.redirectUri,
+		}),
 	});
 	if (!res.ok) {
 		const text = await res.text();
@@ -162,15 +283,14 @@ export async function exchangeCode(
 }
 
 export async function refreshAccessToken(config: OAuthConfig, refreshToken: string): Promise<Credentials> {
-	const body = new URLSearchParams({
-		grant_type: "refresh_token",
-		client_id: config.clientId,
-		refresh_token: refreshToken,
-	});
 	const res = await fetch(config.refreshUrl, {
 		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-		body,
+		headers: { "Content-Type": "application/json", Accept: "application/json" },
+		body: JSON.stringify({
+			grant_type: "refresh_token",
+			client_id: config.clientId,
+			refresh_token: refreshToken,
+		}),
 	});
 	if (!res.ok) {
 		const text = await res.text();
@@ -182,12 +302,11 @@ export async function refreshAccessToken(config: OAuthConfig, refreshToken: stri
 
 export async function revokeToken(config: OAuthConfig, accessToken: string): Promise<void> {
 	if (!config.revokeUrl) return;
-	const body = new URLSearchParams({ token: accessToken, client_id: config.clientId });
 	try {
 		await fetch(config.revokeUrl, {
 			method: "POST",
-			headers: { "Content-Type": "application/x-www-form-urlencoded" },
-			body,
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ token: accessToken, client_id: config.clientId }),
 		});
 	} catch {
 		// Best-effort logout — local credentials clear regardless.
