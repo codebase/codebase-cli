@@ -256,13 +256,25 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		}
 	};
 
+	// Double-tap-to-exit: first Ctrl-C when idle posts a hint, second
+	// within 2s actually exits. While busy, Ctrl-C cancels the turn (one
+	// press) — the user already meant to interrupt and shouldn't have
+	// to confirm. The hint is a status line that times out on its own
+	// so the user doesn't end up with a stale message stuck below.
+	const exitTimerRef = useMemo(() => ({ deadline: 0 }), []);
 	const handleAbort = () => {
 		if (busy) {
 			bundle.agent.abort();
 			dispatch({ type: "abort" });
-		} else {
-			onExit();
+			return;
 		}
+		const now = Date.now();
+		if (now < exitTimerRef.deadline) {
+			onExit();
+			return;
+		}
+		exitTimerRef.deadline = now + 2000;
+		setStatusLines((prev) => [...prev, "Press Ctrl-C again within 2s to exit."]);
 	};
 
 	return (
