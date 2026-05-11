@@ -37,8 +37,8 @@ export function Welcome({ modelName, source, cwd }: WelcomeProps) {
 			<Box marginTop={1} flexDirection="column">
 				<Text dimColor>Ask me to read code, edit files, run commands, or anything in between.</Text>
 				<Text dimColor>
-					Try: <Text color="cyan">/help</Text> for commands · <Text color="cyan">/cost</Text> for tokens ·{" "}
-					<Text color="cyan">/copy</Text> to clipboard · <Text color="cyan">/diff</Text> for the working tree
+					<Text color="cyan">/</Text> commands · <Text color="cyan">!</Text>shell · <Text color="cyan">↑↓</Text>{" "}
+					history · <Text color="cyan">Tab</Text> complete · <Text color="cyan">\</Text>+Enter for newline
 				</Text>
 				<Text dimColor>Ctrl-C twice to exit.</Text>
 			</Box>
