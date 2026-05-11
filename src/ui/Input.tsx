@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { useMemo, useRef, useState } from "react";
+import { completePath, findAtTokenAt } from "./path-complete.js";
 import {
 	backspace,
 	deleteForward,
@@ -33,6 +34,8 @@ interface InputProps {
 	 * start of the buffer (or the buffer is empty).
 	 */
 	history?: readonly string[];
+	/** Working directory used to resolve @-token Tab completion. */
+	cwd?: string;
 }
 
 const MAX_SUGGESTIONS = 6;
@@ -80,7 +83,7 @@ function pickPlaceholder(hasHistory: boolean): string {
  *   Ctrl-Z          undo
  *   Ctrl-C          abort (busy → cancel turn, idle → exit app)
  */
-export function Input({ disabled, onSubmit, onAbort, commands, history }: InputProps) {
+export function Input({ disabled, onSubmit, onAbort, commands, history, cwd }: InputProps) {
 	const [state, setState] = useState(initialInputState());
 	const [suggestionIdx, setSuggestionIdx] = useState(0);
 	/**
@@ -94,6 +97,13 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 	const [liveBuffer, setLiveBuffer] = useState<string | null>(null);
 	// Stable per-mount placeholder so the hint doesn't flicker between renders.
 	const placeholderRef = useRef<string>(pickPlaceholder((history?.length ?? 0) > 0));
+
+	// @-path completion cycler — `pathMatches` is the list, `pathIdx` is
+	// the current cycle position. Both reset whenever the buffer
+	// changes away from the active @-token.
+	const [pathMatches, setPathMatches] = useState<string[]>([]);
+	const [pathIdx, setPathIdx] = useState(0);
+	const lastAtTokenRef = useRef<{ buffer: string; cursor: number } | null>(null);
 
 	// Autocomplete only fires when the buffer starts with `/` AND there's
 	// no whitespace yet (so once the user types a space, they're past the
@@ -133,6 +143,40 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 				const chosen = suggestions[clampedSuggestionIdx];
 				setState({ ...initialInputState(), buffer: `/${chosen.name} `, cursor: chosen.name.length + 2 });
 				setSuggestionIdx(0);
+				return;
+			}
+		}
+
+		// @-path Tab completion. Only kicks in when slash autocomplete is
+		// inactive and the cursor sits inside an @-token. Repeated Tab
+		// cycles through matches; any keypress other than Tab clears the
+		// cycle so the next Tab recomputes a fresh list.
+		if (key.tab && !autocompleteActive && cwd) {
+			const at = findAtTokenAt(state.buffer, state.cursor);
+			if (at) {
+				let matches = pathMatches;
+				let idx = pathIdx;
+				const cached = lastAtTokenRef.current;
+				const sameContext =
+					cached && cached.buffer === state.buffer && cached.cursor === state.cursor && matches.length > 0;
+				if (!sameContext) {
+					matches = completePath(at.prefix, cwd);
+					idx = 0;
+					setPathMatches(matches);
+					setPathIdx(0);
+				} else {
+					idx = (idx + 1) % matches.length;
+					setPathIdx(idx);
+				}
+				if (matches.length === 0) return;
+				const chosen = matches[idx];
+				const before = state.buffer.slice(0, at.start);
+				const after = state.buffer.slice(state.cursor);
+				const inserted = `@${chosen}`;
+				const newBuffer = before + inserted + after;
+				const newCursor = before.length + inserted.length;
+				setState({ ...initialInputState(), buffer: newBuffer, cursor: newCursor });
+				lastAtTokenRef.current = { buffer: newBuffer, cursor: newCursor };
 				return;
 			}
 		}
@@ -244,6 +288,12 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 			if (historyIdx >= 0) {
 				setHistoryIdx(-1);
 				setLiveBuffer(null);
+			}
+			// Break the @-Tab cycle so the next Tab recomputes from the new text.
+			if (pathMatches.length > 0) {
+				setPathMatches([]);
+				setPathIdx(0);
+				lastAtTokenRef.current = null;
 			}
 			setState(insertChar(state, input));
 		}

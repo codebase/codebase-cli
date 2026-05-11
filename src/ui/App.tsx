@@ -350,6 +350,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					onAbort={handleAbort}
 					commands={commandSuggestions}
 					history={inputHistory}
+					cwd={bundle.toolContext.cwd}
 				/>
 			)}
 		</Box>
