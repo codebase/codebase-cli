@@ -204,7 +204,15 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 			return setState(backspace(state));
 		}
 		if (key.delete) return setState(deleteForward(state));
-		if (key.ctrl && input === "d") return setState(deleteForward(state));
+		// Ctrl-D matches readline: on an empty buffer it's EOF (i.e. quit),
+		// on a non-empty buffer it deletes forward like Delete.
+		if (key.ctrl && input === "d") {
+			if (state.buffer.length === 0) {
+				onAbort?.();
+				return;
+			}
+			return setState(deleteForward(state));
+		}
 
 		// Kill ring
 		if (key.ctrl && input === "k") return setState(killToEnd(state));
