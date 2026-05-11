@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { Box, Text, useApp } from "ink";
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
@@ -159,6 +161,19 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			if (result.handled) return;
 		}
 
+		// `@path` tokens auto-attach file contents to the prompt so the
+		// user doesn't have to spend a tool turn just to put a file in
+		// context. Anything that doesn't resolve falls through unchanged
+		// — we don't want to silently transform a literal @-mention.
+		const attachments = collectAttachments(text, bundle.toolContext.cwd);
+		const augmentedText = attachments.length > 0 ? buildAttachmentPrompt(text, attachments) : text;
+		if (attachments.length > 0) {
+			setStatusLines((prev) => [
+				...prev,
+				`Attached: ${attachments.map((a) => a.relPath).join(", ")}`,
+			]);
+		}
+
 		// Capture history-presence BEFORE the user-prompt dispatch — React's
 		// batched updates mean state.messages won't reflect the new user message
 		// in the same tick, but the router needs to know whether this is a
@@ -185,7 +200,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			]);
 		}
 
-		bundle.agent.prompt(text).catch((err: unknown) => {
+		bundle.agent.prompt(augmentedText).catch((err: unknown) => {
 			dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
 		});
 	};
@@ -327,6 +342,69 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			)}
 		</Box>
 	);
+}
+
+interface Attachment {
+	token: string;
+	relPath: string;
+	absPath: string;
+	content: string;
+}
+
+const MAX_ATTACHMENT_BYTES = 128 * 1024;
+const MAX_ATTACHMENTS = 8;
+
+/**
+ * Scan the prompt for `@<path>` tokens and resolve each to a readable
+ * file under (or adjacent to) the cwd. Returns one entry per resolved
+ * file; unresolved `@` mentions don't appear here and stay as literal
+ * text — we never silently drop or rewrite user input.
+ */
+function collectAttachments(text: string, cwd: string): Attachment[] {
+	const out: Attachment[] = [];
+	const seen = new Set<string>();
+	const pattern = /@([A-Za-z0-9_./-]+)/g;
+	for (const match of text.matchAll(pattern)) {
+		if (out.length >= MAX_ATTACHMENTS) break;
+		const rel = match[1];
+		if (!rel || rel.length > 256) continue;
+		// Skip plain email-style @mentions ("@alice") — they don't look like
+		// paths (no slash, no extension) and shouldn't auto-attach.
+		if (!rel.includes("/") && !rel.includes(".")) continue;
+		const abs = isAbsolute(rel) ? rel : join(cwd, rel);
+		if (seen.has(abs)) continue;
+		seen.add(abs);
+		try {
+			const stat = statSync(abs);
+			if (!stat.isFile()) continue;
+			if (stat.size > MAX_ATTACHMENT_BYTES) continue;
+			const content = readFileSync(abs, "utf8");
+			out.push({ token: match[0], relPath: rel, absPath: abs, content });
+		} catch {
+			// File doesn't exist or isn't readable — leave the token in text.
+		}
+	}
+	return out;
+}
+
+/**
+ * Build the agent-bound prompt with attachments inlined as fenced code
+ * blocks above the user's actual ask. The original `@path` tokens stay
+ * in the text so the model can correlate the references with the
+ * attached content.
+ */
+function buildAttachmentPrompt(text: string, attachments: readonly Attachment[]): string {
+	const parts: string[] = ["Attached files (auto-inlined from @ mentions):", ""];
+	for (const a of attachments) {
+		parts.push(`### ${a.relPath}`);
+		parts.push("```");
+		parts.push(a.content);
+		parts.push("```");
+		parts.push("");
+	}
+	parts.push("---");
+	parts.push(text);
+	return parts.join("\n");
 }
 
 /**
