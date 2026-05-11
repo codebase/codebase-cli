@@ -155,6 +155,18 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 			}
 		}
 
+		// Esc clears the buffer back to empty (and exits history mode) so
+		// the user can bail out of a half-typed prompt without having to
+		// hammer Backspace. Matches CC's behavior; harmless when empty.
+		if (key.escape) {
+			if (state.buffer.length === 0 && historyIdx < 0) return;
+			setState(initialInputState());
+			setSuggestionIdx(0);
+			setHistoryIdx(-1);
+			setLiveBuffer(null);
+			return;
+		}
+
 		if (key.return) {
 			// `\<Enter>` inserts a newline instead of submitting — the CC
 			// convention for multi-line input. Strip the trailing `\` and
