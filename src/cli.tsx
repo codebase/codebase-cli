@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { render } from "ink";
+import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
@@ -35,6 +36,15 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runAuthSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "project" || argv[0] === "projects") {
 	runProjectSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "app-server") {
+	// JSON-RPC-ish over stdio for IDE extensions. Auto-approve permissions
+	// by default — IDE clients render approval UIs themselves and we don't
+	// want the server to hang waiting on a TUI prompt no one's watching.
+	// The `--no-auto-approve` flag is for clients that DO implement their
+	// own approval flow via the `permission_request` event.
+	const noAutoApprove = argv.includes("--no-auto-approve");
+	const resume = argv.includes("--resume");
+	runAppServer({ autoApprove: !noAutoApprove, resume }).then((code) => process.exit(code));
 } else if (argv[0] === "run") {
 	const { prompt, outputFormat, autoApprove, error } = parseRunArgs(argv.slice(1));
 	if (error) {
@@ -116,6 +126,7 @@ function printHelp(): void {
 			"  codebase auth <cbk_xxx>      save a manual API key (for SSH / headless)",
 			"  codebase project list        list your projects on codebase.design",
 			"  codebase project pull <id>   download a project as a ZIP",
+			"  codebase app-server          JSON-RPC server on stdio (for IDE extensions)",
 			"  codebase --version           print version and exit",
 			"  codebase --help              show this message",
 			"",
