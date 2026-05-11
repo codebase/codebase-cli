@@ -2,6 +2,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
 import type { ToolExecution } from "../types.js";
+import { Markdown } from "./Markdown.js";
 import { wrapText } from "./wrap.js";
 
 interface MessageProps {
@@ -82,7 +83,7 @@ function MessageBody({
 				{message.content.map((block, idx) => {
 					const key = blockKey(block, idx);
 					if (block.type === "text") {
-						return <WrappedLines key={key} text={block.text} width={width} keyPrefix={key} />;
+						return <Markdown key={key} text={block.text} width={width} keyPrefix={key} />;
 					}
 					if (block.type === "thinking") {
 						return (
