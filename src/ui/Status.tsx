@@ -83,7 +83,12 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 				<Box>
 					<Text dimColor>
 						{modelLabel}
-						{cwdLabel ? ` · ${cwdLabel}` : ""} · {ctxPct}% ctx
+						{cwdLabel ? ` · ${cwdLabel}` : ""} ·{" "}
+					</Text>
+					<Text color={ctxColor(ctxPct)}>
+						{ctxBar(ctxPct)} {ctxPct}%
+					</Text>
+					<Text dimColor>
 						{tokRate !== undefined ? ` · ${tokRate} tok/s` : ""} · ${formatCost(u.cost.total)}
 					</Text>
 				</Box>
@@ -197,6 +202,30 @@ function ErrorCard({ message }: { message: string }) {
 			) : null}
 		</Box>
 	);
+}
+
+/**
+ * Render a tiny 6-cell bar for the context-window meter. Eighth-block
+ * glyphs give us 48 effective steps in 6 chars — enough resolution
+ * that 12% / 25% / 50% all look visibly different. Empty cells stay
+ * as a dim track so the bar always reads as a meter, not a slider.
+ */
+function ctxBar(pct: number): string {
+	const cells = 6;
+	const totalEighths = Math.round((pct / 100) * cells * 8);
+	const full = Math.floor(totalEighths / 8);
+	const remainder = totalEighths - full * 8;
+	const partials = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+	let out = "█".repeat(Math.min(full, cells));
+	if (full < cells && remainder > 0) out += partials[remainder] ?? "";
+	while (out.length < cells) out += "░";
+	return out;
+}
+
+function ctxColor(pct: number): string {
+	if (pct >= 90) return "red";
+	if (pct >= 75) return "yellow";
+	return "gray";
 }
 
 function formatCost(value: number): string {
