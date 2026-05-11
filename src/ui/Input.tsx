@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { useMemo, useRef, useState } from "react";
+import { logInputEvent } from "./debug-input.js";
 import {
 	backspace,
 	deleteForward,
@@ -15,7 +16,6 @@ import {
 	undo,
 	yank,
 } from "./input-state.js";
-import { logInputEvent } from "./debug-input.js";
 import { completePath, findAtTokenAt } from "./path-complete.js";
 
 export interface SlashCommandSuggestion {

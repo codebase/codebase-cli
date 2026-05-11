@@ -71,7 +71,9 @@ export function installTerminalRestoreHandlers(instance?: Instance): void {
 	});
 	process.on("uncaughtException", (err) => {
 		restore();
-		process.stderr.write(`\nuncaught exception: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+		process.stderr.write(
+			`\nuncaught exception: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`,
+		);
 		process.exit(1);
 	});
 	process.on("unhandledRejection", (reason) => {

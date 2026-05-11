@@ -14,20 +14,24 @@ interface PixelCProps {
 	color?: string;
 }
 
-const ROWS: readonly string[] = [
-	`${GAP}${FILL}${FILL}${FILL}`,
-	FILL,
-	FILL,
-	FILL,
-	`${GAP}${FILL}${FILL}${FILL}`,
+// Row id doubles as the React key. Names describe the C shape so the
+// keys are stable regardless of order (biome's array-index-as-key rule
+// is right in general — but here the rows aren't unique by content
+// (the three FILL rows repeat), so we lean on positional ids).
+const ROWS: readonly { id: string; text: string }[] = [
+	{ id: "top", text: `${GAP}${FILL}${FILL}${FILL}` },
+	{ id: "mid-1", text: FILL },
+	{ id: "mid-2", text: FILL },
+	{ id: "mid-3", text: FILL },
+	{ id: "bot", text: `${GAP}${FILL}${FILL}${FILL}` },
 ];
 
 export function PixelC({ color = "cyan" }: PixelCProps) {
 	return (
 		<Box flexDirection="column">
-			{ROWS.map((text, i) => (
-				<Text key={`pixc-${i}`} bold color={color}>
-					{text}
+			{ROWS.map((row) => (
+				<Text key={row.id} bold color={color}>
+					{row.text}
 				</Text>
 			))}
 		</Box>

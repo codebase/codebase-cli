@@ -24,11 +24,6 @@
 		"lineWidth": 120
 	},
 	"files": {
-		"includes": [
-			"src/**/*.ts",
-			"src/**/*.tsx",
-			"!**/node_modules/**/*",
-			"!**/dist/**/*"
-		]
+		"includes": ["src/**/*.ts", "src/**/*.tsx", "!**/node_modules/**/*", "!**/dist/**/*"]
 	}
 }
