@@ -167,6 +167,11 @@ function buildProxiedConfig(env: NodeJS.ProcessEnv, accessToken: string): Resolv
 			id: "MiniMax-M2.7",
 			name: "Codebase Auto",
 			baseUrl: proxyBase,
+			// Override provider so the status bar and /model don't lie about
+			// where this is served from. pi-ai uses `provider` mainly for
+			// display + a few baseUrl heuristics; the request body sends
+			// `model.id` only, so this cast is safe.
+			provider: "codebase" as Model<string>["provider"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		};
 		return { model, apiKey: accessToken, source: "proxy" };
