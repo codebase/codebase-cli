@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { ToolExecution } from "../types.js";
 import { Markdown } from "./Markdown.js";
 import { wrapText } from "./wrap.js";
@@ -78,40 +78,10 @@ function MessageBody({
 	}
 
 	if (message.role === "assistant") {
+		const rendered = renderAssistantBlocks(message.content, width, tools);
 		return (
 			<>
-				{message.content.map((block, idx) => {
-					const key = blockKey(block, idx);
-					if (block.type === "text") {
-						return <Markdown key={key} text={block.text} width={width} keyPrefix={key} />;
-					}
-					if (block.type === "thinking") {
-						return (
-							<WrappedLines
-								key={key}
-								text={`(thinking) ${block.thinking}`}
-								width={width}
-								keyPrefix={key}
-								dimColor
-								italic
-							/>
-						);
-					}
-					if (block.type === "toolCall") {
-						return (
-							<ToolCallLine
-								key={key}
-								id={block.id}
-								name={block.name}
-								args={block.arguments}
-								width={width}
-								keyPrefix={key}
-								tools={tools}
-							/>
-						);
-					}
-					return null;
-				})}
+				{rendered}
 				{message.errorMessage ? (
 					<WrappedLines text={`! ${message.errorMessage}`} width={width} keyPrefix="err" color="red" />
 				) : null}
@@ -186,6 +156,164 @@ function ToolCallLine({
 			{diff ? <DiffSummary diff={diff} width={width} keyPrefix={`${keyPrefix}-diff`} /> : null}
 		</>
 	);
+}
+
+/**
+ * Tool calls that are pure reads — runs of these collapse into a single
+ * "Read N files" / "Searched 3 patterns" line, the Claude Code pattern.
+ * Keep the set tight: anything that mutates state, runs shell, or has a
+ * meaningful argument shape (grep query, fetch URL) reads weird when
+ * collapsed and stays per-row.
+ */
+const COLLAPSIBLE_READ_TOOLS: ReadonlySet<string> = new Set(["read_file"]);
+
+type AssistantContent = (AgentMessage & { role: "assistant" })["content"];
+
+/**
+ * Walk an assistant message's content blocks, collapsing runs of
+ * consecutive `read_file` (and other safe read-only) tool calls into a
+ * single summary row. A run only collapses when every call in it is
+ * completed (done or errored) — if any is still running we render the
+ * group expanded so the spinner stays visible on the active row.
+ */
+function renderAssistantBlocks(
+	content: AssistantContent,
+	width: number,
+	tools?: ReadonlyMap<string, ToolExecution>,
+): ReactNode[] {
+	const out: ReactNode[] = [];
+	let i = 0;
+	while (i < content.length) {
+		const block = content[i];
+		const key = blockKey(block, i);
+		if (block.type === "text") {
+			out.push(<Markdown key={key} text={block.text} width={width} keyPrefix={key} />);
+			i++;
+			continue;
+		}
+		if (block.type === "thinking") {
+			out.push(
+				<WrappedLines
+					key={key}
+					text={`(thinking) ${block.thinking}`}
+					width={width}
+					keyPrefix={key}
+					dimColor
+					italic
+				/>,
+			);
+			i++;
+			continue;
+		}
+		if (block.type === "toolCall") {
+			if (COLLAPSIBLE_READ_TOOLS.has(block.name)) {
+				let runEnd = i + 1;
+				while (runEnd < content.length) {
+					const next = content[runEnd];
+					if (next.type !== "toolCall" || next.name !== block.name) break;
+					runEnd++;
+				}
+				const run = [];
+				for (let j = i; j < runEnd; j++) {
+					const b = content[j];
+					if (b.type === "toolCall") run.push(b);
+				}
+				const allDone = run.every((c) => {
+					const exec = tools?.get(c.id);
+					return !exec || exec.status !== "running";
+				});
+				if (run.length >= 2 && allDone) {
+					out.push(
+						<CollapsedReadGroup
+							key={`run-${run[0].id}`}
+							calls={run}
+							width={width}
+							keyPrefix={`run-${run[0].id}`}
+							tools={tools}
+						/>,
+					);
+					i = runEnd;
+					continue;
+				}
+			}
+			out.push(
+				<ToolCallLine
+					key={key}
+					id={block.id}
+					name={block.name}
+					args={block.arguments}
+					width={width}
+					keyPrefix={key}
+					tools={tools}
+				/>,
+			);
+			i++;
+			continue;
+		}
+		i++;
+	}
+	return out;
+}
+
+/**
+ * Collapsed row for a run of pure-read tool calls. Renders as
+ * "✓ Read N files" with the per-file paths in a dim indented list
+ * beneath. If any call errored, the glyph flips to ✗ and the line
+ * goes red — we still show the paths so the user can see what
+ * failed.
+ */
+type AssistantToolCall = Extract<AssistantContent[number], { type: "toolCall" }>;
+
+function CollapsedReadGroup({
+	calls,
+	width,
+	keyPrefix,
+	tools,
+}: {
+	calls: readonly AssistantToolCall[];
+	width: number;
+	keyPrefix: string;
+	tools?: ReadonlyMap<string, ToolExecution>;
+}) {
+	const anyError = calls.some((c) => tools?.get(c.id)?.status === "error");
+	const glyph = anyError ? "✗" : "✓";
+	const color = anyError ? "red" : "magenta";
+	const verb = pastVerbForReadTool(calls[0].name);
+	const noun = nounForReadTool(calls[0].name, calls.length);
+	const header = `${glyph} ${verb} ${calls.length} ${noun}`;
+	return (
+		<>
+			<WrappedLines text={header} width={width} keyPrefix={keyPrefix} color={color} />
+			<Box flexDirection="column" marginLeft={2}>
+				{calls.map((c) => {
+					const a = (c.arguments ?? {}) as Record<string, unknown>;
+					const path = typeof a.path === "string" ? a.path : typeof a.file_path === "string" ? a.file_path : "";
+					const status = tools?.get(c.id)?.status;
+					const failed = status === "error";
+					return (
+						<Text key={`${keyPrefix}-f-${c.id}`} color={failed ? "red" : undefined} dimColor={!failed}>
+							{failed ? "  ✗ " : "  · "}
+							{truncate(path, Math.max(20, width - 6))}
+						</Text>
+					);
+				})}
+			</Box>
+		</>
+	);
+}
+
+function pastVerbForReadTool(name: string): string {
+	if (name === "read_file") return "Read";
+	if (name === "list_files") return "Listed";
+	if (name === "glob") return "Searched";
+	if (name === "grep") return "Grepped";
+	return "Ran";
+}
+
+function nounForReadTool(name: string, count: number): string {
+	if (name === "read_file") return count === 1 ? "file" : "files";
+	if (name === "list_files") return count === 1 ? "directory" : "directories";
+	return count === 1 ? "call" : "calls";
 }
 
 interface DiffInfo {
