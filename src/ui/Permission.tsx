@@ -1,4 +1,5 @@
 import { Box, Text, useInput } from "ink";
+import { useState } from "react";
 import type { PermissionRequest, ResponseChoice } from "../permissions/store.js";
 
 interface PermissionProps {
@@ -12,54 +13,102 @@ const RISK_COLOR: Record<PermissionRequest["risk"], string> = {
 	high: "red",
 };
 
-const RISK_GLYPH: Record<PermissionRequest["risk"], string> = {
-	low: "?",
-	medium: "!",
-	high: "‼",
+const RISK_LABEL: Record<PermissionRequest["risk"], string> = {
+	low: "LOW RISK",
+	medium: "REVIEW",
+	high: "HIGH RISK",
 };
 
+interface ChoiceSpec {
+	label: string;
+	key: ResponseChoice;
+	hint: string;
+	color: "green" | "cyan" | "red";
+	shortcut: string;
+}
+
+const CHOICES: readonly ChoiceSpec[] = [
+	{ label: "Allow", key: "allow-once", hint: "this one time", color: "green", shortcut: "y" },
+	{ label: "Trust tool", key: "trust-tool", hint: "for the rest of this session", color: "cyan", shortcut: "t" },
+	{ label: "Trust all", key: "trust-all", hint: "any tool, this session", color: "cyan", shortcut: "a" },
+	{ label: "Deny", key: "deny", hint: "block this call", color: "red", shortcut: "n" },
+];
+
 /**
- * Modal-ish prompt that takes over the input row while a tool call
- * awaits user approval. Single-keystroke responses keep it fast:
- *   y → allow once    t → trust this tool for the session
- *   a → trust everything    n / Esc → deny
+ * Permission prompt — bordered box with risk badge, tool summary,
+ * collapsed detail, and four arrow-navigable choices. Single-key
+ * shortcuts still work (y/t/a/n) for muscle memory; Enter on the
+ * highlighted choice for newcomers; Esc maps to Deny.
  */
 export function Permission({ request, onRespond }: PermissionProps) {
+	const [cursor, setCursor] = useState(0);
+
 	useInput((input, key) => {
 		if (key.escape) {
 			onRespond("deny");
 			return;
 		}
+		if (key.return) {
+			onRespond(CHOICES[cursor].key);
+			return;
+		}
+		if (key.leftArrow || (key.shift && key.tab)) {
+			setCursor((c) => (c - 1 + CHOICES.length) % CHOICES.length);
+			return;
+		}
+		if (key.rightArrow || key.tab || key.downArrow || key.upArrow) {
+			setCursor((c) => (c + 1) % CHOICES.length);
+			return;
+		}
 		const ch = input.toLowerCase();
-		if (ch === "y") onRespond("allow-once");
-		else if (ch === "n") onRespond("deny");
-		else if (ch === "t") onRespond("trust-tool");
-		else if (ch === "a") onRespond("trust-all");
+		const direct = CHOICES.find((c) => c.shortcut === ch);
+		if (direct) onRespond(direct.key);
 	});
 
-	const color = RISK_COLOR[request.risk];
-	const glyph = RISK_GLYPH[request.risk];
+	const riskColor = RISK_COLOR[request.risk];
+	const riskLabel = RISK_LABEL[request.risk];
 
 	return (
-		<Box flexDirection="column" paddingX={1} marginY={0}>
+		<Box flexDirection="column" borderStyle="round" borderColor={riskColor} paddingX={1} marginY={0}>
 			<Box>
-				<Text color={color} bold>
-					{glyph} permission
+				<Text color={riskColor} bold>
+					{riskLabel}
 				</Text>
 				<Text> </Text>
+				<Text dimColor>· permission needed</Text>
+			</Box>
+			<Box marginTop={1}>
+				<Text bold>{request.tool}</Text>
+				<Text dimColor>{"  "}</Text>
 				<Text>{request.summary}</Text>
 			</Box>
 			{request.detail ? (
-				<Box marginLeft={2} marginY={0}>
-					<Text dimColor>{request.detail}</Text>
+				<Box marginTop={1} flexDirection="column">
+					<Text dimColor>{truncate(request.detail, 600)}</Text>
 				</Box>
 			) : null}
-			<Box marginTop={0}>
-				<Text dimColor>
-					[<Text color="green">y</Text>]es · [<Text color="cyan">t</Text>]rust this tool · [
-					<Text color="cyan">a</Text>]ll · [<Text color="red">n</Text>]o
-				</Text>
+			<Box marginTop={1} flexDirection="row">
+				{CHOICES.map((c, i) => {
+					const selected = i === cursor;
+					return (
+						<Box key={c.key} marginRight={2}>
+							<Text color={selected ? c.color : "gray"} bold={selected}>
+								{selected ? "▸ " : "  "}
+								{c.label}
+							</Text>
+							<Text dimColor> ({c.shortcut})</Text>
+						</Box>
+					);
+				})}
+			</Box>
+			<Box marginTop={1}>
+				<Text dimColor>{CHOICES[cursor].hint} · ←→ Enter · y/t/a/n shortcuts · Esc to deny</Text>
 			</Box>
 		</Box>
 	);
+}
+
+function truncate(s: string, n: number): string {
+	if (s.length <= n) return s;
+	return `${s.slice(0, n - 1)}…`;
 }

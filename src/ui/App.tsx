@@ -27,6 +27,7 @@ import { Status } from "./Status.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { ToolPanel } from "./ToolPanel.js";
 import { UserQueryView } from "./UserQuery.js";
+import { Welcome } from "./Welcome.js";
 
 export function App() {
 	const { exit } = useApp();
@@ -235,15 +236,19 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 
 	return (
 		<Box flexDirection="column">
-			<Box paddingX={1} paddingY={0} marginBottom={1}>
-				<Text bold color="cyan">
-					codebase v2
-				</Text>
-				<Text dimColor>
-					{" "}
-					· {bundle.model.name} ({bundle.source})
-				</Text>
-			</Box>
+			{state.messages.length === 0 && !state.streaming ? (
+				<Welcome modelName={bundle.model.name} source={bundle.source} cwd={bundle.toolContext.cwd} />
+			) : (
+				<Box paddingX={1} paddingY={0} marginBottom={1}>
+					<Text bold color="cyan">
+						codebase
+					</Text>
+					<Text dimColor>
+						{" "}
+						· {bundle.model.name} ({bundle.source})
+					</Text>
+				</Box>
+			)}
 			<MessageList messages={state.messages} streaming={state.streaming} tools={state.tools} />
 			<ToolPanel tools={state.tools} />
 			<TaskPanel tasks={tasks} />
