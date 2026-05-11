@@ -75,6 +75,7 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 	return (
 		<Box flexDirection="column">
 			{state.error ? <ErrorCard message={state.error} /> : null}
+			{ctxPct >= 85 ? <ContextWarning pct={ctxPct} /> : null}
 			<Box paddingX={1} justifyContent="space-between">
 				<Box>
 					{busy ? (
@@ -216,6 +217,24 @@ function useThinkingVerb(active: boolean): string {
 		return () => clearInterval(id);
 	}, [active]);
 	return verb;
+}
+
+/**
+ * Banner shown when the context window is past 85%. Suggests /compact
+ * so the user can take action before auto-compaction kicks in, and
+ * shifts to red past 95% where the next turn might actually trip the
+ * model's hard limit.
+ */
+function ContextWarning({ pct }: { pct: number }) {
+	const urgent = pct >= 95;
+	return (
+		<Box paddingX={1}>
+			<Text color={urgent ? "red" : "yellow"} bold>
+				{urgent ? "⚠" : "•"} {pct}% of context used
+			</Text>
+			<Text dimColor> — run /compact to free space</Text>
+		</Box>
+	);
 }
 
 /**
