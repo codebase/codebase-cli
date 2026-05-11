@@ -105,7 +105,15 @@ function MarkdownBlock({ block, width, keyPrefix }: { block: Block; width: numbe
  * the per-line key invariant from the rest of the renderer holds.
  * Unsupported languages render in the original cyan tone.
  */
-function HighlightedCodeBlock({ text, lang, keyPrefix }: { text: string; lang: string | undefined; keyPrefix: string }) {
+function HighlightedCodeBlock({
+	text,
+	lang,
+	keyPrefix,
+}: {
+	text: string;
+	lang: string | undefined;
+	keyPrefix: string;
+}) {
 	const rules = rulesFor(lang);
 	if (!rules) {
 		const lines = text.split("\n");
@@ -134,7 +142,10 @@ function HighlightedCodeBlock({ text, lang, keyPrefix }: { text: string; lang: s
 	return (
 		<Box flexDirection="column" marginLeft={2}>
 			{rows.map((row, i) => {
-				const previewKey = row.map((c) => c.text).join("").slice(0, 12);
+				const previewKey = row
+					.map((c) => c.text)
+					.join("")
+					.slice(0, 12);
 				return (
 					<Text key={`${keyPrefix}-hl-${i}-${previewKey}`}>
 						{row.length === 0
@@ -174,14 +185,7 @@ function ListRow({ item, width, keyPrefix }: { item: ListItem; width: number; ke
 				return (
 					<Box key={rowKey} flexDirection="row">
 						<Text>{" ".repeat(indentCols)}</Text>
-						{lineIdx === 0 ? (
-							<Text color="cyan">
-								{item.marker}
-								{" "}
-							</Text>
-						) : (
-							<Text>{" ".repeat(markerCol)}</Text>
-						)}
+						{lineIdx === 0 ? <Text color="cyan">{item.marker} </Text> : <Text>{" ".repeat(markerCol)}</Text>}
 						<Box flexGrow={1}>
 							{/* biome-ignore lint/suspicious/noArrayIndexKey: pure presentational */}
 							<Text>

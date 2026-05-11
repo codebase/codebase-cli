@@ -1,4 +1,4 @@
-import { relative as relativePath, sep as pathSep } from "node:path";
+import { sep as pathSep, relative as relativePath } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
 import { type ReactNode, useEffect, useState } from "react";
@@ -96,14 +96,7 @@ function MessageBody({
 		const text = message.content
 			.map((block) => (block.type === "text" ? block.text : `[image:${block.mimeType}]`))
 			.join("");
-		return (
-			<TruncatedOutput
-				text={text}
-				width={width}
-				keyPrefix="tool"
-				color={message.isError ? "red" : undefined}
-			/>
-		);
+		return <TruncatedOutput text={text} width={width} keyPrefix="tool" color={message.isError ? "red" : undefined} />;
 	}
 
 	return null;
@@ -299,8 +292,7 @@ function CollapsedReadGroup({
 			<Box flexDirection="column" marginLeft={2}>
 				{calls.map((c) => {
 					const a = (c.arguments ?? {}) as Record<string, unknown>;
-					const rawPath =
-						typeof a.path === "string" ? a.path : typeof a.file_path === "string" ? a.file_path : "";
+					const rawPath = typeof a.path === "string" ? a.path : typeof a.file_path === "string" ? a.file_path : "";
 					const path = displayPath(rawPath);
 					const status = tools?.get(c.id)?.status;
 					const failed = status === "error";
@@ -511,13 +503,7 @@ function WrappedLines({ text, width, keyPrefix, color, dimColor, italic }: Wrapp
  * blocks render as a dim "image (PNG, 142 KB)" line so the user can
  * see at a glance that an image was sent.
  */
-function UserBlocks({
-	blocks,
-	width,
-}: {
-	blocks: unknown;
-	width: number;
-}) {
+function UserBlocks({ blocks, width }: { blocks: unknown; width: number }) {
 	if (!Array.isArray(blocks)) return null;
 	const rows: ReactNode[] = [];
 	for (let i = 0; i < blocks.length; i++) {

@@ -275,8 +275,6 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		hooks,
 		diagnostics,
 		subscribe,
-		resumedFrom: resumed
-			? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length }
-			: undefined,
+		resumedFrom: resumed ? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length } : undefined,
 	};
 }

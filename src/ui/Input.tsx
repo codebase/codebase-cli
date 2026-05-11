@@ -1,6 +1,5 @@
 import { Box, Text, useInput } from "ink";
 import { useMemo, useRef, useState } from "react";
-import { completePath, findAtTokenAt } from "./path-complete.js";
 import {
 	backspace,
 	deleteForward,
@@ -16,6 +15,7 @@ import {
 	undo,
 	yank,
 } from "./input-state.js";
+import { completePath, findAtTokenAt } from "./path-complete.js";
 
 export interface SlashCommandSuggestion {
 	name: string;
@@ -376,9 +376,7 @@ function RenderedBuffer({ buffer, cursor }: RenderedBufferProps) {
 				const cursorOnThisLine = cursor >= lineStart && cursor <= lineEnd;
 				consumed = lineEnd + 1;
 				if (!cursorOnThisLine) {
-					return (
-						<Text key={`line-${idx}-${line.slice(0, 8)}`}>{line.length === 0 ? " " : line}</Text>
-					);
+					return <Text key={`line-${idx}-${line.slice(0, 8)}`}>{line.length === 0 ? " " : line}</Text>;
 				}
 				return (
 					<SingleLineBuffer

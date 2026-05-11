@@ -59,7 +59,9 @@ export class CommandRegistry {
 		if (!command) {
 			const suggestion = this.suggestClosest(name);
 			ctx.emit(
-				suggestion ? `unknown command: /${name}. Did you mean /${suggestion}?` : `unknown command: /${name}. Try /help.`,
+				suggestion
+					? `unknown command: /${name}. Did you mean /${suggestion}?`
+					: `unknown command: /${name}. Try /help.`,
 			);
 			return { handled: true };
 		}

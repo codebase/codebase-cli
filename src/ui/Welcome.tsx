@@ -75,7 +75,9 @@ export function Welcome({ modelName, source, cwd, resumedFrom }: WelcomeProps) {
 					{gitInfo ? (
 						<Text dimColor>
 							{gitInfo.branch}
-							{gitInfo.dirty > 0 ? ` · ${gitInfo.dirty} uncommitted change${gitInfo.dirty === 1 ? "" : "s"}` : " · clean"}
+							{gitInfo.dirty > 0
+								? ` · ${gitInfo.dirty} uncommitted change${gitInfo.dirty === 1 ? "" : "s"}`
+								: " · clean"}
 						</Text>
 					) : null}
 				</Box>
