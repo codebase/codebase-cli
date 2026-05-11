@@ -490,6 +490,18 @@ const mcp: Command = {
 	},
 };
 
+const pwd: Command = {
+	name: "pwd",
+	aliases: ["cwd"],
+	description: "Print the current working directory and copy it to the clipboard.",
+	handler: async (_args, ctx) => {
+		const cwd = ctx.bundle.toolContext.cwd;
+		const copied = await copyToClipboard(cwd).catch(() => false);
+		ctx.emit(copied ? `${cwd}\n(copied to clipboard)` : cwd);
+		return { handled: true };
+	},
+};
+
 export const BUILTIN_COMMANDS: readonly Command[] = [
 	help,
 	clear,
@@ -510,5 +522,6 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	init,
 	projects,
 	mcp,
+	pwd,
 	exit,
 ];
