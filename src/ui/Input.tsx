@@ -156,6 +156,14 @@ export function Input({ disabled, onSubmit, onAbort, commands, history }: InputP
 		}
 
 		if (key.return) {
+			// `\<Enter>` inserts a newline instead of submitting — the CC
+			// convention for multi-line input. Strip the trailing `\` and
+			// replace it with a newline so the buffer reads cleanly.
+			if (state.buffer.endsWith("\\") && state.cursor === state.buffer.length) {
+				const stripped = state.buffer.slice(0, -1);
+				setState({ ...initialInputState(), buffer: `${stripped}\n`, cursor: stripped.length + 1 });
+				return;
+			}
 			// Enter on a single-suggestion autocomplete still submits — if
 			// the user wanted to complete, they'd Tab. If they hit Enter on
 			// `/cos`, that's a clear "run /cost" intent only if it's an
@@ -270,11 +278,39 @@ interface RenderedBufferProps {
 
 /**
  * Render the buffer with a visible cursor block at the cursor position.
- * Inverse-video on the character under the cursor, or a thin block at
- * end-of-line. Keeps the layout stable so the line doesn't shift when
- * the cursor crosses the boundary.
+ * Splits on `\n` so multi-line pastes (and `\<Enter>` newlines) show
+ * as stacked rows — otherwise pasted code collapses into one line and
+ * the user can't see what they're sending.
  */
 function RenderedBuffer({ buffer, cursor }: RenderedBufferProps) {
+	if (!buffer.includes("\n")) return <SingleLineBuffer buffer={buffer} cursor={cursor} />;
+	const lines = buffer.split("\n");
+	let consumed = 0;
+	return (
+		<Box flexDirection="column">
+			{lines.map((line, idx) => {
+				const lineStart = consumed;
+				const lineEnd = consumed + line.length;
+				const cursorOnThisLine = cursor >= lineStart && cursor <= lineEnd;
+				consumed = lineEnd + 1;
+				if (!cursorOnThisLine) {
+					return (
+						<Text key={`line-${idx}-${line.slice(0, 8)}`}>{line.length === 0 ? " " : line}</Text>
+					);
+				}
+				return (
+					<SingleLineBuffer
+						key={`line-${idx}-cur-${line.slice(0, 8)}`}
+						buffer={line}
+						cursor={cursor - lineStart}
+					/>
+				);
+			})}
+		</Box>
+	);
+}
+
+function SingleLineBuffer({ buffer, cursor }: RenderedBufferProps) {
 	if (cursor >= buffer.length) {
 		return (
 			<>
