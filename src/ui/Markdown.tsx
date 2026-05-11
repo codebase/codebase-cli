@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { colorForKind, highlight, rulesFor } from "./highlight.js";
 import { wrapText } from "./wrap.js";
 
 /**
@@ -62,16 +63,7 @@ function MarkdownBlock({ block, width, keyPrefix }: { block: Block; width: numbe
 		return <Text> </Text>;
 	}
 	if (block.kind === "code-block") {
-		const lines = block.text.split("\n");
-		return (
-			<Box flexDirection="column" marginLeft={2}>
-				{lines.map((line, i) => (
-					<Text key={`${keyPrefix}-cl-${i}-${line.slice(0, 12)}`} color="cyan">
-						{line.length === 0 ? " " : line}
-					</Text>
-				))}
-			</Box>
-		);
+		return <HighlightedCodeBlock text={block.text} lang={block.lang} keyPrefix={keyPrefix} />;
 	}
 	if (block.kind === "heading") {
 		return <SpanLine spans={block.spans} width={width} bold color="cyan" keyPrefix={keyPrefix} />;
@@ -105,6 +97,59 @@ function MarkdownBlock({ block, width, keyPrefix }: { block: Block; width: numbe
 		);
 	}
 	return <SpanLine spans={block.spans} width={width} keyPrefix={keyPrefix} />;
+}
+
+/**
+ * Render a fenced code block with regex-based syntax highlighting if
+ * the language is recognized. Walks the token list and splits on \n so
+ * the per-line key invariant from the rest of the renderer holds.
+ * Unsupported languages render in the original cyan tone.
+ */
+function HighlightedCodeBlock({ text, lang, keyPrefix }: { text: string; lang: string | undefined; keyPrefix: string }) {
+	const rules = rulesFor(lang);
+	if (!rules) {
+		const lines = text.split("\n");
+		return (
+			<Box flexDirection="column" marginLeft={2}>
+				{lines.map((line, i) => (
+					<Text key={`${keyPrefix}-cl-${i}-${line.slice(0, 12)}`} color="cyan">
+						{line.length === 0 ? " " : line}
+					</Text>
+				))}
+			</Box>
+		);
+	}
+	// Split the highlighted token stream into per-line rows so the
+	// columns stay aligned with the surrounding markdown and the keys
+	// stay stable.
+	const rows: Array<Array<{ color?: string; text: string }>> = [[]];
+	for (const tok of highlight(text, lang)) {
+		const color = colorForKind(tok.kind);
+		const parts = tok.text.split("\n");
+		for (let i = 0; i < parts.length; i++) {
+			if (i > 0) rows.push([]);
+			if (parts[i].length > 0) rows[rows.length - 1].push({ color, text: parts[i] });
+		}
+	}
+	return (
+		<Box flexDirection="column" marginLeft={2}>
+			{rows.map((row, i) => {
+				const previewKey = row.map((c) => c.text).join("").slice(0, 12);
+				return (
+					<Text key={`${keyPrefix}-hl-${i}-${previewKey}`}>
+						{row.length === 0
+							? " "
+							: row.map((c, ci) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: pure presentational
+									<Text key={`${keyPrefix}-hl-${i}-c${ci}`} color={c.color}>
+										{c.text}
+									</Text>
+								))}
+					</Text>
+				);
+			})}
+		</Box>
+	);
 }
 
 /**
