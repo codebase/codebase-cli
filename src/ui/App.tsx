@@ -22,6 +22,7 @@ import type { ChatState } from "../types.js";
 import { type UserQuery, UserQueryCancelled } from "../user-queries/store.js";
 import { buildAttachmentPrompt, collectAttachments } from "./attachments.js";
 import { FirstRunSetup } from "./FirstRunSetup.js";
+import { HistoryStore } from "./history-store.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { Permission } from "./Permission.js";
@@ -104,18 +105,23 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		[registry],
 	);
 
+	const historyStore = useMemo(() => new HistoryStore({ cwd: bundle.toolContext.cwd }), [bundle.toolContext.cwd]);
+	const persistedHistory = useMemo(() => historyStore.load(), [historyStore]);
+
 	const inputHistory = useMemo(() => {
-		const out: string[] = [];
+		// Build the recall list from (persisted history) ++ (this-session prompts),
+		// in chronological order. Persisted gives the user prior runs to recall;
+		// this-session ensures their most recent prompt is at the top of ↑.
+		const out: string[] = [...persistedHistory];
 		for (const m of state.messages) {
 			if (m.role !== "user") continue;
 			const text = typeof m.content === "string" ? m.content : extractUserText(m.content);
 			if (text.trim().length === 0) continue;
-			// Collapse adjacent duplicates so ↑↑↑ doesn't dwell on a repeat.
 			if (out[out.length - 1] === text) continue;
 			out.push(text);
 		}
 		return out;
-	}, [state.messages]);
+	}, [state.messages, persistedHistory]);
 
 	useEffect(() => {
 		const unsubscribe = bundle.subscribe((event) => {
@@ -181,6 +187,9 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		// continuation (greeting fast-track) or a first message.
 		const hadHistory = state.messages.some((m) => m.role === "assistant");
 		dispatch({ type: "user-prompt", text });
+		// Persist the raw user input (pre-attachment-augmentation) so ↑ in
+		// future sessions recalls what they actually typed.
+		historyStore.append(text);
 
 		try {
 			const route = await routeUserInput(bundle.glue, text, { hasHistory: hadHistory });
