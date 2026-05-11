@@ -57,7 +57,7 @@ Arguments:
 - limit (optional): max lines to return. Default 2000, max 2000.
 
 Behavior:
-- Text files: returned line-numbered (six-column gutter, tab, content), suitable for the model to quote back into edit_file.
+- Text files: returned line-numbered as \`     N→content\` (six-column right-aligned line number, an arrow separator, then the line). When you quote a line into edit_file's old_string, quote only the part after the arrow.
 - Image files (.png, .jpg, .jpeg, .gif, .webp, .bmp): returned as a vision payload — works only with image-capable models.
 - Files > 5 MB are rejected; use shell head/tail/sed for huge files.
 - Binary text files are rejected.
@@ -130,7 +130,13 @@ export function createReadFile(ctx: ToolContext): AgentTool<typeof Params, ReadF
 			const isPartialView = startIdx > 0 || endIdx < totalLines;
 
 			const slice = allLines.slice(startIdx, endIdx);
-			const formatted = slice.map((line, i) => `${pad6(startIdx + i + 1)}\t${line}`).join("\n");
+			// Use a literal arrow instead of \t so the gutter renders tight in
+			// every terminal (TUI / pager / web echo). cat -n's tab gets
+			// expanded to the next tab stop by most renderers, producing the
+			// ugly 8-column gap users complained about. Matches Claude Code's
+			// `${num}→${content}` format, which models are already familiar
+			// with from training data.
+			const formatted = slice.map((line, i) => `${pad6(startIdx + i + 1)}→${line}`).join("\n");
 			const tail = isPartialView ? `\n... (showing lines ${startIdx + 1}-${endIdx} of ${totalLines})` : "";
 
 			ctx.fileStateCache.record({

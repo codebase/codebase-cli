@@ -35,8 +35,8 @@ describe("read_file", () => {
 		const result = await run(ctx, { path: "hello.txt" });
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 
-		expect(text).toContain("     1\tfirst line");
-		expect(text).toContain("     2\tsecond line");
+		expect(text).toContain("     1→first line");
+		expect(text).toContain("     2→second line");
 		expect(result.details.totalLines).toBe(2);
 		expect(result.details.isPartialView).toBe(false);
 
@@ -74,8 +74,8 @@ describe("read_file", () => {
 		const result = await run(ctx, { path: "long.txt", offset: 10, limit: 5 });
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 
-		expect(text).toContain("    10\tline 10");
-		expect(text).toContain("    14\tline 14");
+		expect(text).toContain("    10→line 10");
+		expect(text).toContain("    14→line 14");
 		expect(text).not.toContain("line 15");
 		expect(text).toContain("showing lines 10-14 of 50");
 
