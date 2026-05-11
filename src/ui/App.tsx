@@ -166,11 +166,10 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					setStatusLines([]);
 				},
 				exit: onExit,
-				// Inject the registry so /help can list commands.
-				// biome-ignore lint/suspicious/noExplicitAny: cross-cutting injection
+				// Injecting the registry so /help can list commands without us
+				// needing to thread it through the CommandContext type.
 				registry,
-				// biome-ignore lint/suspicious/noExplicitAny: cross-cutting injection
-			} as any);
+			} as unknown as Parameters<typeof registry.dispatch>[1]);
 			if (result.handled) return;
 		}
 

@@ -187,11 +187,10 @@ function ListRow({ item, width, keyPrefix }: { item: ListItem; width: number; ke
 						<Text>{" ".repeat(indentCols)}</Text>
 						{lineIdx === 0 ? <Text color="cyan">{item.marker} </Text> : <Text>{" ".repeat(markerCol)}</Text>}
 						<Box flexGrow={1}>
-							{/* biome-ignore lint/suspicious/noArrayIndexKey: pure presentational */}
 							<Text>
 								{chunks.map((c, ci) => (
-									// biome-ignore lint/suspicious/noArrayIndexKey: pure presentational
 									<Text
+										// biome-ignore lint/suspicious/noArrayIndexKey: ci is a stable position within a single wrapped row; reusing instances is harmless
 										key={`${rowKey}-c${ci}`}
 										bold={c.kind === "bold"}
 										italic={c.kind === "italic"}
@@ -247,11 +246,10 @@ function SpanLine({
 				if (lineIdx < wrapped.length - 1 && plain[consumed] === " ") consumed += 1;
 				const rowKey = `${keyPrefix}-r-${lineIdx}-${line.slice(0, 12)}`;
 				return (
-					// biome-ignore lint/suspicious/noArrayIndexKey: pure presentational, no per-row state
 					<Text key={rowKey}>
 						{chunks.map((c, ci) => (
 							<Text
-								// biome-ignore lint/suspicious/noArrayIndexKey: pure presentational
+								// biome-ignore lint/suspicious/noArrayIndexKey: ci is a stable position within a single wrapped row
 								key={`${rowKey}-c${ci}`}
 								bold={bold || c.kind === "bold"}
 								italic={c.kind === "italic"}
