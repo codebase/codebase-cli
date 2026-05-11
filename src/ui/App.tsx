@@ -244,7 +244,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					· {bundle.model.name} ({bundle.source})
 				</Text>
 			</Box>
-			<MessageList messages={state.messages} streaming={state.streaming} />
+			<MessageList messages={state.messages} streaming={state.streaming} tools={state.tools} />
 			<ToolPanel tools={state.tools} />
 			<TaskPanel tasks={tasks} />
 			{statusLines.length > 0 ? (
