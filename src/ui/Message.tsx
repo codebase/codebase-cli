@@ -1,3 +1,4 @@
+import { relative as relativePath, sep as pathSep } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
 import { type ReactNode, useEffect, useState } from "react";
@@ -296,7 +297,9 @@ function CollapsedReadGroup({
 			<Box flexDirection="column" marginLeft={2}>
 				{calls.map((c) => {
 					const a = (c.arguments ?? {}) as Record<string, unknown>;
-					const path = typeof a.path === "string" ? a.path : typeof a.file_path === "string" ? a.file_path : "";
+					const rawPath =
+						typeof a.path === "string" ? a.path : typeof a.file_path === "string" ? a.file_path : "";
+					const path = displayPath(rawPath);
 					const status = tools?.get(c.id)?.status;
 					const failed = status === "error";
 					return (
@@ -557,7 +560,7 @@ function summarizeArgs(args: unknown): string {
 function toolActionLabel(name: string, args: unknown): string {
 	const a = (args ?? {}) as Record<string, unknown>;
 	const str = (k: string): string => (typeof a[k] === "string" ? (a[k] as string) : "");
-	const path = str("path") || str("file_path");
+	const path = displayPath(str("path") || str("file_path"));
 
 	switch (name) {
 		case "read_file":
@@ -629,6 +632,22 @@ function truncate(s: string, n: number): string {
 }
 
 /**
+ * Show a path relative to the working directory when it's inside (so
+ * "src/ui/Message.tsx" instead of "/home/half/.../src/ui/Message.tsx"),
+ * but keep it absolute when it points outside the project — that's
+ * useful information the user should see at full fidelity. Empty
+ * strings pass through unchanged.
+ */
+function displayPath(p: string): string {
+	if (!p) return p;
+	if (!p.startsWith(pathSep)) return p; // already relative
+	const cwd = process.cwd();
+	const rel = relativePath(cwd, p);
+	if (!rel || rel.startsWith("..")) return p; // outside cwd — keep absolute
+	return rel;
+}
+
+/**
  * Past-tense action label, used when a tool has finished. Same shape
  * as `toolActionLabel` but with the verbs swapped to past tense:
  * "Reading X" → "Read X", "Editing Y" → "Edited Y", etc.
@@ -636,7 +655,7 @@ function truncate(s: string, n: number): string {
 function toolActionPast(name: string, args: unknown): string {
 	const a = (args ?? {}) as Record<string, unknown>;
 	const str = (k: string): string => (typeof a[k] === "string" ? (a[k] as string) : "");
-	const path = str("path") || str("file_path");
+	const path = displayPath(str("path") || str("file_path"));
 
 	switch (name) {
 		case "read_file":
