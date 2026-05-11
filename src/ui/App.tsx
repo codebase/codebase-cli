@@ -295,7 +295,12 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	return (
 		<Box flexDirection="column">
 			{state.messages.length === 0 && !state.streaming ? (
-				<Welcome modelName={bundle.model.name} source={bundle.source} cwd={bundle.toolContext.cwd} />
+				<Welcome
+					modelName={bundle.model.name}
+					source={bundle.source}
+					cwd={bundle.toolContext.cwd}
+					resumedFrom={bundle.resumedFrom}
+				/>
 			) : (
 				<Box paddingX={1} paddingY={0} marginBottom={1}>
 					<Text bold color="cyan">

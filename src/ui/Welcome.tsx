@@ -2,10 +2,21 @@ import { basename } from "node:path";
 import { Box, Text } from "ink";
 import { PixelC } from "./PixelC.js";
 
+/** Humanize an absolute timestamp into "5m ago" / "3h ago" / "2d ago" — sub-minute reads as "just now". */
+function formatAgo(ts: number): string {
+	const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+	if (sec < 60) return "just now";
+	if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+	if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+	return `${Math.floor(sec / 86400)}d ago`;
+}
+
 interface WelcomeProps {
 	modelName: string;
 	source: string;
 	cwd: string;
+	/** Set when the session resumed from a prior run — shows a small "Resumed from …" badge. */
+	resumedFrom?: { updatedAt: number; messageCount: number };
 }
 
 /**
@@ -14,7 +25,7 @@ interface WelcomeProps {
  * right. Renders once and gets pushed up by the first user message —
  * not Static-rendered, but only a few rows so it's cheap.
  */
-export function Welcome({ modelName, source, cwd }: WelcomeProps) {
+export function Welcome({ modelName, source, cwd, resumedFrom }: WelcomeProps) {
 	const cwdLabel = basename(cwd) || cwd;
 	const sourceLabel = source === "proxy" ? "signed in via codebase.design" : source === "byok" ? "BYOK" : `${source}`;
 
@@ -34,6 +45,15 @@ export function Welcome({ modelName, source, cwd }: WelcomeProps) {
 					</Text>
 				</Box>
 			</Box>
+			{resumedFrom ? (
+				<Box marginTop={1}>
+					<Text color="cyan">↻ Resumed from {formatAgo(resumedFrom.updatedAt)}</Text>
+					<Text dimColor>
+						{" "}
+						· {resumedFrom.messageCount} message{resumedFrom.messageCount === 1 ? "" : "s"}
+					</Text>
+				</Box>
+			) : null}
 			<Box marginTop={1} flexDirection="column">
 				<Text dimColor>Ask me to read code, edit files, run commands, or anything in between.</Text>
 				<Text dimColor>

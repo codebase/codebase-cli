@@ -70,6 +70,12 @@ export interface AgentBundle {
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
+	/**
+	 * Set when `--resume` actually loaded a prior session, with its
+	 * timestamp + message count so the welcome banner can say
+	 * "Resumed from 3h ago · 47 messages". Undefined for fresh sessions.
+	 */
+	resumedFrom?: { updatedAt: number; messageCount: number };
 }
 
 export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
@@ -269,5 +275,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		hooks,
 		diagnostics,
 		subscribe,
+		resumedFrom: resumed
+			? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length }
+			: undefined,
 	};
 }
