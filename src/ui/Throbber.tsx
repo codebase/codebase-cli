@@ -1,27 +1,32 @@
 import { Text } from "ink";
 import { useEffect, useState } from "react";
 
-const FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
+/**
+ * 8-frame pulse cycle — the codebase pixel-C "scanning" through brightness
+ * levels. The compact (1-char) variant cycles a single block-glyph: ░▒▓█▓▒░.
+ * The full pixel-C variant scans a highlight row across the C shape.
+ *
+ * Self-throttling: owns its own interval so the parent's reducer state
+ * doesn't tick on every frame. A hot message_update stream + a 100ms
+ * spinner would otherwise compound into full re-renders 10× a second.
+ */
+
+const COMPACT_FRAMES = ["░", "▒", "▓", "█", "█", "▓", "▒", "░"];
 
 interface ThrobberProps {
 	color?: string;
 	intervalMs?: number;
 }
 
-/**
- * Self-throttling spinner. Owns its own interval so the parent's reducer
- * state isn't ticked on every frame — a hot stream of message_update events
- * + a 100ms spinner would otherwise compound into needless full re-renders.
- */
-export function Throbber({ color = "cyan", intervalMs = 80 }: ThrobberProps) {
+export function Throbber({ color = "cyan", intervalMs = 90 }: ThrobberProps) {
 	const [frame, setFrame] = useState(0);
 
 	useEffect(() => {
 		const id = setInterval(() => {
-			setFrame((f) => (f + 1) % FRAMES.length);
+			setFrame((f) => (f + 1) % COMPACT_FRAMES.length);
 		}, intervalMs);
 		return () => clearInterval(id);
 	}, [intervalMs]);
 
-	return <Text color={color}>{FRAMES[frame]}</Text>;
+	return <Text color={color}>{COMPACT_FRAMES[frame]}</Text>;
 }
