@@ -1,0 +1,85 @@
+{
+	"name": "codebase",
+	"displayName": "Codebase",
+	"description": "Codebase CLI inside your editor. Works in VS Code, Cursor, Windsurf, and any VS Code-API-compatible IDE.",
+	"version": "0.1.0",
+	"publisher": "codebase-foundation",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/codebase-foundation/codebase-cli"
+	},
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": ["Programming Languages", "Other"],
+	"keywords": ["ai", "agent", "codebase", "claude", "openai", "anthropic"],
+	"main": "./out/extension.js",
+	"activationEvents": [
+		"onView:codebase.chat",
+		"onCommand:codebase.ask"
+	],
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "codebase",
+					"title": "Codebase",
+					"icon": "media/icon.svg"
+				}
+			]
+		},
+		"views": {
+			"codebase": [
+				{
+					"type": "webview",
+					"id": "codebase.chat",
+					"name": "Chat"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "codebase.ask",
+				"title": "Codebase: Ask",
+				"icon": "$(comment-discussion)"
+			},
+			{
+				"command": "codebase.abort",
+				"title": "Codebase: Abort current run",
+				"icon": "$(stop-circle)"
+			},
+			{
+				"command": "codebase.restart",
+				"title": "Codebase: Restart agent",
+				"icon": "$(refresh)"
+			}
+		],
+		"configuration": {
+			"title": "Codebase",
+			"properties": {
+				"codebase.binaryPath": {
+					"type": "string",
+					"default": "codebase",
+					"description": "Path to the codebase CLI binary. Defaults to whatever's on PATH. Set if you have a custom install location."
+				},
+				"codebase.resume": {
+					"type": "boolean",
+					"default": true,
+					"description": "Resume the previous session for this workspace on startup."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"compile": "tsc",
+		"watch": "tsc --watch",
+		"package": "vsce package --no-dependencies",
+		"prepackage": "npm run compile"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"@types/vscode": "^1.85.0",
+		"@vscode/vsce": "^3.0.0",
+		"typescript": "^5.9.0"
+	}
+}
