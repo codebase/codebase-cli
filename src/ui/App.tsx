@@ -85,6 +85,13 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
 	const [userQuery, setUserQuery] = useState<UserQuery | undefined>(bundle.userQueries.current());
 	const [statusLines, setStatusLines] = useState<string[]>([]);
+	// Cap the buffer so noisy emits (long /help, many !cmds) don't grow
+	// the status pane indefinitely. 50 rows ≈ a screen on most terms.
+	const appendStatus = (line: string) =>
+		setStatusLines((prev) => {
+			const next = [...prev, line];
+			return next.length > 50 ? next.slice(next.length - 50) : next;
+		});
 	const [tasks, setTasks] = useState<readonly Task[]>(() => bundle.toolContext.tasks.list());
 
 	const registry = useMemo(() => {
@@ -139,9 +146,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		// output as a synthetic user / toolResult pair so it shows up in
 		// the transcript but doesn't end up in the model's context.
 		if (text.startsWith("!") && text.length > 1) {
-			await runShellEscape(text.slice(1), bundle.toolContext.cwd, (line) =>
-				setStatusLines((prev) => [...prev, line]),
-			);
+			await runShellEscape(text.slice(1), bundle.toolContext.cwd, appendStatus);
 			return;
 		}
 
@@ -150,7 +155,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			const result = await registry.dispatch(text, {
 				bundle,
 				state: state as ChatState,
-				emit: (line: string) => setStatusLines((prev) => [...prev, line]),
+				emit: appendStatus,
 				clearDisplay: () => dispatch({ type: "reset" }),
 				exit: onExit,
 				// Inject the registry so /help can list commands.
@@ -168,10 +173,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		const attachments = collectAttachments(text, bundle.toolContext.cwd);
 		const augmentedText = attachments.length > 0 ? buildAttachmentPrompt(text, attachments) : text;
 		if (attachments.length > 0) {
-			setStatusLines((prev) => [
-				...prev,
-				`Attached: ${attachments.map((a) => a.relPath).join(", ")}`,
-			]);
+			appendStatus(`Attached: ${attachments.map((a) => a.relPath).join(", ")}`);
 		}
 
 		// Capture history-presence BEFORE the user-prompt dispatch — React's
@@ -194,10 +196,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		} catch (err) {
 			// If the router itself crashes, don't drop the request — run the agent.
 			// We still log it as a non-fatal status line so users notice.
-			setStatusLines((prev) => [
-				...prev,
-				`(router fell back to agent: ${err instanceof Error ? err.message : err})`,
-			]);
+			appendStatus(`(router fell back to agent: ${err instanceof Error ? err.message : err})`);
 		}
 
 		bundle.agent.prompt(augmentedText).catch((err: unknown) => {
@@ -289,7 +288,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			return;
 		}
 		exitTimerRef.deadline = now + 2000;
-		setStatusLines((prev) => [...prev, "Press Ctrl-C again within 2s to exit."]);
+		appendStatus("Press Ctrl-C again within 2s to exit.");
 	};
 
 	return (
