@@ -93,7 +93,14 @@ function MessageBody({
 		const text = message.content
 			.map((block) => (block.type === "text" ? block.text : `[image:${block.mimeType}]`))
 			.join("");
-		return <WrappedLines text={text} width={width} keyPrefix="tool" color={message.isError ? "red" : undefined} />;
+		return (
+			<TruncatedOutput
+				text={text}
+				width={width}
+				keyPrefix="tool"
+				color={message.isError ? "red" : undefined}
+			/>
+		);
 	}
 
 	return null;
@@ -405,6 +412,44 @@ function DiffSummary({ diff, width, keyPrefix }: { diff: DiffInfo; width: number
 				</Box>
 			))}
 		</Box>
+	);
+}
+
+const MAX_TOOL_OUTPUT_LINES = 12;
+const HEAD_TOOL_OUTPUT_LINES = 8;
+const TAIL_TOOL_OUTPUT_LINES = 3;
+
+/**
+ * Truncate tool output past MAX_TOOL_OUTPUT_LINES into "head + (N hidden)
+ * + tail" — long shell or grep output otherwise dominates the
+ * transcript and pushes context off-screen. The agent still gets the
+ * full output; this is purely a display trim. Errors are NEVER
+ * truncated since the user needs to see exactly what blew up.
+ */
+function TruncatedOutput({
+	text,
+	width,
+	keyPrefix,
+	color,
+}: {
+	text: string;
+	width: number;
+	keyPrefix: string;
+	color?: string;
+}) {
+	const lines = text.split("\n");
+	if (color === "red" || lines.length <= MAX_TOOL_OUTPUT_LINES) {
+		return <WrappedLines text={text} width={width} keyPrefix={keyPrefix} color={color} />;
+	}
+	const head = lines.slice(0, HEAD_TOOL_OUTPUT_LINES).join("\n");
+	const tail = lines.slice(lines.length - TAIL_TOOL_OUTPUT_LINES).join("\n");
+	const hidden = lines.length - HEAD_TOOL_OUTPUT_LINES - TAIL_TOOL_OUTPUT_LINES;
+	return (
+		<>
+			<WrappedLines text={head} width={width} keyPrefix={`${keyPrefix}-h`} color={color} />
+			<Text dimColor>{`… ${hidden} line${hidden === 1 ? "" : "s"} hidden …`}</Text>
+			<WrappedLines text={tail} width={width} keyPrefix={`${keyPrefix}-t`} color={color} />
+		</>
 	);
 }
 
