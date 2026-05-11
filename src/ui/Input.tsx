@@ -254,12 +254,26 @@ export function Input({ disabled, onSubmit, onAbort, commands, history, cwd }: I
 		if (key.ctrl && input === "a") return setState(moveStart(state));
 		if (key.ctrl && input === "e") return setState(moveEnd(state));
 
-		// Edits
-		if (key.backspace) {
+		// Edits. Some terminals (Linux console, tmux, certain SSH configs)
+		// deliver Backspace as raw 0x7f/0x08 without setting key.backspace,
+		// or even surface it as key.delete. We catch every shape so the
+		// floor — "Backspace deletes a char" — always works.
+		const isBackspaceByte = input === "\x7f" || input === "\b";
+		if (key.backspace || isBackspaceByte) {
 			setSuggestionIdx(0);
 			return setState(backspace(state));
 		}
-		if (key.delete) return setState(deleteForward(state));
+		// `key.delete` historically also fires for Backspace on some Ink
+		// builds, so prefer the backspace semantics when the buffer is
+		// non-empty and the cursor isn't at end-of-line. Forward-delete
+		// stays accessible via Ctrl-D.
+		if (key.delete) {
+			if (state.cursor > 0 && state.cursor === state.buffer.length) {
+				setSuggestionIdx(0);
+				return setState(backspace(state));
+			}
+			return setState(deleteForward(state));
+		}
 		// Ctrl-D matches readline: on an empty buffer it's EOF (i.e. quit),
 		// on a non-empty buffer it deletes forward like Delete.
 		if (key.ctrl && input === "d") {
@@ -279,8 +293,11 @@ export function Input({ disabled, onSubmit, onAbort, commands, history, cwd }: I
 		// Undo
 		if (key.ctrl && input === "z") return setState(undo(state));
 
-		// Printable text — Ink's useInput delivers individual chars (or pasted runs)
-		if (input && !key.ctrl && !key.meta) {
+		// Printable text — Ink's useInput delivers individual chars (or pasted runs).
+		// Strip control bytes (0x00–0x1f, 0x7f) so a stray Backspace or escape
+		// fragment doesn't end up inserted as a glyph in the buffer.
+		const isPrintable = input && !key.ctrl && !key.meta && !/[\x00-\x1f\x7f]/.test(input);
+		if (isPrintable) {
 			setSuggestionIdx(0);
 			// Once the user starts editing on top of a recalled history
 			// entry, snap out of history mode — the entry is now their
