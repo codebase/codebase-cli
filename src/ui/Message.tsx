@@ -228,11 +228,7 @@ function renderAssistantBlocks(
 					const b = content[j];
 					if (b.type === "toolCall") run.push(b);
 				}
-				const allDone = run.every((c) => {
-					const exec = tools?.get(c.id);
-					return !exec || exec.status !== "running";
-				});
-				if (run.length >= 2 && allDone) {
+				if (run.length >= 2) {
 					out.push(
 						<CollapsedReadGroup
 							key={`run-${run[0].id}`}
@@ -285,12 +281,18 @@ function CollapsedReadGroup({
 	keyPrefix: string;
 	tools?: ReadonlyMap<string, ToolExecution>;
 }) {
-	const anyError = calls.some((c) => tools?.get(c.id)?.status === "error");
-	const glyph = anyError ? "✗" : "✓";
+	const statuses = calls.map((c) => tools?.get(c.id)?.status);
+	const anyRunning = statuses.some((s) => s === "running");
+	const anyError = statuses.some((s) => s === "error");
+	const doneCount = statuses.filter((s) => s !== "running").length;
+	const spinner = useSpinner(anyRunning);
+	const glyph = anyRunning ? spinner : anyError ? "✗" : "✓";
 	const color = anyError ? "red" : "magenta";
-	const verb = pastVerbForReadTool(calls[0].name);
+	const verb = anyRunning ? presentVerbForReadTool(calls[0].name) : pastVerbForReadTool(calls[0].name);
 	const noun = nounForReadTool(calls[0].name, calls.length);
-	const header = `${glyph} ${verb} ${calls.length} ${noun}`;
+	const header = anyRunning
+		? `${glyph} ${verb} ${doneCount} of ${calls.length} ${noun}…`
+		: `${glyph} ${verb} ${calls.length} ${noun}`;
 	return (
 		<>
 			<WrappedLines text={header} width={width} keyPrefix={keyPrefix} color={color} />
@@ -302,9 +304,15 @@ function CollapsedReadGroup({
 					const path = displayPath(rawPath);
 					const status = tools?.get(c.id)?.status;
 					const failed = status === "error";
+					const running = status === "running";
+					const marker = failed ? "  ✗ " : running ? "  → " : "  · ";
 					return (
-						<Text key={`${keyPrefix}-f-${c.id}`} color={failed ? "red" : undefined} dimColor={!failed}>
-							{failed ? "  ✗ " : "  · "}
+						<Text
+							key={`${keyPrefix}-f-${c.id}`}
+							color={failed ? "red" : running ? "magenta" : undefined}
+							dimColor={!failed && !running}
+						>
+							{marker}
 							{truncate(path, Math.max(20, width - 6))}
 						</Text>
 					);
@@ -312,6 +320,14 @@ function CollapsedReadGroup({
 			</Box>
 		</>
 	);
+}
+
+function presentVerbForReadTool(name: string): string {
+	if (name === "read_file") return "Reading";
+	if (name === "list_files") return "Listing";
+	if (name === "glob") return "Searching";
+	if (name === "grep") return "Grepping";
+	return "Running";
 }
 
 function pastVerbForReadTool(name: string): string {
