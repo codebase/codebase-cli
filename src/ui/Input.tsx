@@ -15,6 +15,7 @@ import {
 	undo,
 	yank,
 } from "./input-state.js";
+import { logInputEvent } from "./debug-input.js";
 import { completePath, findAtTokenAt } from "./path-complete.js";
 
 export interface SlashCommandSuggestion {
@@ -120,6 +121,10 @@ export function Input({ disabled, onSubmit, onAbort, commands, history, cwd }: I
 	const clampedSuggestionIdx = Math.min(suggestionIdx, Math.max(0, suggestions.length - 1));
 
 	useInput((input, key) => {
+		// First thing — log every keystroke when --debug-input is on, so
+		// we can diagnose "key X doesn't work" reports from real terminals.
+		logInputEvent(input, key);
+
 		if (key.ctrl && input === "c") {
 			onAbort?.();
 			return;

@@ -25,7 +25,20 @@ interface ParsedRunArgs {
 
 const VALID_OUTPUT_FORMATS = new Set<HeadlessOutputFormat>(["text", "json", "stream-json"]);
 
-const argv = process.argv.slice(2);
+const rawArgv = process.argv.slice(2);
+
+// Strip flags consumed at the top-level dispatcher before subcommand
+// matching. `--debug-input` is one of those: it sets an env var that
+// the Input component picks up, then disappears from argv so it can't
+// confuse downstream parsers.
+const argv: string[] = [];
+for (const a of rawArgv) {
+	if (a === "--debug-input") {
+		process.env.CODEBASE_DEBUG_INPUT = "1";
+		continue;
+	}
+	argv.push(a);
+}
 
 if (argv[0] === "--version" || argv[0] === "-v") {
 	process.stdout.write(`${readPackageVersion()}\n`);
@@ -131,6 +144,10 @@ function printHelp(): void {
 			"  codebase app-server          JSON-RPC server on stdio (for IDE extensions)",
 			"  codebase --version           print version and exit",
 			"  codebase --help              show this message",
+			"",
+			"Diagnostics:",
+			"  --debug-input                log every keystroke to ~/.codebase/logs/input.log",
+			"                               (use when reporting a keyboard/terminal issue)",
 			"",
 			"More: https://github.com/codebase-foundation/codebase-cli",
 			"",
