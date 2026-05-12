@@ -39,6 +39,17 @@ const ROLE_STYLE = {
 	toolResult: { accent: "magenta", label: "tool" },
 } as const;
 
+/**
+ * Per-tool name overrides for the toolResult header label. Default falls
+ * back to the raw tool name (read_file, grep, shell, …) which is more
+ * useful than a generic "tool". A few tools get friendlier presentation
+ * labels because their raw name reads oddly in the gutter.
+ */
+const TOOL_RESULT_LABEL: Record<string, string> = {
+	shell: "bash",
+	dispatch_agent: "subagent",
+};
+
 export function Message({ message, streaming, width = 80, tools }: MessageProps) {
 	const role = message.role;
 	const style = ROLE_STYLE[role as keyof typeof ROLE_STYLE];
@@ -48,6 +59,13 @@ export function Message({ message, streaming, width = 80, tools }: MessageProps)
 	// gap, plus the parent App's paddingX of 1 each side. Reserve 4 cols so
 	// the wrapped text never tries to occupy the accent gutter.
 	const bodyWidth = Math.max(20, width - 4);
+	// Tool results carry the originating tool name on the message itself
+	// (set by pi-agent-core). Surface that instead of the generic "tool"
+	// label so users can see at a glance which tool produced this output.
+	const headerLabel =
+		role === "toolResult" && "toolName" in message && typeof message.toolName === "string"
+			? (TOOL_RESULT_LABEL[message.toolName] ?? message.toolName)
+			: style.label;
 
 	return (
 		<Box flexDirection="row" marginY={0}>
@@ -56,7 +74,7 @@ export function Message({ message, streaming, width = 80, tools }: MessageProps)
 			</Box>
 			<Box flexDirection="column" flexGrow={1}>
 				<Text color={style.accent} bold>
-					{style.label}
+					{headerLabel}
 					{streaming ? " …" : ""}
 				</Text>
 				<MessageBody message={message} width={bodyWidth} tools={tools} />
@@ -97,7 +115,16 @@ function MessageBody({
 		const text = message.content
 			.map((block) => (block.type === "text" ? block.text : `[image:${block.mimeType}]`))
 			.join("");
-		return <TruncatedOutput text={text} width={width} keyPrefix="tool" color={message.isError ? "red" : undefined} />;
+		const toolName = "toolName" in message && typeof message.toolName === "string" ? message.toolName : undefined;
+		return (
+			<TruncatedOutput
+				text={text}
+				width={width}
+				keyPrefix="tool"
+				color={message.isError ? "red" : undefined}
+				toolName={toolName}
+			/>
+		);
 	}
 
 	return null;
@@ -545,12 +572,23 @@ function DiffSummary({ diff, width, keyPrefix }: { diff: DiffInfo; width: number
 	);
 }
 
-const MAX_TOOL_OUTPUT_LINES = 12;
-const HEAD_TOOL_OUTPUT_LINES = 8;
-const TAIL_TOOL_OUTPUT_LINES = 3;
+const DEFAULT_MAX_TOOL_OUTPUT_LINES = 12;
 
 /**
- * Truncate tool output past MAX_TOOL_OUTPUT_LINES into "head + (N hidden)
+ * Per-tool display caps. Search-style tools (grep, find, glob) produce
+ * many matches, most of which the user doesn't need to read inline —
+ * the model still sees the full result. Default is 12 lines.
+ */
+const TOOL_OUTPUT_LIMITS: Record<string, number> = {
+	grep: 6,
+	search_files: 6,
+	glob: 8,
+	find: 8,
+	list_files: 10,
+};
+
+/**
+ * Truncate tool output past the per-tool limit into "head + (N hidden)
  * + tail" — long shell or grep output otherwise dominates the
  * transcript and pushes context off-screen. The agent still gets the
  * full output; this is purely a display trim. Errors are NEVER
@@ -561,19 +599,30 @@ function TruncatedOutput({
 	width,
 	keyPrefix,
 	color,
+	toolName,
 }: {
 	text: string;
 	width: number;
 	keyPrefix: string;
 	color?: string;
+	toolName?: string;
 }) {
+	const max =
+		toolName && TOOL_OUTPUT_LIMITS[toolName] !== undefined
+			? TOOL_OUTPUT_LIMITS[toolName]
+			: DEFAULT_MAX_TOOL_OUTPUT_LINES;
+	// Reserve at least 1 head + 1 tail line so the user can see the
+	// shape of the truncation; rest is head-weighted (where the
+	// interesting content usually is).
+	const tailLines = max >= 8 ? 3 : 2;
+	const headLines = Math.max(1, max - tailLines - 1);
 	const lines = text.split("\n");
-	if (color === "red" || lines.length <= MAX_TOOL_OUTPUT_LINES) {
+	if (color === "red" || lines.length <= max) {
 		return <WrappedLines text={text} width={width} keyPrefix={keyPrefix} color={color} />;
 	}
-	const head = lines.slice(0, HEAD_TOOL_OUTPUT_LINES).join("\n");
-	const tail = lines.slice(lines.length - TAIL_TOOL_OUTPUT_LINES).join("\n");
-	const hidden = lines.length - HEAD_TOOL_OUTPUT_LINES - TAIL_TOOL_OUTPUT_LINES;
+	const head = lines.slice(0, headLines).join("\n");
+	const tail = lines.slice(lines.length - tailLines).join("\n");
+	const hidden = lines.length - headLines - tailLines;
 	return (
 		<>
 			<WrappedLines text={head} width={width} keyPrefix={`${keyPrefix}-h`} color={color} />

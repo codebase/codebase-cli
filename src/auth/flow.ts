@@ -201,7 +201,7 @@ h1 {
 	padding: 12px 14px;
 	border-radius: 8px;
 	font-size: 13px;
-	text-align: left;
+	text-align: center;
 	white-space: pre-wrap;
 }
 @media (prefers-color-scheme: light) {

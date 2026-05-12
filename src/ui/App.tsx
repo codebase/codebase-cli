@@ -377,10 +377,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					<Text bold color="cyan">
 						codebase
 					</Text>
-					<Text dimColor>
-						{" "}
-						· {bundle.model.name} ({bundle.source})
-					</Text>
+					<Text dimColor> · {bundle.model.name} Model</Text>
 				</Box>
 			)}
 			<MessageList messages={state.messages} streaming={state.streaming} tools={state.tools} />
