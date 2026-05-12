@@ -5,6 +5,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
+import { generateSuggestion } from "../agent/prompt-suggestion.js";
 import { routeUserInput } from "../agent/router.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
@@ -210,6 +211,46 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	}, [bundle]);
 
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
+
+	// Inline prompt-suggestion ghost text. Schedules a single forecast
+	// call when the agent goes idle; cancels the prior call on every new
+	// state change so we never race two suggestions or show a stale one
+	// after the user starts a new turn. 500ms debounce lets idle settle
+	// (e.g. agent finishes, a quick status emit follows, we don't want to
+	// fire twice). Disabled via env so users on metered BYOK providers
+	// can opt out.
+	const [suggestion, setSuggestion] = useState<string | null>(null);
+	const suggestionAbortRef = useRef<AbortController | null>(null);
+	useEffect(() => {
+		// Always clear any active suggestion on state change — it was
+		// computed for the previous turn and the user has moved on.
+		setSuggestion(null);
+		suggestionAbortRef.current?.abort();
+		suggestionAbortRef.current = null;
+
+		if (process.env.CODEBASE_NO_SUGGESTIONS === "1") return;
+		if (state.status !== "idle") return;
+		if (state.messages.length < 2) return;
+
+		const ac = new AbortController();
+		suggestionAbortRef.current = ac;
+		const timer = setTimeout(async () => {
+			if (ac.signal.aborted) return;
+			try {
+				const text = await generateSuggestion(bundle, { signal: ac.signal });
+				if (ac.signal.aborted) return;
+				if (text) setSuggestion(text);
+			} catch {
+				// Suggestion failures are silent — they're a nicety, not load-bearing.
+			}
+		}, 500);
+
+		return () => {
+			clearTimeout(timer);
+			ac.abort();
+			if (suggestionAbortRef.current === ac) suggestionAbortRef.current = null;
+		};
+	}, [bundle, state.status, state.messages.length]);
 
 	const handleSubmit = async (text: string) => {
 		// `!cmd` runs a shell command directly — the CC convention for
@@ -426,6 +467,8 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					commands={commandSuggestions}
 					history={inputHistory}
 					cwd={bundle.toolContext.cwd}
+					suggestion={suggestion}
+					onSuggestionDismiss={() => setSuggestion(null)}
 				/>
 			)}
 		</Box>

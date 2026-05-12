@@ -37,6 +37,14 @@ interface InputProps {
 	history?: readonly string[];
 	/** Working directory used to resolve @-token Tab completion. */
 	cwd?: string;
+	/**
+	 * Inline ghost-text suggestion to render after an empty input prompt.
+	 * Tab accepts (fills the buffer); typing anything else dismisses it.
+	 * Null when no suggestion is active.
+	 */
+	suggestion?: string | null;
+	/** Called when the suggestion should clear (user typed or accepted it). */
+	onSuggestionDismiss?: () => void;
 }
 
 const MAX_SUGGESTIONS = 6;
@@ -84,7 +92,16 @@ function pickPlaceholder(hasHistory: boolean): string {
  *   Ctrl-Z          undo
  *   Ctrl-C          busy → cancel turn (stay in app); double-tap → exit
  */
-export function Input({ disabled, onSubmit, onAbort, commands, history, cwd }: InputProps) {
+export function Input({
+	disabled,
+	onSubmit,
+	onAbort,
+	commands,
+	history,
+	cwd,
+	suggestion,
+	onSuggestionDismiss,
+}: InputProps) {
 	const [state, setState] = useState(initialInputState());
 	const [suggestionIdx, setSuggestionIdx] = useState(0);
 	/**
@@ -131,6 +148,32 @@ export function Input({ disabled, onSubmit, onAbort, commands, history, cwd }: I
 		}
 
 		if (disabled) return;
+
+		// Ghost-text suggestion accept. Only fires when there's no slash
+		// or @-path completion in flight AND the buffer is empty (the
+		// suggestion is contextual to the conversation, not to whatever
+		// the user is mid-typing). Tab fills the buffer and clears the
+		// suggestion. Any other keystroke dismisses the suggestion so it
+		// doesn't keep flashing after the user has started a fresh idea.
+		if (suggestion && state.buffer.length === 0) {
+			if (key.tab && !autocompleteActive) {
+				setState({ ...initialInputState(), buffer: suggestion, cursor: suggestion.length });
+				onSuggestionDismiss?.();
+				return;
+			}
+			// Anything user-driven that isn't bare cursor navigation should
+			// kill the ghost — they've moved on.
+			const isPassThrough =
+				key.upArrow ||
+				key.downArrow ||
+				key.leftArrow ||
+				key.rightArrow ||
+				key.escape ||
+				(key.ctrl && (input === "c" || input === "d"));
+			if (!isPassThrough) {
+				onSuggestionDismiss?.();
+			}
+		}
 
 		// Autocomplete navigation runs BEFORE generic input handling so Tab
 		// doesn't insert a literal tab and arrow keys don't fight cursor
@@ -333,7 +376,15 @@ export function Input({ disabled, onSubmit, onAbort, commands, history, cwd }: I
 				) : state.buffer.length === 0 ? (
 					<>
 						<Text color="cyan">▎</Text>
-						<Text dimColor>{placeholderRef.current}</Text>
+						{suggestion ? (
+							<>
+								<Text dimColor>{suggestion}</Text>
+								<Text dimColor>{"  "}</Text>
+								<Text dimColor>↹ tab</Text>
+							</>
+						) : (
+							<Text dimColor>{placeholderRef.current}</Text>
+						)}
 					</>
 				) : (
 					<RenderedBuffer buffer={state.buffer} cursor={state.cursor} />
