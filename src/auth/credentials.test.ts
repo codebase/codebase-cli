@@ -43,6 +43,30 @@ describe("CredentialsStore", () => {
 		}
 	});
 
+	it("re-chmods to 0600 on load if the file was made world-readable", () => {
+		if (process.platform === "win32") return; // no posix modes
+		store.save({ accessToken: "x", scopes: [], source: "manual" });
+		// Simulate user chmod or a permissive umask after save.
+		require("node:fs").chmodSync(store.filePath, 0o644);
+		expect(store.mode()).toBe(0o644);
+		// Stderr warning is the spec for this branch; capture so we don't
+		// pollute the test runner output.
+		const origWrite = process.stderr.write.bind(process.stderr);
+		let warned = "";
+		process.stderr.write = ((chunk: string | Uint8Array) => {
+			warned += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+			return true;
+		}) as typeof process.stderr.write;
+		try {
+			const creds = store.load();
+			expect(creds).not.toBeNull();
+		} finally {
+			process.stderr.write = origWrite;
+		}
+		expect(warned).toContain("credentials file mode is 0644");
+		expect(store.mode()).toBe(0o600);
+	});
+
 	it("load returns null when no file exists", () => {
 		expect(store.load()).toBeNull();
 	});

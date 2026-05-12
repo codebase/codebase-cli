@@ -54,6 +54,13 @@ export interface CreateAgentOptions {
 	 * defeats the entire permission system.
 	 */
 	autoApprove?: boolean;
+	/**
+	 * Test escape hatch. Skip resolveConfig() and inject a pre-built
+	 * model + apiKey + source. Used by the E2E harness with pi-ai's
+	 * faux provider so tests can run without env vars or credentials.
+	 * Production code never sets this.
+	 */
+	configOverride?: { model: ResolvedConfig["model"]; apiKey: string; source: ResolvedConfig["source"] };
 }
 
 export interface AgentBundle {
@@ -81,7 +88,7 @@ export interface AgentBundle {
 }
 
 export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
-	const { model, apiKey, source } = resolveConfig();
+	const { model, apiKey, source } = opts.configOverride ?? resolveConfig();
 	const cwd = opts.cwd ?? process.cwd();
 	const systemPrompt = opts.systemPrompt ?? buildSystemPrompt(cwd);
 

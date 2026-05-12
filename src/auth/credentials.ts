@@ -1,5 +1,14 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -70,6 +79,27 @@ export class CredentialsStore {
 
 	load(): Credentials | null {
 		if (!existsSync(this.path)) return null;
+		// Mode invariant: tokens live behind 0600. We enforce on save, but a
+		// user could chmod the file or have a permissive umask after the
+		// fact — in that case quietly heal by re-chmod'ing AND emit a
+		// stderr warning so they know. Anything stricter (e.g. refusing to
+		// load) would lock people out of their own session over a chmod
+		// they didn't realise mattered. Warn-and-heal is the friendly path.
+		try {
+			const currentMode = statSync(this.path).mode & 0o777;
+			if (currentMode !== 0o600) {
+				process.stderr.write(
+					`[auth] credentials file mode is 0${currentMode.toString(8)} — should be 0600. Fixing.\n`,
+				);
+				try {
+					chmodSync(this.path, 0o600);
+				} catch {
+					// non-fatal — Windows/ACL systems don't support chmod
+				}
+			}
+		} catch {
+			// stat failed — file race during read; let the readFileSync below surface it
+		}
 		let raw: string;
 		try {
 			raw = readFileSync(this.path, "utf8");
@@ -113,7 +143,7 @@ export class CredentialsStore {
 		// Re-assert mode after rename — some platforms preserve the tmp's
 		// mode but it's cheap insurance.
 		try {
-			require("node:fs").chmodSync(this.path, 0o600);
+			chmodSync(this.path, 0o600);
 		} catch {
 			// non-fatal on systems that don't support chmod (Windows w/ ACLs)
 		}
