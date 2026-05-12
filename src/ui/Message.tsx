@@ -1,4 +1,4 @@
-import { sep as pathSep, relative as relativePath } from "node:path";
+import { isAbsolute, sep as pathSep, relative as relativePath, resolve as resolveAbsolute } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { diffLines, diffWordsWithSpace } from "diff";
 import { Box, Text } from "ink";
@@ -808,11 +808,33 @@ function truncate(s: string, n: number): string {
  */
 function displayPath(p: string): string {
 	if (!p) return p;
+	const visible = makeRelative(p);
+	return hyperlinkPath(visible, p);
+}
+
+function makeRelative(p: string): string {
 	if (!p.startsWith(pathSep)) return p; // already relative
 	const cwd = process.cwd();
 	const rel = relativePath(cwd, p);
 	if (!rel || rel.startsWith("..")) return p; // outside cwd — keep absolute
 	return rel;
+}
+
+/**
+ * Wrap a visible path in an OSC 8 hyperlink so terminals that support
+ * it (Ghostty, iTerm2, Kitty, recent gnome-terminal) make file paths
+ * clickable — click opens the file in $EDITOR / the OS default. The
+ * escape is zero-width and well-handled by wrap-ansi for width calc.
+ * Terminals that don't recognise OSC 8 silently strip it, so the
+ * fallback is just "non-clickable plain text" — no visible breakage.
+ * Opt-out: NO_HYPERLINK=1 (FORCE_HYPERLINK is honoured the other way,
+ * matching the common npm `supports-hyperlinks` convention).
+ */
+function hyperlinkPath(visible: string, rawPath: string): string {
+	if (process.env.NO_HYPERLINK === "1") return visible;
+	const absolute = isAbsolute(rawPath) ? rawPath : resolveAbsolute(process.cwd(), rawPath);
+	const url = `file://${absolute.split(pathSep).map(encodeURIComponent).join("/")}`;
+	return `\x1b]8;;${url}\x1b\\${visible}\x1b]8;;\x1b\\`;
 }
 
 /**
