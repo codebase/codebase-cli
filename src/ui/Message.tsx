@@ -692,4 +692,3 @@ function blockKey(block: { type: string; id?: string }, idx: number): string {
 	if (block.type === "toolCall" && block.id) return `tc-${block.id}`;
 	return `${block.type}-${idx}`;
 }
-
