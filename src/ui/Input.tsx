@@ -82,7 +82,7 @@ function pickPlaceholder(hasHistory: boolean): string {
  *   Ctrl-W          kill word before cursor
  *   Ctrl-Y          yank (paste from kill ring)
  *   Ctrl-Z          undo
- *   Ctrl-C          abort (busy → cancel turn, idle → exit app)
+ *   Ctrl-C          busy → cancel turn (stay in app); double-tap → exit
  */
 export function Input({ disabled, onSubmit, onAbort, commands, history, cwd }: InputProps) {
 	const [state, setState] = useState(initialInputState());

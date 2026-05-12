@@ -347,25 +347,34 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		}
 	};
 
-	// Double-tap-to-exit: first Ctrl-C when idle posts a hint, second
-	// within 2s actually exits. While busy, Ctrl-C cancels the turn (one
-	// press) — the user already meant to interrupt and shouldn't have
-	// to confirm. The hint is a status line that times out on its own
-	// so the user doesn't end up with a stale message stuck below.
+	// Ctrl-C semantics:
+	//   • While the agent is busy: abort the turn. Stays in the app.
+	//   • A second Ctrl-C within DOUBLE_TAP_MS exits, regardless of
+	//     whether the previous press aborted or just landed a hint.
+	//     "Twice real fast" is universally understood as "I want out."
+	//   • While idle: first press posts a hint + arms the exit window.
+	//
+	// 1000ms is "real fast" — wide enough that intentional double-taps
+	// register, tight enough that mashing Ctrl-C twice while flustered
+	// doesn't accidentally exit. Tunable here if testers want it longer.
 	const exitTimerRef = useMemo(() => ({ deadline: 0 }), []);
 	const handleAbort = () => {
-		if (busy) {
-			bundle.agent.abort();
-			dispatch({ type: "abort" });
-			return;
-		}
+		const DOUBLE_TAP_MS = 1000;
 		const now = Date.now();
 		if (now < exitTimerRef.deadline) {
 			onExit();
 			return;
 		}
-		exitTimerRef.deadline = now + 2000;
-		appendStatus("Press Ctrl-C again within 2s to exit.");
+		exitTimerRef.deadline = now + DOUBLE_TAP_MS;
+		if (busy) {
+			bundle.agent.abort();
+			dispatch({ type: "abort" });
+			// No hint here — the abort itself is the feedback. The
+			// exit window is set silently so a quick second tap still
+			// gets the user out without confirmation theater.
+			return;
+		}
+		appendStatus("Press Ctrl-C again to exit.");
 	};
 
 	return (
