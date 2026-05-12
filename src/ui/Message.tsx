@@ -1,10 +1,18 @@
-import { isAbsolute, sep as pathSep, relative as relativePath, resolve as resolveAbsolute } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { diffLines, diffWordsWithSpace } from "diff";
 import { Box, Text } from "ink";
 import { type ReactNode, useEffect, useState } from "react";
 import type { ToolExecution } from "../types.js";
 import { Markdown } from "./Markdown.js";
+import { displayPath } from "./paths.js";
+import {
+	nounForReadTool,
+	pastVerbForReadTool,
+	presentVerbForReadTool,
+	toolActionLabel,
+	toolActionPast,
+	truncate,
+} from "./tool-labels.js";
 import { wrapText } from "./wrap.js";
 
 interface MessageProps {
@@ -340,28 +348,6 @@ function CollapsedReadGroup({
 			</Box>
 		</>
 	);
-}
-
-function presentVerbForReadTool(name: string): string {
-	if (name === "read_file") return "Reading";
-	if (name === "list_files") return "Listing";
-	if (name === "glob") return "Searching";
-	if (name === "grep") return "Grepping";
-	return "Running";
-}
-
-function pastVerbForReadTool(name: string): string {
-	if (name === "read_file") return "Read";
-	if (name === "list_files") return "Listed";
-	if (name === "glob") return "Searched";
-	if (name === "grep") return "Grepped";
-	return "Ran";
-}
-
-function nounForReadTool(name: string, count: number): string {
-	if (name === "read_file") return count === 1 ? "file" : "files";
-	if (name === "list_files") return count === 1 ? "directory" : "directories";
-	return count === 1 ? "call" : "calls";
 }
 
 /** One word-level span inside a paired remove/add line. */
@@ -707,206 +693,3 @@ function blockKey(block: { type: string; id?: string }, idx: number): string {
 	return `${block.type}-${idx}`;
 }
 
-function summarizeArgs(args: unknown): string {
-	if (!args || typeof args !== "object") return "";
-	const entries = Object.entries(args as Record<string, unknown>).slice(0, 3);
-	return entries
-		.map(([k, v]) => {
-			const s = typeof v === "string" ? `"${v.slice(0, 30)}"` : String(v);
-			return `${k}=${s}`;
-		})
-		.join(", ");
-}
-
-/**
- * Render a tool call as a human-friendly action label, the way Claude
- * Code formats them: present-tense verb + the salient argument
- * (file path, command, URL, search query, etc.) instead of the raw
- * `toolName(k1=v1, k2=v2)` shape. Falls back to the verbose form for
- * tools we don't have a special case for.
- */
-function toolActionLabel(name: string, args: unknown): string {
-	const a = (args ?? {}) as Record<string, unknown>;
-	const str = (k: string): string => (typeof a[k] === "string" ? (a[k] as string) : "");
-	const path = displayPath(str("path") || str("file_path"));
-
-	switch (name) {
-		case "read_file":
-			return `Reading ${path}`;
-		case "write_file":
-			return `Writing ${path}`;
-		case "edit_file":
-			return `Editing ${path}`;
-		case "multi_edit":
-			return `Editing ${path}`;
-		case "notebook_edit":
-			return `Editing notebook ${path}`;
-		case "list_files":
-			return `Listing ${path || "."}`;
-		case "glob":
-			return `Searching ${str("pattern")}`;
-		case "grep":
-			return `Searching for "${str("pattern")}"`;
-		case "shell":
-			return `Running: ${truncate(str("command") || str("cmd"), 60)}`;
-		case "web_fetch":
-			return `Fetching ${str("url")}`;
-		case "web_search":
-			return `Searching: ${truncate(str("query"), 60)}`;
-		case "git_status":
-			return "git status";
-		case "git_diff":
-			return `git diff${str("target") ? ` ${str("target")}` : ""}`;
-		case "git_log":
-			return "git log";
-		case "git_commit":
-			return `git commit: ${truncate(str("message"), 50)}`;
-		case "git_branch":
-			return str("name") ? `git branch ${str("name")}` : "git branches";
-		case "enter_worktree":
-			return `Entering worktree ${str("branch") || str("name")}`;
-		case "exit_worktree":
-			return "Leaving worktree";
-		case "enter_plan_mode":
-			return "Entering plan mode";
-		case "exit_plan_mode":
-			return "Exiting plan mode";
-		case "dispatch_agent":
-			return `Dispatching subagent: ${truncate(str("task"), 60)}`;
-		case "ask_user":
-			return `Asking: ${truncate(str("question"), 60)}`;
-		case "create_task":
-			return `Task: ${truncate(str("subject"), 60)}`;
-		case "update_task":
-			return `Updating task ${str("taskId")}`;
-		case "list_tasks":
-			return "Listing tasks";
-		case "get_task":
-			return `Reading task ${str("taskId")}`;
-		case "save_memory":
-			return `Saving memory: ${str("name") || str("type")}`;
-		case "read_memory":
-			return str("filename") ? `Reading memory ${str("filename")}` : "Reading MEMORY.md";
-		case "config":
-			return str("path") ? `config(${str("path")})` : "Reading config";
-		default:
-			return `${name}(${summarizeArgs(args)})`;
-	}
-}
-
-function truncate(s: string, n: number): string {
-	if (s.length <= n) return s;
-	return `${s.slice(0, n - 1)}…`;
-}
-
-/**
- * Show a path relative to the working directory when it's inside (so
- * "src/ui/Message.tsx" instead of "/home/half/.../src/ui/Message.tsx"),
- * but keep it absolute when it points outside the project — that's
- * useful information the user should see at full fidelity. Empty
- * strings pass through unchanged.
- */
-function displayPath(p: string): string {
-	if (!p) return p;
-	const visible = makeRelative(p);
-	return hyperlinkPath(visible, p);
-}
-
-function makeRelative(p: string): string {
-	if (!p.startsWith(pathSep)) return p; // already relative
-	const cwd = process.cwd();
-	const rel = relativePath(cwd, p);
-	if (!rel || rel.startsWith("..")) return p; // outside cwd — keep absolute
-	return rel;
-}
-
-/**
- * Wrap a visible path in an OSC 8 hyperlink so terminals that support
- * it (Ghostty, iTerm2, Kitty, recent gnome-terminal) make file paths
- * clickable — click opens the file in $EDITOR / the OS default. The
- * escape is zero-width and well-handled by wrap-ansi for width calc.
- * Terminals that don't recognise OSC 8 silently strip it, so the
- * fallback is just "non-clickable plain text" — no visible breakage.
- * Opt-out: NO_HYPERLINK=1 (FORCE_HYPERLINK is honoured the other way,
- * matching the common npm `supports-hyperlinks` convention).
- */
-function hyperlinkPath(visible: string, rawPath: string): string {
-	if (process.env.NO_HYPERLINK === "1") return visible;
-	const absolute = isAbsolute(rawPath) ? rawPath : resolveAbsolute(process.cwd(), rawPath);
-	const url = `file://${absolute.split(pathSep).map(encodeURIComponent).join("/")}`;
-	return `\x1b]8;;${url}\x1b\\${visible}\x1b]8;;\x1b\\`;
-}
-
-/**
- * Past-tense action label, used when a tool has finished. Same shape
- * as `toolActionLabel` but with the verbs swapped to past tense:
- * "Reading X" → "Read X", "Editing Y" → "Edited Y", etc.
- */
-function toolActionPast(name: string, args: unknown): string {
-	const a = (args ?? {}) as Record<string, unknown>;
-	const str = (k: string): string => (typeof a[k] === "string" ? (a[k] as string) : "");
-	const path = displayPath(str("path") || str("file_path"));
-
-	switch (name) {
-		case "read_file":
-			return `Read ${path}`;
-		case "write_file":
-			return `Wrote ${path}`;
-		case "edit_file":
-			return `Edited ${path}`;
-		case "multi_edit":
-			return `Edited ${path}`;
-		case "notebook_edit":
-			return `Edited notebook ${path}`;
-		case "list_files":
-			return `Listed ${path || "."}`;
-		case "glob":
-			return `Searched ${str("pattern")}`;
-		case "grep":
-			return `Searched for "${str("pattern")}"`;
-		case "shell":
-			return `Ran: ${truncate(str("command") || str("cmd"), 60)}`;
-		case "web_fetch":
-			return `Fetched ${str("url")}`;
-		case "web_search":
-			return `Searched: ${truncate(str("query"), 60)}`;
-		case "git_status":
-			return "git status";
-		case "git_diff":
-			return `git diff${str("target") ? ` ${str("target")}` : ""}`;
-		case "git_log":
-			return "git log";
-		case "git_commit":
-			return `git commit: ${truncate(str("message"), 50)}`;
-		case "git_branch":
-			return str("name") ? `git branch ${str("name")}` : "git branches";
-		case "enter_worktree":
-			return `Entered worktree ${str("branch") || str("name")}`;
-		case "exit_worktree":
-			return "Left worktree";
-		case "enter_plan_mode":
-			return "Entered plan mode";
-		case "exit_plan_mode":
-			return "Exited plan mode";
-		case "dispatch_agent":
-			return `Subagent: ${truncate(str("task"), 60)}`;
-		case "ask_user":
-			return `Asked: ${truncate(str("question"), 60)}`;
-		case "create_task":
-			return `Created task: ${truncate(str("subject"), 60)}`;
-		case "update_task":
-			return `Updated task ${str("taskId")}`;
-		case "list_tasks":
-			return "Listed tasks";
-		case "get_task":
-			return `Read task ${str("taskId")}`;
-		case "save_memory":
-			return `Saved memory: ${str("name") || str("type")}`;
-		case "read_memory":
-			return str("filename") ? `Read memory ${str("filename")}` : "Read MEMORY.md";
-		case "config":
-			return str("path") ? `config(${str("path")})` : "Read config";
-		default:
-			return `${name}(${summarizeArgs(args)})`;
-	}
-}
