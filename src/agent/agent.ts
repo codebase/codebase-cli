@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { CompactionEngine } from "../compaction/engine.js";
+import { CompactionMonitor } from "../compaction/monitor.js";
 import { ConfigStore } from "../config/store.js";
 import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
 import { GlueClient, resolveGlueModels } from "../glue/client.js";
@@ -66,6 +67,7 @@ export interface AgentBundle {
 	memory: MemoryStore;
 	glue: GlueClient;
 	compaction: CompactionEngine;
+	compactionMonitor: CompactionMonitor;
 	sessions: SessionStore;
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
@@ -103,6 +105,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		apiKey: glueModels.apiKey,
 	});
 	const compaction = new CompactionEngine({ glue, modelId: model.id });
+	const compactionMonitor = new CompactionMonitor();
 	const sessions = new SessionStore({ cwd });
 	const resumed = opts.resume ? sessions.load(model.id) : null;
 
@@ -135,24 +138,31 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		getApiKey: () => apiKey,
 		transformContext: async (messages, signal) => {
 			if (!compaction.needsCompaction(messages)) return messages;
-			await hooks.dispatch(
-				"PreCompact",
-				{ event: "PreCompact", workingDir: cwd, messageCount: messages.length },
-				signal,
-			);
-			const result = await compaction.compact(messages, signal);
-			await hooks.dispatch(
-				"PostCompact",
-				{
-					event: "PostCompact",
-					workingDir: cwd,
-					messageCount: result.messages.length,
-					collapsedMessageCount: result.details.collapsedMessageCount,
-					truncatedTokens: result.details.truncatedTokens,
-				},
-				signal,
-			);
-			return result.messages;
+			compactionMonitor.start(messages.length);
+			try {
+				await hooks.dispatch(
+					"PreCompact",
+					{ event: "PreCompact", workingDir: cwd, messageCount: messages.length },
+					signal,
+				);
+				const result = await compaction.compact(messages, signal);
+				await hooks.dispatch(
+					"PostCompact",
+					{
+						event: "PostCompact",
+						workingDir: cwd,
+						messageCount: result.messages.length,
+						collapsedMessageCount: result.details.collapsedMessageCount,
+						truncatedTokens: result.details.truncatedTokens,
+					},
+					signal,
+				);
+				return result.messages;
+			} finally {
+				// Always clear — even if compact() threw, the user shouldn't
+				// see a stuck "Compacting…" banner forever.
+				compactionMonitor.end();
+			}
 		},
 		beforeToolCall: async (ctx, signal) => {
 			// 1. Plan mode gate: block destructive tools entirely while planning.
@@ -279,6 +289,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		memory,
 		glue,
 		compaction,
+		compactionMonitor,
 		sessions,
 		hooks,
 		diagnostics,

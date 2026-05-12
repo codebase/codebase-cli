@@ -9,6 +9,7 @@ import { generateSuggestion } from "../agent/prompt-suggestion.js";
 import { routeUserInput } from "../agent/router.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
+import type { CompactionState } from "../compaction/monitor.js";
 import type { PermissionRequest } from "../permissions/store.js";
 import {
 	buildAgentPrompt,
@@ -91,6 +92,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	);
 	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
 	const [userQuery, setUserQuery] = useState<UserQuery | undefined>(bundle.userQueries.current());
+	const [compactionState, setCompactionState] = useState(bundle.compactionMonitor.current());
 	const [statusLines, setStatusLines] = useState<string[]>([]);
 	// Cap the buffer so noisy emits (long /help, many !cmds) don't grow
 	// the status pane indefinitely. 50 rows ≈ a screen on most terms.
@@ -200,6 +202,10 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 
 	useEffect(() => {
 		return bundle.permissions.subscribe((req) => setPermRequest(req));
+	}, [bundle]);
+
+	useEffect(() => {
+		return bundle.compactionMonitor.subscribe((s) => setCompactionState(s));
 	}, [bundle]);
 
 	useEffect(() => {
@@ -436,6 +442,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				</Box>
 			)}
 			<MessageList messages={state.messages} streaming={state.streaming} tools={state.tools} />
+			{compactionState.active ? <CompactionBanner state={compactionState} /> : null}
 			<ToolPanel tools={state.tools} />
 			<TaskPanel tasks={tasks} />
 			{statusLines.length > 0 ? (
@@ -550,4 +557,30 @@ function ExitOnCtrlC({ onExit }: { onExit: () => void }) {
 		};
 	}, [onExit]);
 	return null;
+}
+
+/**
+ * Visible banner while the agent is summarising older turns into a
+ * compaction checkpoint. The work itself takes a few seconds on long
+ * sessions — silent before, looked like a hang. The banner re-renders
+ * its elapsed-seconds label every second so the user has a clear
+ * "still working" signal.
+ */
+function CompactionBanner({ state }: { state: CompactionState }) {
+	const [elapsed, setElapsed] = useState(0);
+	useEffect(() => {
+		if (!state.startedAt) return;
+		const tick = () => setElapsed(Math.floor((Date.now() - (state.startedAt ?? Date.now())) / 1000));
+		tick();
+		const id = setInterval(tick, 1000);
+		return () => clearInterval(id);
+	}, [state.startedAt]);
+	return (
+		<Box paddingX={1} marginBottom={0}>
+			<Text color="yellow">
+				⟳ Compacting context ({state.messageCount} messages
+				{elapsed > 0 ? ` · ${elapsed}s` : ""})…
+			</Text>
+		</Box>
+	);
 }
