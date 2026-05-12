@@ -217,8 +217,16 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 							timestamp: Date.now(),
 						});
 					})
-					.catch(() => {
-						// Diagnostics failures are non-fatal — surface nothing.
+					.catch((err) => {
+						// Diagnostics failures are non-fatal — surface only when the
+						// user opted into debug. Silent before; that buried a real
+						// bug where a checker hung and the user thought the tool
+						// itself was slow.
+						if (process.env.CODEBASE_DEBUG === "1") {
+							process.stderr.write(
+								`[diagnostics] ${absPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+							);
+						}
 					});
 			}
 			return undefined;

@@ -92,5 +92,15 @@ export function parseGlueRef(ref: string, fallback: Model<string>): Model<string
 
 	const [maybeProvider, maybeId] = trimmed.includes(":") ? trimmed.split(":", 2) : [fallback.provider, trimmed];
 	const found = getModel(maybeProvider as KnownProvider, maybeId as never);
-	return (found as Model<string> | undefined) ?? fallback;
+	if (found) return found as Model<string>;
+	// Lookup miss — typo or unknown model. Falling back is correct, but
+	// silent fallback meant users who set GLUE_SMART_MODEL=foo-typo
+	// thought they were getting their smart model and were actually
+	// getting the parent. Make it visible under CODEBASE_DEBUG=1.
+	if (process.env.CODEBASE_DEBUG === "1") {
+		process.stderr.write(
+			`[glue] no model matched "${trimmed}" — falling back to ${fallback.provider}/${fallback.id}\n`,
+		);
+	}
+	return fallback;
 }

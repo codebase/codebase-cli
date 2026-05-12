@@ -2,26 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { makeMockToolContext } from "./__test__/mock-tool-context.js";
 import { createConfig } from "./config.js";
-import type { ToolContext } from "./types.js";
 
-function makeCtx(cwd: string): ToolContext {
-	return {
-		cwd,
-		// biome-ignore lint/suspicious/noExplicitAny: minimal stub for tool context
-		fileStateCache: {} as any,
-		// biome-ignore lint/suspicious/noExplicitAny: minimal stub
-		tasks: {} as any,
-		// biome-ignore lint/suspicious/noExplicitAny: minimal stub
-		userQueries: {} as any,
-		// biome-ignore lint/suspicious/noExplicitAny: minimal stub
-		planMode: {} as any,
-		// biome-ignore lint/suspicious/noExplicitAny: minimal stub
-		memory: {} as any,
-		// biome-ignore lint/suspicious/noExplicitAny: minimal stub
-		spawnSubagent: (() => {}) as any,
-	};
-}
+const makeCtx = makeMockToolContext;
 
 describe("config tool", () => {
 	let cwd: string;

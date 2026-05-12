@@ -65,8 +65,16 @@ export class HookManager {
 
 		for (const config of matching) {
 			if (config.async) {
-				runHook(config, context, signal).catch(() => {
-					// fire-and-forget; nothing to do on failure
+				runHook(config, context, signal).catch((err) => {
+					// async hooks fire-and-forget by design, but a hook that's
+					// silently throwing on every event will mystify the user
+					// who configured it. Surface to stderr under CODEBASE_DEBUG
+					// so it's visible when someone is actually looking.
+					if (process.env.CODEBASE_DEBUG === "1") {
+						process.stderr.write(
+							`[hook async event=${event}] ${err instanceof Error ? err.message : String(err)}\n`,
+						);
+					}
 				});
 				ranCount++;
 				continue;
