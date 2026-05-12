@@ -41,7 +41,12 @@ export function App() {
 	const { bundle, configError } = useMemo(() => {
 		void setupAttempt;
 		try {
-			return { bundle: createAgent(), configError: undefined as string | undefined };
+			// Auto-resume the prior session for this cwd by default. The
+			// `--new` CLI flag (parsed in cli.tsx) sets CODEBASE_FRESH so
+			// users who explicitly want a clean slate can opt out without
+			// having to wipe ~/.codebase/sessions manually.
+			const resume = process.env.CODEBASE_FRESH !== "1";
+			return { bundle: createAgent({ resume }), configError: undefined as string | undefined };
 		} catch (err) {
 			return {
 				bundle: undefined,

@@ -37,6 +37,13 @@ for (const a of rawArgv) {
 		process.env.CODEBASE_DEBUG_INPUT = "1";
 		continue;
 	}
+	if (a === "--new" || a === "--fresh") {
+		// Skip the auto-resume that the interactive TUI does by default —
+		// useful when the prior session is no longer relevant or after a
+		// destructive change to the working tree.
+		process.env.CODEBASE_FRESH = "1";
+		continue;
+	}
 	argv.push(a);
 }
 
@@ -144,6 +151,10 @@ function printHelp(): void {
 			"  codebase app-server          JSON-RPC server on stdio (for IDE extensions)",
 			"  codebase --version           print version and exit",
 			"  codebase --help              show this message",
+			"",
+			"Session:",
+			"  codebase                     resume the prior session for this directory if recent (≤7d)",
+			"  codebase --new               start a fresh session, ignoring saved history",
 			"",
 			"Diagnostics:",
 			"  --debug-input                log every keystroke to ~/.codebase/logs/input.log",

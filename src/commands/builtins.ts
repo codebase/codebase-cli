@@ -44,6 +44,24 @@ const clear: Command = {
 	},
 };
 
+/**
+ * Hard reset: drop both the display transcript AND the agent's internal
+ * message history, so the next turn starts with zero context. Use after a
+ * topic shift, when the model's gotten stuck in a stale plan, or to free
+ * up context space without waiting for compaction.
+ */
+const fresh: Command = {
+	name: "new",
+	description: "Start a fresh conversation — wipes both display history and agent context.",
+	mutates: true,
+	handler: (_args, ctx) => {
+		ctx.bundle.agent.state.messages = [];
+		ctx.clearDisplay();
+		ctx.emit("Started a fresh conversation. Prior context is gone for this and the next turn.");
+		return { handled: true };
+	},
+};
+
 const compact: Command = {
 	name: "compact",
 	description: "Force a compaction pass on the running transcript.",
@@ -345,6 +363,56 @@ const context: Command = {
 	},
 };
 
+/**
+ * Diagnostic for "the model isn't remembering what I told it earlier."
+ * Compares the UI's display state (what the user sees in the transcript)
+ * with the agent's internal _state.messages (what actually ships to the
+ * model on the next turn). If those diverge, that's the bug. If they
+ * match but the model still acts amnesiac, the issue is in the wire
+ * call — pi-ai's openai-completions builder, the proxy, or the upstream.
+ */
+const debug: Command = {
+	name: "debug",
+	description: "Inspect internal agent state — message count, token estimate, last few roles.",
+	handler: (_args, ctx) => {
+		const display = ctx.state.messages;
+		const internal = ctx.bundle.agent.state.messages;
+		const rolesTail = (msgs: readonly { role: string }[], n: number) =>
+			msgs
+				.slice(-n)
+				.map((m) => m.role)
+				.join(" → ") || "(empty)";
+		const u = ctx.state.usage;
+		const used = u.input + u.cacheRead;
+		const compactAt = ctx.bundle.compaction.threshold();
+		const divergent = display.length !== internal.length;
+		const lines = [
+			"Internal state inspection:",
+			"",
+			`  Display messages (UI):     ${display.length}`,
+			`  Agent state messages:      ${internal.length}${divergent ? "  ← MISMATCH!" : ""}`,
+			"",
+			`  Last 5 display roles:      ${rolesTail(display, 5)}`,
+			`  Last 5 agent state roles:  ${rolesTail(internal, 5)}`,
+			"",
+			`  Estimated tokens used:     ${used.toLocaleString()}`,
+			`  Compaction triggers at:    ${compactAt.toLocaleString()}`,
+			`  Streaming in progress:     ${ctx.state.streaming ? "yes" : "no"}`,
+			"",
+			divergent
+				? "Mismatch means the agent and the UI disagree about what's been said. " +
+					"That's the source of 'the model forgot' — the next turn ships internal " +
+					"messages, not display messages. Report this with a `codebase --debug-input` " +
+					"transcript so we can see how it happened."
+				: "Display and agent state match. If the model is still acting amnesiac, the " +
+					"context is leaving the CLI correctly but something on the wire is dropping " +
+					"it — capture with OPENAI_LOG=debug codebase to see the raw HTTP request body.",
+		];
+		ctx.emit(lines.join("\n"));
+		return { handled: true };
+	},
+};
+
 // ─── auth / session ───────────────────────────────────────────────────
 
 const login: Command = {
@@ -526,6 +594,7 @@ const pwd: Command = {
 export const BUILTIN_COMMANDS: readonly Command[] = [
 	help,
 	clear,
+	fresh,
 	compact,
 	session,
 	cost,
@@ -545,5 +614,6 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	mcp,
 	pwd,
 	redo,
+	debug,
 	exit,
 ];
