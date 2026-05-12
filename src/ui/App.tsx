@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
+import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { Box, Text, useApp } from "ink";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
