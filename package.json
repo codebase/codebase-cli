@@ -60,6 +60,8 @@
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "0.74.0",
 		"@earendil-works/pi-ai": "0.74.0",
+		"@types/diff": "^7.0.2",
+		"diff": "^9.0.0",
 		"glob": "^13.0.1",
 		"ignore": "^7.0.0",
 		"ink": "^5.2.1",
