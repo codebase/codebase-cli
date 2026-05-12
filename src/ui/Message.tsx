@@ -442,16 +442,12 @@ function buildDiff(oldStr: string, newStr: string): DiffInfo {
 					hunks.push({
 						type: "remove",
 						text: removeLines[j],
-						wordParts: parts
-							.filter((p) => !p.added)
-							.map((p) => ({ text: p.value, highlight: !!p.removed })),
+						wordParts: parts.filter((p) => !p.added).map((p) => ({ text: p.value, highlight: !!p.removed })),
 					});
 					hunks.push({
 						type: "add",
 						text: addLines[j],
-						wordParts: parts
-							.filter((p) => !p.removed)
-							.map((p) => ({ text: p.value, highlight: !!p.added })),
+						wordParts: parts.filter((p) => !p.removed).map((p) => ({ text: p.value, highlight: !!p.added })),
 					});
 				}
 			} else {
@@ -492,6 +488,8 @@ function DiffSummary({ diff, width, keyPrefix }: { diff: DiffInfo; width: number
 	return (
 		<Box flexDirection="column" marginLeft={2}>
 			<Text dimColor>{counts}</Text>
+			{/* biome-ignore lint/suspicious/noArrayIndexKey: hunks are freshly built per render from
+			    immutable args; no reorder, no insertion, so index is a stable per-render key */}
 			{diff.hunks.map((h, i) => {
 				const isRemove = h.type === "remove";
 				const sign = isRemove ? "    - " : "    + ";
@@ -513,17 +511,23 @@ function DiffSummary({ diff, width, keyPrefix }: { diff: DiffInfo; width: number
 							break;
 						}
 					}
+					// Stable keys per-word: counter-suffix is only for collision when
+					// the same word appears multiple times in a line. Avoids the
+					// array-index-as-key smell while keeping React's reconciler happy.
+					const seenCounts = new Map<string, number>();
+					const keyedParts = visibleParts.map((p) => {
+						const baseKey = `${p.highlight ? "h" : "n"}:${p.text}`;
+						const count = seenCounts.get(baseKey) ?? 0;
+						seenCounts.set(baseKey, count + 1);
+						return { part: p, k: `${key}-w-${baseKey}-${count}` };
+					});
 					return (
 						<Box key={key}>
 							<Text color={lineColor}>{sign}</Text>
 							<Text>
-								{visibleParts.map((p, j) => (
-									<Text
-										key={`${key}-w-${j}`}
-										color={lineColor}
-										backgroundColor={p.highlight ? hlBg : undefined}
-									>
-										{p.text}
+								{keyedParts.map(({ part, k }) => (
+									<Text key={k} color={lineColor} backgroundColor={part.highlight ? hlBg : undefined}>
+										{part.text}
 									</Text>
 								))}
 							</Text>
