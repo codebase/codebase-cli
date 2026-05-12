@@ -116,17 +116,31 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 		return { model, apiKey, source: "explicit" };
 	}
 
-	for (const provider of AUTO_DETECT_ORDER) {
-		const apiKey = getEnvApiKey(provider);
-		if (!apiKey) continue;
+	// Env-var auto-detect is the legacy power-user path. We only honor it
+	// for users who have already onboarded — otherwise a stray
+	// ANTHROPIC_API_KEY or OPENAI_API_KEY in the shell would silently
+	// skip the OAuth wizard the first time a new user runs `codebase`,
+	// even though they almost certainly want the in-house default model
+	// with free credits rather than spending their own API key budget.
+	//
+	// "Already onboarded" = credentials.json exists on disk, even if it's
+	// now expired or empty. The wizard creates that file on first
+	// sign-in, so its presence is a reliable "this user knows what
+	// they're doing" signal.
+	const hasOnboarded = credentials.exists();
+	if (hasOnboarded) {
+		for (const provider of AUTO_DETECT_ORDER) {
+			const apiKey = getEnvApiKey(provider);
+			if (!apiKey) continue;
 
-		const modelId = DEFAULT_MODELS[provider];
-		if (!modelId) continue;
+			const modelId = DEFAULT_MODELS[provider];
+			if (!modelId) continue;
 
-		const model = getModel(provider, modelId as never);
-		if (!model) continue;
+			const model = getModel(provider, modelId as never);
+			if (!model) continue;
 
-		return { model, apiKey, source: "auto" };
+			return { model, apiKey, source: "auto" };
+		}
 	}
 
 	throw new ConfigError(

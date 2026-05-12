@@ -57,6 +57,17 @@ export class CredentialsStore {
 		return this.path;
 	}
 
+	/**
+	 * True iff a credentials file exists on disk, regardless of whether
+	 * it parses or whether the token is still valid. Used to detect
+	 * "user has gone through the first-run wizard at least once" so we
+	 * don't silently skip the OAuth offer for a brand-new install just
+	 * because some stray API key happens to be in the shell env.
+	 */
+	exists(): boolean {
+		return existsSync(this.path);
+	}
+
 	load(): Credentials | null {
 		if (!existsSync(this.path)) return null;
 		let raw: string;
