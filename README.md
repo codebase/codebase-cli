@@ -1,266 +1,95 @@
-# Codebase CLI
+<p align="center">
+  <img src="docs/assets/codebase-mark.svg" alt="codebase" width="96" />
+</p>
 
-AI coding agent in your terminal. Reads your project, writes code, runs commands, searches the web. Works with any LLM provider — or sign in with codebase.foundation and we proxy inference for you.
+<h1 align="center">codebase</h1>
 
-> **v2 (TypeScript)** — codebase-cli has been rewritten on top of the
-> [pi-mono](https://github.com/earendil-works/pi-mono) runtime. Existing
-> v1 (Go) users: the installer below auto-detects the old binary and
-> migrates your data. See [`docs/MIGRATION_v1_to_v2.md`](docs/MIGRATION_v1_to_v2.md).
+<p align="center">
+  <strong>An AI coding agent for builders.</strong><br/>
+  Lives in your terminal. Reads your project, writes code, runs commands, ships work.
+</p>
 
-## Install
+<p align="center">
+  <a href="https://www.npmjs.com/package/codebase-cli"><img alt="npm" src="https://img.shields.io/npm/v/codebase-cli?style=flat-square" /></a>
+  <a href="https://github.com/codebase-foundation/codebase-cli/blob/master/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" /></a>
+</p>
 
-Requires **Node.js ≥ 20**. The one-liner installer prints a hint with Volta/fnm/nvm if Node is missing or too old.
+<p align="center">
+  <a href="https://github.com/earendil-works/pi">
+    <img src="https://pi.dev/logo-auto.svg" alt="Powered by pi" width="20" align="absmiddle" />
+    &nbsp;<strong>Powered by <a href="https://github.com/earendil-works/pi">pi</a></strong>
+  </a>
+  &nbsp;·&nbsp;
+  <em>The agent loop, provider adapters, and session protocol come from <a href="https://github.com/earendil-works/pi">pi-mono</a>.</em>
+</p>
 
-**macOS / Linux (one-liner — recommended):**
+---
 
-```sh
-curl -fsSL https://codebase.design/install.sh | sh
-```
+## Two ways to run it
 
-This detects an existing v1 binary, asks before removing it, then installs v2 via npm.
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://codebase.design/install.ps1 | iex
-```
-
-**With npm (any platform, requires Node.js ≥ 20):**
-
-```sh
-npm install -g codebase-cli
-```
-
-**With Homebrew:**
+**Bring your own LLM.** Drop an API key in your shell and go — Anthropic, OpenAI, Groq, OpenRouter, Mistral, Ollama, any OpenAI-compatible endpoint.
 
 ```sh
-brew install codebase-foundation/codebase/codebase
+ANTHROPIC_API_KEY=sk-ant-... codebase
+# or
+OPENAI_API_KEY=sk-... codebase
 ```
 
-**From source:**
-
-```sh
-git clone https://github.com/codebase-foundation/codebase-cli.git
-cd codebase-cli
-npm install
-npm run build
-npm link        # symlinks `codebase` into your npm prefix
-```
-
-After install, run `codebase` from any project directory.
-
-## Quick Start
-
-**Option 1: Login with Codebase (easiest)**
+**Or sign in once via [codebase.design](https://codebase.design)** and try open-weight models instantly with no key setup — MiniMax, Qwen, Llama, and others routed through our inference proxy. One auth, every model.
 
 ```sh
 codebase auth login
-```
-
-Opens your browser, logs you into codebase.foundation, and you're ready. Uses our inference providers (Claude, MiniMax, Qwen, etc.) with your account credits. No API keys needed.
-
-**Option 2: Bring your own API key**
-
-```sh
-export ANTHROPIC_API_KEY=sk-ant-...
 codebase
 ```
 
-Works with any provider:
+## Install
+
+Requires **Node.js ≥ 20**.
 
 ```sh
-# OpenAI
-export OPENAI_API_KEY=sk-...
+# one-liner (macOS / Linux)
+curl -fsSL https://codebase.design/install.sh | sh
 
-# Groq
-export OPENAI_BASE_URL=https://api.groq.com/openai/v1
-export OPENAI_API_KEY=gsk-...
-export OPENAI_MODEL=llama-3.3-70b-versatile
+# Windows (PowerShell)
+irm https://codebase.design/install.ps1 | iex
 
-# Ollama (local, free)
-export OPENAI_BASE_URL=http://localhost:11434/v1
-export OPENAI_API_KEY=ollama
-export OPENAI_MODEL=qwen2.5-coder:32b
+# any platform
+npm i -g codebase-cli
 ```
 
-**Option 3: First-run setup wizard**
-
-Just run `codebase` with no config. The setup wizard walks you through picking a provider, entering your key, and selecting a model. "Login with Codebase" is the first option.
-
-## What It Does
-
-You describe what you want. The agent reads your code, makes changes, runs commands, and explains what it did.
-
-```
-> add a /health endpoint that returns uptime and version
-
-  read_file server.go                    ✓
-  read_file go.mod                       ✓
-  edit_file server.go                    ✓
-  shell go build ./...                   ✓
-
-Added GET /health endpoint at server.go:47 returning JSON with
-uptime, version, and go runtime. Build passes.
-```
-
-## Tools (30)
-
-| Category | Tools |
-|----------|-------|
-| **File read** | `read_file`, `list_files`, `glob`, `grep`, `search_files` |
-| **File write** | `write_file`, `edit_file`, `multi_edit`, `notebook_edit` |
-| **Shell** | `shell` (input-aware parallelism — read-only commands run concurrently) |
-| **Git** | `git_status`, `git_diff`, `git_log`, `git_commit`, `git_branch`, `enter_worktree`, `exit_worktree` |
-| **Web** | `web_search`, `web_fetch` |
-| **Agent** | `dispatch_agent` (explore, plan, or general-purpose subagents with optional worktree isolation) |
-| **Tasks** | `create_task`, `update_task`, `list_tasks`, `get_task` |
-| **Planning** | `enter_plan_mode`, `exit_plan_mode` |
-| **Memory** | `save_memory`, `read_memory` (persist context across sessions) |
-| **Other** | `config`, `ask_user` |
-
-Plus any tools from connected MCP servers.
-
-## Commands (22)
-
-| Command | What it does |
-|---------|-------------|
-| `/help` | List all commands |
-| `/status` | Model, tokens, turns, cost |
-| `/cost` | Token usage and estimated cost |
-| `/context` | Visual context window usage bar |
-| `/model [name]` | Show or switch model |
-| `/commit` | Generate commit from current diff |
-| `/review` | Code review of uncommitted changes |
-| `/plan` | Enter planning mode |
-| `/diff` | Open diff in VS Code/Cursor |
-| `/compact` | Manually compact conversation |
-| `/clear` | Clear display |
-| `/memory` | View saved project memories |
-| `/undo [file]` | Revert file from session history or git |
-| `/export [file]` | Export conversation to markdown |
-| `/tasks` | Show task checklist |
-| `/theme` | Switch color theme |
-| `/trust` | Set permission level |
-| `/diagnostics` | Toggle language checkers |
-| `/copy` | Copy last response to clipboard |
-| `/session` | Full session info |
-| `/setup` | Re-run setup wizard |
-| `/quit` | Exit (or ctrl+c twice) |
-
-## Features
-
-- **30 tools** with schema validation and input-dependent parallel execution
-- **Streaming tool execution** — tools start running before the model finishes responding
-- **3 agent types** — explore (read-only), plan (architecture), general-purpose (full access)
-- **Worktree isolation** — subagents can work in isolated git branches
-- **Cross-session memory** — remembers your preferences and project context
-- **Error recovery** — auto-retries on context overflow, output limits, rate limits
-- **Structured compaction** — 9-section summaries when context gets long
-- **Hooks system** — automate lint/test/format after edits
-- **7 language checkers** — Go, TypeScript, ESLint, Python (pyright/mypy), Rust
-- **MCP support** — connect external tool servers for extensibility
-- **IDE detection** — discovers VS Code/Cursor/JetBrains via lockfiles
-- **File history** — undo any edit within the session, even without git
-- **Glue models** — route cheap tasks to a fast model, save money
-- **Permission explainer** — risk-rated permission prompts (LOW/MEDIUM/HIGH)
-- **Multi-provider** — OpenAI, Anthropic, MiniMax, Groq, Ollama, any compatible endpoint
-- **OAuth-aware platform** — sign-in unlocks proxied inference and account-curated skills/templates/prompts
-
-## Authentication
+## Quick start
 
 ```sh
-codebase auth login            # browser OAuth — log in with Google, GitHub, or wallet
-codebase auth <cbk_xxx>        # save an API key from the dashboard (SSH / headless)
-codebase auth status           # show current sign-in
-codebase auth refresh          # force-refresh the access token
-codebase auth logout           # revoke session
+cd your-project
+codebase
 ```
 
-Credentials are stored at `~/.codebase/credentials.json` (mode 0600).
+Type. Hit enter. The agent reads files, runs tests, edits code, and shows you what it did. Slash `/help` for the rest.
 
-When logged in, the CLI routes through `codebase.foundation` — you get access to all providers (Claude, MiniMax, Qwen, etc.) using your account credits. No API keys to manage. Skill, template, and prompt definitions you author in the web app become available automatically (Phase 7+).
+A few things worth knowing:
+- `/model` — pick a model interactively (live list of what your account can hit)
+- `/plan` — Q&A before the agent touches anything
+- `!cmd` — run a shell command without spending a turn
+- `@path` — pin a file into the next prompt
+- `\<Enter>` — multi-line input
+- **Ctrl-C** stops the current turn, twice fast exits
 
-## MCP (External Tool Servers)
+## Builder-focused defaults
 
-Connect to any MCP-compatible server. Add to `~/.codebase/config.json`:
+- **Any LLM**, not just Anthropic. Provider choice is config.
+- **45+ tools** that all live behind one small interface — adding one is mechanical.
+- **Effect-based permissions** instead of tool-name allowlists.
+- **Single immutable state** driven by a typed reducer — the whole UI is one render of one value.
+- **Multi-process safe OAuth** with lockfile-coordinated token refresh — run 10 instances of codebase at once and they share a single refresh per hour.
+- **Plain `npm i -g`**, single binary, no bundler lock-in.
 
-```json
-{
-  "mcp_servers": {
-    "github": {
-      "command": "mcp-server-github",
-      "args": ["--token", "$GITHUB_TOKEN"],
-      "transport": "stdio"
-    }
-  }
-}
-```
+## More
 
-MCP tools appear alongside built-in tools automatically.
-
-## Hooks
-
-Automate actions on events. Add to `~/.codebase/hooks.json`:
-
-```json
-[
-  {
-    "event": "PostEdit",
-    "matcher": "write_file|edit_file",
-    "command": "go vet ./...",
-    "timeout": 15
-  }
-]
-```
-
-Events: `PreToolUse`, `PostToolUse`, `PostEdit`, `UserPromptSubmit`, `SessionStart`, `Stop`.
-
-## Project Instructions
-
-The CLI reads these files from your project root for context:
-
-- `CLAUDE.md` — project instructions (Claude Code convention)
-- `AGENTS.md` — agent instructions (OpenAI Codex convention)
-- `CODEX.md` — project instructions (Codex convention)
-- `.cursorrules` — project instructions (Cursor convention)
-
-## Flags
-
-```
-codebase                            # run in current directory
-codebase --dir /path/to/proj        # run in specific directory
-codebase --model claude-sonnet-4-5  # override model
-codebase --resume                   # resume previous session
-codebase --version                  # print version
-codebase auth login                 # authenticate with codebase.foundation
-codebase auth logout                # revoke authentication
-codebase --headless "fix the build" # one-shot, no TUI
-```
-
-## Environment Variables
-
-```sh
-# LLM Provider (pick one)
-OPENAI_API_KEY=...           # OpenAI or compatible
-ANTHROPIC_API_KEY=...        # Anthropic (auto-detected)
-OPENAI_BASE_URL=...          # Custom endpoint
-OPENAI_MODEL=...             # Override model
-
-# Glue (optional — cheap model for routing/narration)
-GLUE_API_KEY=...
-GLUE_BASE_URL=...
-GLUE_FAST_MODEL=...
-GLUE_SMART_MODEL=...
-
-# Web Search (optional — DuckDuckGo works without keys)
-TAVILY_API_KEY=...
-BRAVE_API_KEY=...
-
-# Behavior
-CODEBASE_NOBOOT=1            # skip boot animation
-CODEBASE_NOSOUND=1           # skip boot audio
-```
+- [`.settings/`](.settings/) — orientation: tenets, architecture, extending, testing
+- [`CLAUDE.md`](CLAUDE.md) — quick reference for AI agents working in this repo
+- [`docs/MIGRATION_v1_to_v2.md`](docs/MIGRATION_v1_to_v2.md) — upgrading from the Go v1 binary
+- [`/help` in the CLI](#) — every slash command and shortcut
 
 ## License
 
-MIT
+MIT. Built on [pi-mono](https://github.com/earendil-works/pi) (MIT).
