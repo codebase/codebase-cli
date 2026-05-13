@@ -88,11 +88,19 @@ function MessageBody({
 
 	if (message.role === "assistant") {
 		const rendered = renderAssistantBlocks(message.content, width, tools);
+		const note = errorMessageNote(message);
 		return (
 			<>
 				{rendered}
-				{message.errorMessage ? (
-					<WrappedLines text={`! ${message.errorMessage}`} width={width} keyPrefix="err" color="red" />
+				{note ? (
+					<WrappedLines
+						text={note.text}
+						width={width}
+						keyPrefix="err"
+						color={note.severity === "error" ? "red" : undefined}
+						dimColor={note.severity === "info"}
+						italic={note.severity === "info"}
+					/>
 				) : null}
 			</>
 		);
@@ -226,6 +234,67 @@ function UserBlocks({ blocks, width }: { blocks: unknown; width: number }) {
 		}
 	}
 	return <>{rows}</>;
+}
+
+/**
+ * Stop-reason strings that are upstream-provider bookkeeping ("the model
+ * said it's done"), not real errors. Different providers use different
+ * wording for the same "I finished" signal; the pi-ai layer surfaces them
+ * uniformly as errorMessage which makes everything look red. Treat these
+ * as quiet end-of-turn markers instead.
+ */
+const QUIET_END_PATTERNS = [
+	/^terminated$/i,
+	/^end[_ ]turn$/i,
+	/^stop$/i,
+	/^stop[_ ]sequence$/i,
+	/^Provider finish_reason: (?:terminated|end_turn|stop|stop_sequence)$/i,
+];
+
+/**
+ * Stop-reason strings that mean "the response was truncated against the
+ * user's intent" — content was cut off by a length limit. The user should
+ * see this so they understand why the message ends abruptly.
+ */
+const TRUNCATION_PATTERNS = [/^length$/i, /^max[_ ]tokens$/i, /^Provider finish_reason: (?:length|max_tokens)$/i];
+
+interface ErrorMessageNote {
+	text: string;
+	severity: "info" | "warning" | "error";
+}
+
+/**
+ * Decide how to render the assistant message's errorMessage tail. A
+ * model that finished with substantive text content but a quirky
+ * non-standard stop reason shouldn't get a red "!" — that reads as a
+ * failure. Real failures (empty response, content filter, network) do
+ * get the loud treatment. Truncation gets a middle ground.
+ */
+export function errorMessageNote(message: AgentMessage & { role: "assistant" }): ErrorMessageNote | null {
+	const raw = message.errorMessage;
+	if (!raw) return null;
+	const trimmed = raw.trim();
+	const hasContent = messageHasVisibleText(message);
+
+	if (TRUNCATION_PATTERNS.some((re) => re.test(trimmed))) {
+		return { text: "(response truncated — model hit its output length limit)", severity: "warning" };
+	}
+	if (QUIET_END_PATTERNS.some((re) => re.test(trimmed))) {
+		// Benign stop signal with content — drop entirely. Without content
+		// it's an empty response, which IS noteworthy.
+		return hasContent ? null : { text: "(empty response)", severity: "warning" };
+	}
+	// Anything else: real error. Loud and explicit.
+	return { text: `error: ${trimmed}`, severity: "error" };
+}
+
+function messageHasVisibleText(message: AgentMessage): boolean {
+	if (typeof message.content === "string") return message.content.trim().length > 0;
+	if (!Array.isArray(message.content)) return false;
+	for (const block of message.content) {
+		if (block.type === "text" && typeof block.text === "string" && block.text.trim().length > 0) return true;
+	}
+	return false;
 }
 
 function formatBytes(n: number): string {
