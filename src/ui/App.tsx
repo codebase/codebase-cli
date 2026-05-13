@@ -168,10 +168,8 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					setStatusLines([]);
 				},
 				exit: onExit,
-				// Injecting the registry so /help can list commands without us
-				// needing to thread it through the CommandContext type.
 				registry,
-			} as unknown as Parameters<typeof registry.dispatch>[1]);
+			});
 			if (result.handled) return;
 		}
 

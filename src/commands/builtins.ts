@@ -22,12 +22,9 @@ const help: Command = {
 		lines.push("  Ctrl-C     cancel turn (busy) · twice to exit (idle)");
 		lines.push("");
 		lines.push("Slash commands:");
-		const reg = (ctx as unknown as { registry?: { list: () => Command[] } }).registry;
-		if (reg) {
-			for (const cmd of reg.list()) {
-				const aliasPart = cmd.aliases?.length ? ` (${cmd.aliases.map((a) => `/${a}`).join(", ")})` : "";
-				lines.push(`  /${cmd.name}${aliasPart} — ${cmd.description}`);
-			}
+		for (const cmd of ctx.registry.list()) {
+			const aliasPart = cmd.aliases?.length ? ` (${cmd.aliases.map((a) => `/${a}`).join(", ")})` : "";
+			lines.push(`  /${cmd.name}${aliasPart} — ${cmd.description}`);
 		}
 		ctx.emit(lines.join("\n"));
 		return { handled: true };

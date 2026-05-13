@@ -9,6 +9,7 @@ function fakeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
 		emit: vi.fn(),
 		clearDisplay: vi.fn(),
 		exit: vi.fn(),
+		registry: new CommandRegistry(),
 		...overrides,
 	};
 }

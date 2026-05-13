@@ -1,5 +1,6 @@
 import type { AgentBundle } from "../agent/agent.js";
 import type { ChatState } from "../types.js";
+import type { CommandRegistry } from "./registry.js";
 
 export interface CommandContext {
 	bundle: AgentBundle;
@@ -10,6 +11,12 @@ export interface CommandContext {
 	clearDisplay: () => void;
 	/** Exit the app cleanly. */
 	exit: () => void;
+	/**
+	 * The registry that dispatched this command. Threaded through so
+	 * meta-commands like /help can list their siblings without the App
+	 * needing to import every command's metadata separately.
+	 */
+	registry: CommandRegistry;
 }
 
 export interface CommandResult {
