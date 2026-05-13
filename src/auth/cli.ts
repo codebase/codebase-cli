@@ -20,7 +20,7 @@ const DEFAULT_AUTH_BASE = "https://codebase.design";
  * codebase.design and codebase.foundation both alias to the same Next
  * app; the user-facing brand is .design so it's the default.
  */
-function defaultOAuthConfig(env: NodeJS.ProcessEnv = process.env): OAuthConfig {
+export function defaultOAuthConfig(env: NodeJS.ProcessEnv = process.env): OAuthConfig {
 	const base = (env.CODEBASE_AUTH_BASE_URL ?? DEFAULT_AUTH_BASE).replace(/\/+$/, "");
 	return {
 		authorizationUrl: `${base}/login`,

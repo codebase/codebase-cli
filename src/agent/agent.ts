@@ -2,6 +2,9 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
+import { defaultOAuthConfig } from "../auth/cli.js";
+import { CredentialsStore } from "../auth/credentials.js";
+import { TokenManager } from "../auth/token-manager.js";
 import { CompactionEngine } from "../compaction/engine.js";
 import { CompactionMonitor } from "../compaction/monitor.js";
 import { ConfigStore } from "../config/store.js";
@@ -92,6 +95,15 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const cwd = opts.cwd ?? process.cwd();
 	const systemPrompt = opts.systemPrompt ?? buildSystemPrompt(cwd);
 
+	// OAuth-sourced credentials rotate ~hourly; build a refresh-aware getter
+	// so the agent never sends a stale access token after the first refresh
+	// window. BYOK / explicit / auto sources use the static key passed in.
+	const tokenManager =
+		source === "proxy"
+			? new TokenManager({ store: new CredentialsStore(), oauthConfig: defaultOAuthConfig() })
+			: null;
+	const getApiKey = tokenManager ? () => tokenManager.getAccessToken() : () => apiKey;
+
 	const config = new ConfigStore({ cwd });
 	const permissions = new PermissionStore({
 		allowPatterns: config.allowPatterns(),
@@ -109,7 +121,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const glue = new GlueClient({
 		fastModel: glueModels.fast,
 		smartModel: glueModels.smart,
-		apiKey: glueModels.apiKey,
+		getApiKey,
 	});
 	const compaction = new CompactionEngine({ glue, modelId: model.id });
 	const compactionMonitor = new CompactionMonitor();
@@ -127,7 +139,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
-				getApiKey: () => apiKey,
+				getApiKey,
 			}),
 	};
 

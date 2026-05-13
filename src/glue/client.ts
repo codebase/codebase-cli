@@ -18,7 +18,12 @@ import { completeSimple, getModel, type KnownProvider, type Model } from "@earen
 export interface GlueOptions {
 	fastModel: Model<string>;
 	smartModel: Model<string>;
-	apiKey: string;
+	/**
+	 * Resolves the API key for each call. Async so callers can layer
+	 * OAuth refresh-on-demand: when the underlying access token is near
+	 * expiry, the getter swaps in a new one transparently.
+	 */
+	getApiKey: () => Promise<string> | string;
 	/** Default 8000 — glue calls cap their reply length so a runaway summary doesn't hang the UI. */
 	maxTokens?: number;
 }
@@ -40,6 +45,7 @@ export class GlueClient {
 		system: string | undefined,
 		signal: AbortSignal | undefined,
 	): Promise<string> {
+		const apiKey = await this.options.getApiKey();
 		const message = await completeSimple(
 			model,
 			{
@@ -47,7 +53,7 @@ export class GlueClient {
 				messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
 			},
 			{
-				apiKey: this.options.apiKey,
+				apiKey,
 				signal,
 				maxTokens: this.options.maxTokens ?? 8000,
 			},
