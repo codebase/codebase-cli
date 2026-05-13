@@ -1,5 +1,5 @@
-import { Box, Text, useInput } from "ink";
-import { useMemo, useRef, useState } from "react";
+import { Box, Text, useInput, useStdin } from "ink";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { logInputEvent } from "./debug-input.js";
 import {
 	backspace,
@@ -125,6 +125,8 @@ export function Input({
 	const [pathMatches, setPathMatches] = useState<string[]>([]);
 	const [pathIdx, setPathIdx] = useState(0);
 	const lastAtTokenRef = useRef<{ buffer: string; cursor: number } | null>(null);
+
+	useBracketedPasteHandler((content) => setState((s) => insertPaste(s, content)));
 
 	// Autocomplete only fires when the buffer starts with `/` AND there's
 	// no whitespace yet (so once the user types a space, they're past the
@@ -347,6 +349,11 @@ export function Input({
 		// Printable text — Ink's useInput delivers individual chars (or pasted runs).
 		// Strip control bytes (0x00–0x1f, 0x7f) so a stray Backspace or escape
 		// fragment doesn't end up inserted as a glyph in the buffer.
+		// CSI 200~ / 201~ remnants from a bracketed paste: ink's keypress
+		// parser surfaces them here as `[200~` / `[201~` (escape stripped).
+		// The actual content was already handled by useBracketedPasteHandler,
+		// so swallow these so they don't end up in the buffer.
+		if (input === "[200~" || input === "[201~") return;
 		const isPrintable = input && !key.ctrl && !key.meta && !/[\x00-\x1f\x7f]/.test(input);
 		if (isPrintable) {
 			setSuggestionIdx(0);
@@ -452,7 +459,11 @@ function RenderedBuffer({ buffer, cursor }: RenderedBufferProps) {
 				const cursorOnThisLine = cursor >= lineStart && cursor <= lineEnd;
 				consumed = lineEnd + 1;
 				if (!cursorOnThisLine) {
-					return <Text key={`line-${idx}-${line.slice(0, 8)}`}>{line.length === 0 ? " " : line}</Text>;
+					return (
+						<Box key={`line-${idx}-${line.slice(0, 8)}`}>
+							{line.length === 0 ? <Text> </Text> : <StyledRun text={line} keyPrefix={`l${idx}`} />}
+						</Box>
+					);
 				}
 				return (
 					<SingleLineBuffer
@@ -470,7 +481,7 @@ function SingleLineBuffer({ buffer, cursor }: RenderedBufferProps) {
 	if (cursor >= buffer.length) {
 		return (
 			<>
-				<Text>{buffer}</Text>
+				<StyledRun text={buffer} keyPrefix="slb-end" />
 				<Text color="cyan">▎</Text>
 			</>
 		);
@@ -480,9 +491,98 @@ function SingleLineBuffer({ buffer, cursor }: RenderedBufferProps) {
 	const after = buffer.slice(cursor + 1);
 	return (
 		<>
-			<Text>{before}</Text>
+			<StyledRun text={before} keyPrefix="slb-b" />
 			<Text inverse>{onCursor}</Text>
-			<Text>{after}</Text>
+			<StyledRun text={after} keyPrefix="slb-a" />
 		</>
 	);
+}
+
+const BRACKETED_PASTE_START = "\x1b[200~";
+const BRACKETED_PASTE_END = "\x1b[201~";
+
+/**
+ * Subscribe to ink's raw stdin event emitter so we can carve paste content
+ * out of bracketed-paste markers (CSI 200~ … 201~) before ink's keypress
+ * parser mangles them. Necessary because parseKeypress sees `\x1b[200~`
+ * as a single keypress and *discards* whatever bytes followed it in the
+ * same chunk — so without intercepting at this layer, the pasted content
+ * is gone before useInput ever sees it.
+ *
+ * Buffers across multiple stdin chunks for large pastes that the OS
+ * fragments. The callback fires once per complete paste, with the full
+ * content between the markers.
+ */
+function useBracketedPasteHandler(onPaste: (content: string) => void) {
+	const { internal_eventEmitter } = useStdin();
+	const pasteRef = useRef<{ active: boolean; chunks: string[] }>({ active: false, chunks: [] });
+	const onPasteRef = useRef(onPaste);
+	onPasteRef.current = onPaste;
+
+	useEffect(() => {
+		if (!internal_eventEmitter) return;
+		const handler = (raw: unknown) => {
+			const chunk = typeof raw === "string" ? raw : String(raw);
+			let pos = 0;
+			while (pos < chunk.length) {
+				if (pasteRef.current.active) {
+					const endIdx = chunk.indexOf(BRACKETED_PASTE_END, pos);
+					if (endIdx === -1) {
+						pasteRef.current.chunks.push(chunk.slice(pos));
+						return;
+					}
+					pasteRef.current.chunks.push(chunk.slice(pos, endIdx));
+					const content = pasteRef.current.chunks.join("");
+					pasteRef.current = { active: false, chunks: [] };
+					if (content.length > 0) onPasteRef.current(content);
+					pos = endIdx + BRACKETED_PASTE_END.length;
+				} else {
+					const startIdx = chunk.indexOf(BRACKETED_PASTE_START, pos);
+					if (startIdx === -1) return;
+					// Bytes before the start marker are normal input; ink's
+					// useInput handles them in parallel. We only take over
+					// once the paste begins.
+					pasteRef.current = { active: true, chunks: [] };
+					pos = startIdx + BRACKETED_PASTE_START.length;
+				}
+			}
+		};
+		internal_eventEmitter.on("input", handler);
+		return () => {
+			internal_eventEmitter.removeListener("input", handler);
+		};
+	}, [internal_eventEmitter]);
+}
+
+const PASTE_PLACEHOLDER_RE_DISPLAY = /\[Pasted #\d+ · \d+ (?:lines|chars)\]/g;
+
+/**
+ * Render a text run, dim-styling any paste-placeholder substrings.
+ * Cursor handling lives outside — RenderedBuffer / SingleLineBuffer split
+ * around the cursor first, then hand the halves here. A placeholder split
+ * across the cursor boundary won't match its regex in either half and
+ * falls back to plain text — fine because the user is actively editing it.
+ */
+function StyledRun({ text, keyPrefix }: { text: string; keyPrefix: string }) {
+	if (!text) return null;
+	const parts: ReactNode[] = [];
+	let lastEnd = 0;
+	let idx = 0;
+	for (const m of text.matchAll(PASTE_PLACEHOLDER_RE_DISPLAY)) {
+		const start = m.index ?? 0;
+		if (start > lastEnd) {
+			parts.push(<Text key={`${keyPrefix}-t-${idx++}`}>{text.slice(lastEnd, start)}</Text>);
+		}
+		parts.push(
+			<Text key={`${keyPrefix}-p-${idx++}`} dimColor italic>
+				{m[0]}
+			</Text>,
+		);
+		lastEnd = start + m[0].length;
+	}
+	if (lastEnd === 0) return <Text>{text}</Text>;
+	if (lastEnd < text.length) {
+		parts.push(<Text key={`${keyPrefix}-t-${idx++}`}>{text.slice(lastEnd)}</Text>);
+	}
+	return <>{parts}</>;
 }

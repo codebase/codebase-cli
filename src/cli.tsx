@@ -80,6 +80,11 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runHeadless({ prompt, outputFormat, autoApprove }).then((code) => process.exit(code));
 } else {
 	setTerminalTitle("codebase");
+	// Enable bracketed paste mode so the terminal wraps pasted content in
+	// CSI 200~ / 201~ markers. The Input component listens for them and
+	// collapses the content into a placeholder. terminal-restore.ts emits
+	// the matching disable sequence on every exit path.
+	if (process.stdout.isTTY) process.stdout.write("\x1b[?2004h");
 	const instance = render(<App />);
 	installTerminalRestoreHandlers(instance);
 	instance.waitUntilExit().catch(() => {
