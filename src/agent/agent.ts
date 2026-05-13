@@ -22,6 +22,7 @@ import { TaskStore } from "../tools/task-store.js";
 import type { ToolContext } from "../tools/types.js";
 import { UserQueryStore } from "../user-queries/store.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
+import { buildProjectFilesAddendum } from "./project-files.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
 const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
@@ -185,7 +186,11 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 
 	// MEMORY.md gets concatenated onto the system prompt at agent creation.
 	// Reload-after-save is a Phase 11 polish item.
-	const fullSystemPrompt = systemPrompt + buildMemoryAddendum(memory);
+	// Project-instruction file (first of AGENTS.md / CLAUDE.md / CODEX.md /
+	// .cursorrules) gets pinned to the prompt so the agent sees the
+	// project's conventions on every turn. Memory addendum is appended
+	// after — it's the user's accumulated long-term notes.
+	const fullSystemPrompt = systemPrompt + buildProjectFilesAddendum(cwd) + buildMemoryAddendum(memory);
 
 	const agent = new Agent({
 		initialState: {

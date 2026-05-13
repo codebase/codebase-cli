@@ -15,11 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/earendil-works/pi">
-    <img src="https://pi.dev/logo-auto.svg" alt="Powered by pi" width="20" align="absmiddle" />
-    &nbsp;<strong>Powered by <a href="https://github.com/earendil-works/pi">pi</a></strong>
-  </a>
-  &nbsp;·&nbsp;
+  <strong>Powered by <a href="https://github.com/earendil-works/pi">pi</a></strong> &nbsp;·&nbsp;
   <em>The agent loop, provider adapters, and session protocol come from <a href="https://github.com/earendil-works/pi">pi-mono</a>.</em>
 </p>
 
@@ -35,12 +31,17 @@ ANTHROPIC_API_KEY=sk-ant-... codebase
 OPENAI_API_KEY=sk-... codebase
 ```
 
-**Or sign in once via [codebase.design](https://codebase.design)** and try open-weight models instantly with no key setup — MiniMax, Qwen, Llama, and others routed through our inference proxy. One auth, every model.
+**Sign in to [codebase.design](https://codebase.design) and skip key wrangling.** One auth, every model.
+
+- **Free tier** — try open-weight models (MiniMax, Qwen, Llama, etc.) with a **10-turn taste** so you can kick the tires before paying anyone for anything. No API keys to set up.
+- **Paid account** — uncaps the open-weights, adds the frontier models (Claude Opus / Sonnet, GPT-5, …), higher rate limits, and longer context windows. One subscription replaces N provider bills.
 
 ```sh
 codebase auth login
 codebase
 ```
+
+Switch between models any time with `/model` (interactive picker) or `/model <id>`.
 
 ## Install
 
@@ -67,28 +68,42 @@ codebase
 Type. Hit enter. The agent reads files, runs tests, edits code, and shows you what it did. Slash `/help` for the rest.
 
 A few things worth knowing:
-- `/model` — pick a model interactively (live list of what your account can hit)
+
+- `/model` — pick a model interactively, live list of what your account can hit
 - `/plan` — Q&A before the agent touches anything
 - `!cmd` — run a shell command without spending a turn
 - `@path` — pin a file into the next prompt
 - `\<Enter>` — multi-line input
+- **Type while the agent is working** — your prompt queues, fires when the current turn ends (`Ctrl-C` while busy clears the queue along with the turn)
 - **Ctrl-C** stops the current turn, twice fast exits
+
+## What it does
+
+- **Streaming responses.** Real-time token output, coalesced to 60 fps so the TUI doesn't thrash.
+- **Multi-turn agentic loop.** Tool call → result → next turn, automatically.
+- **Parallel tool execution.** Read-only tools (grep, glob, read, git status…) run concurrently within a turn.
+- **Project awareness.** Auto-loads `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, or `.cursorrules` from the project root into the system prompt.
+- **Conversation compaction.** Long sessions automatically summarize older turns to stay under the context window.
+- **Session persistence.** Auto-resume from where you left off; `--new` for a clean slate.
+- **Plan mode.** A cheap-model Q&A pass surfaces the right plan before the expensive agent starts editing.
+- **Intent routing.** Chit-chat doesn't burn a full agent turn; complex asks roll into plan mode automatically.
+- **Subagent dispatch.** Spawn isolated research agents that keep their tool noise out of your main context.
 
 ## Builder-focused defaults
 
 - **Any LLM**, not just Anthropic. Provider choice is config.
-- **45+ tools** that all live behind one small interface — adding one is mechanical.
+- **45+ tools** behind one small interface — adding one is mechanical.
 - **Effect-based permissions** instead of tool-name allowlists.
-- **Single immutable state** driven by a typed reducer — the whole UI is one render of one value.
+- **Single immutable state** driven by a typed reducer — the UI is one render of one value.
 - **Multi-process safe OAuth** with lockfile-coordinated token refresh — run 10 instances of codebase at once and they share a single refresh per hour.
-- **Plain `npm i -g`**, single binary, no bundler lock-in.
+- **Plain `npm i -g`**, no bundler lock-in.
 
 ## More
 
 - [`.settings/`](.settings/) — orientation: tenets, architecture, extending, testing
 - [`CLAUDE.md`](CLAUDE.md) — quick reference for AI agents working in this repo
 - [`docs/MIGRATION_v1_to_v2.md`](docs/MIGRATION_v1_to_v2.md) — upgrading from the Go v1 binary
-- [`/help` in the CLI](#) — every slash command and shortcut
+- `/help` inside the CLI — every slash command and shortcut
 
 ## License
 
