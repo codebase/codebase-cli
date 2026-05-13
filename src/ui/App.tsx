@@ -107,6 +107,11 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	const [tasks, setTasks] = useState<readonly Task[]>(() => bundle.toolContext.tasks.list());
 	const inputRef = useRef<InputHandle | null>(null);
 	const [modelPickerOpen, setModelPickerOpen] = useState(false);
+	// Prompts typed while the agent is busy. The bottom of the queue is
+	// dispatched automatically when the agent goes idle. Lets the user
+	// stack the next thing while the current turn is still running, the
+	// CC-style "type ahead" pattern.
+	const [queuedPrompts, setQueuedPrompts] = useState<readonly string[]>([]);
 
 	const registry = useMemo(() => {
 		const reg = new CommandRegistry();
@@ -159,7 +164,23 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 
 	const { suggestion, dismiss: dismissSuggestion } = usePromptSuggestion(bundle, state.status, state.messages.length);
 
+	// Hold the freshest handleSubmit in a ref so the drain effect below
+	// can call into it without subscribing to every dependency change. The
+	// effect only re-runs when status or queue length flips — calling
+	// .current at fire time gives it the latest closure.
+	const handleSubmitRef = useRef<((text: string) => Promise<void>) | null>(null);
+
 	const handleSubmit = async (text: string) => {
+		// Mid-turn typing: if the agent is mid-run, queue the prompt instead
+		// of dropping or interrupting. Slash commands and `!cmd` shell
+		// escapes bypass the queue — they don't talk to the agent, so they
+		// can run alongside whatever the agent is doing.
+		if (busy && !text.startsWith("/") && !text.startsWith("!")) {
+			setQueuedPrompts((q) => [...q, text]);
+			const preview = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+			appendStatus(`↩ queued (${queuedPrompts.length + 1}): ${preview}`);
+			return;
+		}
 		// `!cmd` runs a shell command directly without involving the LLM —
 		// "I just want to check something real quick." We bypass the agent
 		// loop entirely and inject the output as a synthetic user /
@@ -242,6 +263,19 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		});
 	};
 
+	handleSubmitRef.current = handleSubmit;
+
+	// Drain queued prompts one at a time when the agent goes idle. The
+	// effect runs on every status / queue-length change, but the early
+	// return keeps the body cheap until both conditions are met.
+	useEffect(() => {
+		if (state.status !== "idle") return;
+		if (queuedPrompts.length === 0) return;
+		const [next, ...rest] = queuedPrompts;
+		setQueuedPrompts(rest);
+		void handleSubmitRef.current?.(next);
+	}, [state.status, queuedPrompts]);
+
 	// Ctrl-C semantics, in priority order:
 	//   1. Open overlay (Permission, UserQuery) → dismiss it. Never trap
 	//      the user behind a prompt with no escape.
@@ -288,6 +322,12 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		if (busy) {
 			bundle.agent.abort();
 			dispatch({ type: "abort" });
+			// Cancel anything the user queued for after this turn — they
+			// just hit Ctrl-C, the queue is no longer what they want.
+			if (queuedPrompts.length > 0) {
+				setQueuedPrompts([]);
+				appendStatus(`(dropped ${queuedPrompts.length} queued prompt${queuedPrompts.length === 1 ? "" : "s"})`);
+			}
 			// No hint here — the abort itself is the feedback. The
 			// exit window is set silently so a quick second tap still
 			// gets the user out without confirmation theater.
@@ -402,7 +442,6 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			) : (
 				<Input
 					ref={inputRef}
-					disabled={busy}
 					onSubmit={handleSubmit}
 					onAbort={handleAbort}
 					commands={commandSuggestions}
