@@ -1,5 +1,14 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
-import { Container, Markdown, type OverlayHandle, Input as PiInput, Text, type TUI } from "@mariozechner/pi-tui";
+import {
+	type AutocompleteItem,
+	CombinedAutocompleteProvider,
+	Container,
+	Editor,
+	Markdown,
+	type OverlayHandle,
+	Text,
+	type TUI,
+} from "@mariozechner/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
@@ -7,10 +16,12 @@ import { CommandRegistry } from "../commands/registry.js";
 import type { ChatState, ToolExecution } from "../types.js";
 import { EMPTY_USAGE } from "../types.js";
 import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js";
+import { HistoryStore } from "../ui/history-store.js";
+import { runShellEscape } from "../ui/shell-escape.js";
 import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
 import { PermissionOverlay } from "./permission-overlay.js";
-import { ansi, markdownTheme, roleColor } from "./theme.js";
+import { ansi, editorTheme, markdownTheme, roleColor } from "./theme.js";
 import { UserQueryOverlay } from "./user-query-overlay.js";
 
 /**
@@ -24,9 +35,10 @@ export class App extends Container {
 	private readonly bundle: AgentBundle;
 	private readonly transcript: TranscriptView;
 	private readonly statusBar: StatusBar;
-	private readonly inputBar: PiInput;
+	private inputBar: Editor | undefined;
 	private readonly bgShellPanel: BackgroundShellPanel;
 	private readonly registry: CommandRegistry;
+	private readonly historyStore: HistoryStore;
 	private readonly unsubscribe: () => void;
 	private exitResolve: (() => void) | undefined;
 	private readonly exitPromise: Promise<void>;
@@ -64,12 +76,7 @@ export class App extends Container {
 		this.transcript = new TranscriptView(this.bundle.resumedMessages);
 		this.statusBar = new StatusBar(this.bundle.model.name);
 		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells);
-		this.inputBar = new PiInput();
-		this.inputBar.onSubmit = (text) => {
-			this.inputBar.setValue("");
-			this.inputBar.invalidate();
-			void this.handleSubmit(text);
-		};
+		this.historyStore = new HistoryStore({ cwd: this.bundle.toolContext.cwd });
 
 		this.registry = new CommandRegistry();
 		this.registry.registerAll(BUILTIN_COMMANDS);
@@ -78,7 +85,6 @@ export class App extends Container {
 		this.addChild(this.transcript);
 		this.addChild(this.bgShellPanel);
 		this.addChild(this.statusBar);
-		this.addChild(this.inputBar);
 
 		this.unsubscribe = this.bundle.subscribe((event) => this.handleAgentEvent(event));
 	}
@@ -91,7 +97,33 @@ export class App extends Container {
 	 */
 	attachToTui(tui: TUI): void {
 		this.tui = tui;
-		tui.setFocus(this.inputBar);
+
+		// Editor requires the TUI ref at construction; create it lazily here
+		// and slot it in below the status bar so the layout matches the
+		// ink-era SmartInput position.
+		const editor = new Editor(tui, editorTheme, { paddingX: 1 });
+		editor.onSubmit = (text) => {
+			editor.setText("");
+			editor.invalidate();
+			if (text.trim()) editor.addToHistory(text);
+			void this.handleSubmit(text);
+		};
+		// Seed pi-tui's in-memory history ring from disk so ↑/↓ recall
+		// works across restarts.
+		for (const entry of this.historyStore.load()) editor.addToHistory(entry);
+		// Slash-command + @path autocomplete. Built-ins are kept in sync via
+		// registry.list() so any newly-registered command shows up without
+		// extra wiring. File completion is provided by the combined helper
+		// (uses fd if available, otherwise readdir-walks the cwd).
+		const slashItems: AutocompleteItem[] = this.registry.list().map((cmd) => ({
+			value: cmd.name,
+			label: `/${cmd.name}`,
+			description: cmd.description,
+		}));
+		editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashItems, this.bundle.toolContext.cwd));
+		this.inputBar = editor;
+		this.addChild(editor);
+		tui.setFocus(editor);
 		this.removeInputListener = tui.addInputListener((data) => this.handleGlobalInput(data));
 		// Permission + UserQuery requests arrive asynchronously from tool
 		// execution. Show the overlay when one lands; dismiss when answered.
@@ -122,7 +154,7 @@ export class App extends Container {
 		if (!this.userQueryOverlay) return;
 		this.userQueryOverlay.handle.hide();
 		this.userQueryOverlay = undefined;
-		this.tui?.setFocus(this.inputBar);
+		if (this.inputBar) this.tui?.setFocus(this.inputBar);
 	}
 
 	private showPermissionOverlay(req: import("../permissions/store.js").PermissionRequest): void {
@@ -145,7 +177,7 @@ export class App extends Container {
 		this.permissionOverlay.handle.hide();
 		this.permissionOverlay = undefined;
 		// Return focus to the editor when the overlay closes.
-		this.tui?.setFocus(this.inputBar);
+		if (this.inputBar) this.tui?.setFocus(this.inputBar);
 	}
 
 	waitForExit(): Promise<void> {
@@ -189,12 +221,13 @@ export class App extends Container {
 		// wait for a turn to finish before, say, /help or !git status.
 		if (trimmed.startsWith("/")) {
 			await this.dispatchSlash(trimmed);
+			this.persistHistory(trimmed);
 			return;
 		}
 		if (trimmed.startsWith("!") && trimmed.length > 1) {
-			// !cmd escape — phase 3 just surfaces the unsupported notice;
-			// porting runShellEscape's child-process logic is a phase-4 item.
-			this.statusBar.note("!cmd not yet wired in pi-tui path");
+			const cmd = trimmed.slice(1);
+			await runShellEscape(cmd, this.bundle.toolContext.cwd, (line) => this.statusBar.note(line));
+			this.persistHistory(trimmed);
 			return;
 		}
 
@@ -225,9 +258,19 @@ export class App extends Container {
 		const userMsg: AgentMessage = { role: "user", content: trimmed, timestamp: Date.now() };
 		this.messages.push(userMsg);
 		this.transcript.appendUserMessage(trimmed);
+		this.persistHistory(trimmed);
 		this.bundle.agent.prompt(promptText).catch(() => {
 			// Errors surface via agent_end with errorMessage; rejection here isn't useful.
 		});
+	}
+
+	/**
+	 * Persist a successfully-submitted line to disk-backed history. The
+	 * Editor's in-memory ring already gets the entry via its onSubmit path;
+	 * this is the cross-session companion.
+	 */
+	private persistHistory(line: string): void {
+		this.historyStore.append(line);
 	}
 
 	private async dispatchSlash(text: string): Promise<void> {

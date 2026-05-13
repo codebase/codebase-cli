@@ -1,4 +1,4 @@
-import type { MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
+import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 
 /**
  * ANSI escape helpers. Pi-tui doesn't ship a built-in theme — components
@@ -52,6 +52,16 @@ export const selectListTheme: SelectListTheme = {
 	description: (text) => ansi.dim(text),
 	scrollInfo: (text) => ansi.dim(text),
 	noMatch: (text) => ansi.dim(text),
+};
+
+/**
+ * Theme for the multi-line Editor (input bar). The Editor draws an inline
+ * border around the active area and embeds a SelectList for autocomplete,
+ * so the theme just bundles those two surfaces.
+ */
+export const editorTheme: EditorTheme = {
+	borderColor: (text) => ansi.dim(text),
+	selectList: selectListTheme,
 };
 
 /** Common role-color mapping for the transcript header labels. */
