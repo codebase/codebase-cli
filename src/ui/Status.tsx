@@ -1,8 +1,13 @@
 import { basename } from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
 import { useEffect, useRef, useState } from "react";
 import type { ChatState } from "../types.js";
 import { Throbber } from "./Throbber.js";
+
+/** Average chars-per-token across the major model families. Used only as a
+ * fallback when the provider doesn't return usage info on message_end. */
+const CHARS_PER_TOKEN = 4;
 
 interface StatusProps {
 	state: ChatState;
@@ -67,7 +72,7 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 	const tokRate = useTokenRate(state);
 	const elapsedSec = useBusyElapsed(busy);
 	const u = state.usage;
-	const usedTokens = u.input + u.cacheRead;
+	const usedTokens = estimateContextTokens(state);
 	const ctxPct = contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
 	const cwdLabel = cwd ? basename(cwd) || "/" : "";
 	const modelLabel = state.model.name || state.model.id;
@@ -145,38 +150,89 @@ function findRunningTool(state: ChatState): string | undefined {
 }
 
 /**
- * Estimate the live token-output rate during streaming. Pi-ai only
- * surfaces accurate `usage` at message_end, so for the live counter
- * we approximate from the streaming message's character length using
- * the common ~4-chars-per-token rule. Cheap, no extra deps, and
- * accurate enough for a status-bar readout.
+ * Estimate the live token-output rate during streaming using a 4-second
+ * sliding window over recent character growth. This avoids dragging the
+ * rate down with the pre-text wait period — a thinking-heavy model that
+ * spent 60s reasoning before emitting its first token should show "120
+ * tok/s" once it starts streaming, not "5 tok/s averaged with the wait."
  *
- * Returns undefined when not streaming, or when too few chars have
- * accumulated for the rate to be meaningful (so the bar doesn't
- * flicker a noisy "9999 tok/s" in the first 100ms).
+ * Returns undefined when not streaming, or when the window doesn't yet
+ * have enough samples / delta for the rate to be meaningful (so the bar
+ * doesn't flicker noisy values in the first half-second).
  */
 function useTokenRate(state: ChatState): number | undefined {
-	const startRef = useRef<number | undefined>(undefined);
-	const [tick, setTick] = useState(0);
+	const samplesRef = useRef<Array<{ t: number; c: number }>>([]);
+	const charsRef = useRef(0);
+	const [, setTick] = useState(0);
 	const streaming = state.status === "streaming";
+
+	// Keep the latest char count in a ref so the interval callback always
+	// reads the live value rather than the closure-captured one.
+	charsRef.current = streaming ? streamingChars(state) : 0;
+
 	useEffect(() => {
 		if (!streaming) {
-			startRef.current = undefined;
+			samplesRef.current = [];
 			return;
 		}
-		if (startRef.current === undefined) startRef.current = Date.now();
-		const id = setInterval(() => setTick((t) => t + 1), 500);
+		const sample = () => {
+			const now = Date.now();
+			samplesRef.current.push({ t: now, c: charsRef.current });
+			const cutoff = now - 4000;
+			while (samplesRef.current.length > 0 && samplesRef.current[0].t < cutoff) {
+				samplesRef.current.shift();
+			}
+			setTick((n) => n + 1);
+		};
+		sample(); // seed immediately
+		const id = setInterval(sample, 500);
 		return () => clearInterval(id);
 	}, [streaming]);
-	if (!streaming || !startRef.current) return undefined;
-	const elapsedSec = (Date.now() - startRef.current) / 1000;
-	if (elapsedSec < 0.5) return undefined;
-	void tick; // force re-eval on each interval
-	const chars = streamingChars(state);
-	if (chars < 40) return undefined;
-	const tokens = chars / 4;
-	const rate = tokens / elapsedSec;
-	return Math.round(rate);
+
+	if (!streaming || samplesRef.current.length < 2) return undefined;
+	const oldest = samplesRef.current[0];
+	const newest = samplesRef.current[samplesRef.current.length - 1];
+	const dt = (newest.t - oldest.t) / 1000;
+	if (dt < 0.5) return undefined;
+	const dc = newest.c - oldest.c;
+	if (dc < 10) return undefined;
+	return Math.round(dc / CHARS_PER_TOKEN / dt);
+}
+
+/**
+ * Tokens currently in the model's context, for the status-bar fill meter.
+ * Prefers the last-turn's reported `input + cacheRead` from pi-ai, since
+ * that's literally what the model saw. Falls back to char-based estimation
+ * when the provider strips usage (e.g. some OAuth-fronted proxies) so the
+ * bar still grows as the conversation grows. Streaming content is added
+ * on top of the prior-turn baseline so the bar visibly fills during a turn
+ * instead of jumping at message_end.
+ */
+export function estimateContextTokens(state: ChatState): number {
+	if (state.turnUsage && state.turnUsage.input + state.turnUsage.cacheRead > 0) {
+		const reported = state.turnUsage.input + state.turnUsage.cacheRead;
+		const streamingExtra = Math.round(streamingChars(state) / CHARS_PER_TOKEN);
+		return reported + streamingExtra;
+	}
+	let chars = 0;
+	for (const msg of state.messages) chars += messageChars(msg);
+	if (state.streaming) chars += messageChars(state.streaming);
+	return Math.round(chars / CHARS_PER_TOKEN);
+}
+
+function messageChars(message: AgentMessage): number {
+	if (typeof message.content === "string") return message.content.length;
+	if (!Array.isArray(message.content)) return 0;
+	let total = 0;
+	for (const block of message.content) {
+		if (block.type === "text") total += block.text.length;
+		else if (block.type === "thinking") total += block.thinking.length;
+		else if (block.type === "toolCall") {
+			total += block.name.length;
+			total += JSON.stringify(block.arguments ?? {}).length;
+		}
+	}
+	return total;
 }
 
 /** Sum the visible text length of all text/thinking blocks in the live streaming message. */
