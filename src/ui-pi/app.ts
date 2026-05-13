@@ -11,10 +11,12 @@ import {
 } from "@mariozechner/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
+import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { ConfigStore } from "../config/store.js";
+import { runPlanFlow } from "../plan/run-flow.js";
 import type { ChatState, ToolExecution } from "../types.js";
 import { EMPTY_USAGE } from "../types.js";
 import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js";
@@ -267,18 +269,68 @@ export class App extends Container {
 			this.statusBar.note(`Attached: ${attachments.map((a) => a.relPath).join(", ")}`);
 		}
 
+		const userMsg: AgentMessage = { role: "user", content: trimmed, timestamp: Date.now() };
+		this.messages.push(userMsg);
+		this.transcript.appendUserMessage(trimmed);
+		this.persistHistory(trimmed);
+
+		// Glue-router classification: small-talk gets a quick reply with no
+		// agent turn (saves tokens + latency); plan-style requests run through
+		// the plan flow (Q&A → reviewable plan → agent). Anything else falls
+		// through to the regular agent.prompt path. Router failures degrade
+		// to the agent so a flaky cheap model never silently eats real work.
+		const hadHistory = this.messages.length > 1;
+		try {
+			const route = await routeUserInput(this.bundle.glue, trimmed, { hasHistory: hadHistory });
+			if (route.kind === "chat") {
+				this.appendSyntheticAssistant(route.reply);
+				return;
+			}
+			if (route.kind === "plan") {
+				this.busy = true;
+				this.status = "thinking";
+				this.statusBar.setStatus("planning");
+				await runPlanFlow(this.bundle, trimmed, {
+					onReply: (reply) => this.appendSyntheticAssistant(reply),
+					onError: (message) => this.statusBar.note(`plan error: ${message}`),
+					envReminderForFirstTurn: this.envInjected
+						? undefined
+						: buildEnvironmentReminder(this.bundle.toolContext.cwd),
+				});
+				this.envInjected = true;
+				this.busy = false;
+				this.status = "idle";
+				this.statusBar.setStatus("idle");
+				this.maybeDrainQueue();
+				return;
+			}
+		} catch (err) {
+			this.statusBar.note(`(router fell back to agent: ${err instanceof Error ? err.message : String(err)})`);
+		}
+
 		let promptText = augmented;
 		if (!this.envInjected) {
 			promptText = `${buildEnvironmentReminder(this.bundle.toolContext.cwd)}\n\n${augmented}`;
 			this.envInjected = true;
 		}
-		const userMsg: AgentMessage = { role: "user", content: trimmed, timestamp: Date.now() };
-		this.messages.push(userMsg);
-		this.transcript.appendUserMessage(trimmed);
-		this.persistHistory(trimmed);
 		this.bundle.agent.prompt(promptText).catch(() => {
 			// Errors surface via agent_end with errorMessage; rejection here isn't useful.
 		});
+	}
+
+	/**
+	 * Insert a synthetic assistant message into the transcript without
+	 * running an agent turn. Used by the chat short-circuit and by
+	 * runPlanFlow when it renders the plan / cancel notices.
+	 */
+	private appendSyntheticAssistant(text: string): void {
+		const msg: AgentMessage = {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			timestamp: Date.now(),
+		} as AgentMessage;
+		this.messages.push(msg);
+		this.transcript.appendMessage(msg);
 	}
 
 	/**
