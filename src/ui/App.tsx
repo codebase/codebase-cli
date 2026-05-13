@@ -1,38 +1,30 @@
-import { spawn } from "node:child_process";
-import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { Box, Text, useApp } from "ink";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
-import { generateSuggestion } from "../agent/prompt-suggestion.js";
 import { routeUserInput } from "../agent/router.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
-import type { CompactionState } from "../compaction/monitor.js";
 import type { PermissionRequest } from "../permissions/store.js";
-import {
-	buildAgentPrompt,
-	generatePlan,
-	generateQuestion,
-	MAX_QUESTIONS,
-	parseAnswer,
-	revisePlan,
-} from "../plan/flow.js";
-import { ANSWER_START_BUILDING, type QAPair } from "../plan/types.js";
+import { runPlanFlow } from "../plan/run-flow.js";
 import type { Task } from "../tools/task-store.js";
 import type { ChatState } from "../types.js";
-import { type UserQuery, UserQueryCancelled } from "../user-queries/store.js";
+import type { UserQuery } from "../user-queries/store.js";
 import { buildAttachmentPrompt, collectAttachments } from "./attachments.js";
+import { CompactionBanner } from "./CompactionBanner.js";
 import { FirstRunSetup } from "./FirstRunSetup.js";
 import { HistoryStore } from "./history-store.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { Permission } from "./Permission.js";
 import { Status } from "./Status.js";
+import { runShellEscape } from "./shell-escape.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { ToolPanel } from "./ToolPanel.js";
 import { UserQueryView } from "./UserQuery.js";
+import { useCoalescedAgentEvents } from "./use-coalesced-agent-events.js";
+import { usePromptSuggestion } from "./use-prompt-suggestion.js";
 import { Welcome } from "./Welcome.js";
 
 export function App() {
@@ -132,73 +124,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		return out;
 	}, [state.messages, persistedHistory]);
 
-	// Coalesce high-frequency streaming events (per-token assistant updates
-	// and per-chunk tool stdout) to one React commit per frame instead of
-	// per event. Pi-agent-core emits one message_update per token, and a
-	// fast model + long tool output can fire 100+ Hz — each dispatch runs
-	// the full reducer + React tree diff + Yoga layout for everything on
-	// screen. Throttling here is the single biggest cause of perceived
-	// scroll/render jankiness; everything else (Static for finalized
-	// messages, memoized children) is icing.
-	//
-	// Keyed coalescing: message_update has one slot, tool_execution_update
-	// has one slot per tool id. Latest event wins. Non-coalesceable events
-	// (message_start/end, tool_execution_start/end, turn_*, agent_*) flush
-	// any pending updates first so ordering stays correct.
-	const pendingRef = useRef<Map<string, AgentEvent>>(new Map());
-	const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-	useEffect(() => {
-		const STREAM_FRAME_MS = 16; // ~60fps cap
-
-		const flush = () => {
-			flushTimerRef.current = null;
-			if (pendingRef.current.size === 0) return;
-			const events = [...pendingRef.current.values()];
-			pendingRef.current.clear();
-			for (const event of events) {
-				dispatch({ type: "agent-event", event });
-			}
-		};
-
-		const scheduleFlush = () => {
-			if (flushTimerRef.current != null) return;
-			flushTimerRef.current = setTimeout(flush, STREAM_FRAME_MS);
-		};
-
-		const unsubscribe = bundle.subscribe((event) => {
-			if (event.type === "message_update") {
-				pendingRef.current.set("msg", event);
-				scheduleFlush();
-				return;
-			}
-			if (event.type === "tool_execution_update") {
-				pendingRef.current.set(`tool:${event.toolCallId}`, event);
-				scheduleFlush();
-				return;
-			}
-			// Any other event flushes the queue before dispatching so the
-			// reducer sees pending streaming updates before the terminal
-			// event (message_end, tool_execution_end, etc.).
-			if (pendingRef.current.size > 0) {
-				if (flushTimerRef.current != null) {
-					clearTimeout(flushTimerRef.current);
-					flushTimerRef.current = null;
-				}
-				flush();
-			}
-			dispatch({ type: "agent-event", event });
-		});
-
-		return () => {
-			unsubscribe();
-			if (flushTimerRef.current != null) {
-				clearTimeout(flushTimerRef.current);
-				flushTimerRef.current = null;
-			}
-			pendingRef.current.clear();
-		};
-	}, [bundle]);
+	useCoalescedAgentEvents(bundle, dispatch);
 
 	useEffect(() => {
 		return bundle.permissions.subscribe((req) => setPermRequest(req));
@@ -218,45 +144,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
 
-	// Inline prompt-suggestion ghost text. Schedules a single forecast
-	// call when the agent goes idle; cancels the prior call on every new
-	// state change so we never race two suggestions or show a stale one
-	// after the user starts a new turn. 500ms debounce lets idle settle
-	// (e.g. agent finishes, a quick status emit follows, we don't want to
-	// fire twice). Disabled via env so users on metered BYOK providers
-	// can opt out.
-	const [suggestion, setSuggestion] = useState<string | null>(null);
-	const suggestionAbortRef = useRef<AbortController | null>(null);
-	useEffect(() => {
-		// Always clear any active suggestion on state change — it was
-		// computed for the previous turn and the user has moved on.
-		setSuggestion(null);
-		suggestionAbortRef.current?.abort();
-		suggestionAbortRef.current = null;
-
-		if (process.env.CODEBASE_NO_SUGGESTIONS === "1") return;
-		if (state.status !== "idle") return;
-		if (state.messages.length < 2) return;
-
-		const ac = new AbortController();
-		suggestionAbortRef.current = ac;
-		const timer = setTimeout(async () => {
-			if (ac.signal.aborted) return;
-			try {
-				const text = await generateSuggestion(bundle, { signal: ac.signal });
-				if (ac.signal.aborted) return;
-				if (text) setSuggestion(text);
-			} catch {
-				// Suggestion failures are silent — they're a nicety, not load-bearing.
-			}
-		}, 500);
-
-		return () => {
-			clearTimeout(timer);
-			ac.abort();
-			if (suggestionAbortRef.current === ac) suggestionAbortRef.current = null;
-		};
-	}, [bundle, state.status, state.messages.length]);
+	const { suggestion, dismiss: dismissSuggestion } = usePromptSuggestion(bundle, state.status, state.messages.length);
 
 	const handleSubmit = async (text: string) => {
 		// `!cmd` runs a shell command directly — the CC convention for
@@ -314,7 +202,10 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				return;
 			}
 			if (route.kind === "plan") {
-				await runPlanFlow(text);
+				await runPlanFlow(bundle, text, {
+					onReply: (replyText) => dispatch({ type: "chat-reply", text: replyText }),
+					onError: (message) => dispatch({ type: "error", message }),
+				});
 				return;
 			}
 		} catch (err) {
@@ -326,72 +217,6 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		bundle.agent.prompt(augmentedText).catch((err: unknown) => {
 			dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
 		});
-	};
-
-	/**
-	 * Plan-mode flow:
-	 *   1. Q&A loop (up to MAX_QUESTIONS, with the start-building escape).
-	 *   2. Generate plan, render as a synthetic assistant message so the
-	 *      user can read it in chat.
-	 *   3. Approve / Revise / Cancel via the UserQuery primitive.
-	 *   4. On approve, hand the original prompt + plan + Q&A to the agent
-	 *      with the canonical buildAgentPrompt wrapper so weaker models
-	 *      stick to the plan instead of re-planning mid-execution.
-	 */
-	const runPlanFlow = async (originalPrompt: string): Promise<void> => {
-		const qaHistory: QAPair[] = [];
-		try {
-			for (let i = 0; i < MAX_QUESTIONS; i++) {
-				const result = await generateQuestion(bundle.glue, originalPrompt, qaHistory, i);
-				if (result.done || !result.question) break;
-				const q = result.question;
-				const optionLabels = q.options?.map((o) => o.label);
-				const answer = await bundle.userQueries.ask({
-					question: q.question,
-					options: optionLabels,
-					placeholder: optionLabels ? `1-${optionLabels.length}, or type a free-form answer` : undefined,
-				});
-				const resolved = parseAnswer(answer, q);
-				if (resolved === ANSWER_START_BUILDING) break;
-				qaHistory.push({ question: q.question, answer: resolved });
-			}
-
-			let plan = await generatePlan(bundle.glue, originalPrompt, qaHistory);
-
-			while (true) {
-				dispatch({ type: "chat-reply", text: plan });
-				const decision = await bundle.userQueries.ask({
-					question: "Approve this plan and run it?",
-					options: ["Yes — run it", "Revise", "Cancel"],
-				});
-				const choice = matchOption(decision, ["Yes — run it", "Revise", "Cancel"]);
-				if (choice === "Yes — run it") {
-					const finalPrompt = buildAgentPrompt(originalPrompt, plan, qaHistory);
-					bundle.agent.prompt(finalPrompt).catch((err: unknown) => {
-						dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
-					});
-					return;
-				}
-				if (choice === "Cancel") {
-					dispatch({ type: "chat-reply", text: "(plan cancelled)" });
-					return;
-				}
-				const feedback = await bundle.userQueries.ask({
-					question: "What should change about the plan?",
-					placeholder: "describe the revision",
-				});
-				plan = await revisePlan(bundle.glue, plan, feedback);
-			}
-		} catch (err) {
-			if (err instanceof UserQueryCancelled) {
-				dispatch({ type: "chat-reply", text: "(plan cancelled)" });
-				return;
-			}
-			dispatch({
-				type: "error",
-				message: `plan flow failed: ${err instanceof Error ? err.message : String(err)}`,
-			});
-		}
 	};
 
 	// Ctrl-C semantics:
@@ -475,48 +300,11 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					history={inputHistory}
 					cwd={bundle.toolContext.cwd}
 					suggestion={suggestion}
-					onSuggestionDismiss={() => setSuggestion(null)}
+					onSuggestionDismiss={dismissSuggestion}
 				/>
 			)}
 		</Box>
 	);
-}
-
-/**
- * Run a one-shot `!command` and append its output to the status lines.
- * This is intentionally divorced from the agent's shell tool — the
- * agent's tool is for tool-use turns, this is a CLI escape so the user
- * can `!git status` without spending a turn. Output is capped at 32 KB
- * to keep the transcript from drowning.
- */
-async function runShellEscape(command: string, cwd: string, emit: (line: string) => void): Promise<void> {
-	emit(`! ${command}`);
-	return new Promise<void>((resolve) => {
-		const child = spawn(command, { shell: true, cwd, env: process.env });
-		let buffer = "";
-		const MAX = 32 * 1024;
-		const onChunk = (chunk: Buffer) => {
-			if (buffer.length >= MAX) return;
-			buffer += chunk.toString("utf8").slice(0, MAX - buffer.length);
-		};
-		child.stdout?.on("data", onChunk);
-		child.stderr?.on("data", onChunk);
-		child.on("close", (code) => {
-			const trimmed = buffer.trim();
-			if (trimmed.length === 0) {
-				emit(code === 0 ? "(no output)" : `(exit ${code})`);
-			} else {
-				const lines = trimmed.split("\n").slice(0, 60);
-				for (const line of lines) emit(line);
-				if (code !== 0) emit(`(exit ${code})`);
-			}
-			resolve();
-		});
-		child.on("error", (err) => {
-			emit(`! ${err.message}`);
-			resolve();
-		});
-	});
 }
 
 /** Extract the user-visible text from a content array (image messages). */
@@ -528,26 +316,6 @@ function extractUserText(content: unknown): string {
 		.join("");
 }
 
-/**
- * Resolve a user's typed answer to one of the supplied options.
- * Accepts the option label (case-insensitive), a 1-based index,
- * or the leading word of the label. Falls back to the raw input
- * if nothing matches — caller decides what to do with that.
- */
-function matchOption(answer: string, options: string[]): string {
-	const trimmed = answer.trim();
-	const idx = Number.parseInt(trimmed, 10);
-	if (Number.isFinite(idx) && idx >= 1 && idx <= options.length) {
-		return options[idx - 1];
-	}
-	const lower = trimmed.toLowerCase();
-	for (const option of options) {
-		if (option.toLowerCase() === lower) return option;
-		if (option.toLowerCase().startsWith(lower) && lower.length >= 3) return option;
-	}
-	return trimmed;
-}
-
 function ExitOnCtrlC({ onExit }: { onExit: () => void }) {
 	useEffect(() => {
 		const handler = () => onExit();
@@ -557,30 +325,4 @@ function ExitOnCtrlC({ onExit }: { onExit: () => void }) {
 		};
 	}, [onExit]);
 	return null;
-}
-
-/**
- * Visible banner while the agent is summarising older turns into a
- * compaction checkpoint. The work itself takes a few seconds on long
- * sessions — silent before, looked like a hang. The banner re-renders
- * its elapsed-seconds label every second so the user has a clear
- * "still working" signal.
- */
-function CompactionBanner({ state }: { state: CompactionState }) {
-	const [elapsed, setElapsed] = useState(0);
-	useEffect(() => {
-		if (!state.startedAt) return;
-		const tick = () => setElapsed(Math.floor((Date.now() - (state.startedAt ?? Date.now())) / 1000));
-		tick();
-		const id = setInterval(tick, 1000);
-		return () => clearInterval(id);
-	}, [state.startedAt]);
-	return (
-		<Box paddingX={1} marginBottom={0}>
-			<Text color="yellow">
-				⟳ Compacting context ({state.messageCount} messages
-				{elapsed > 0 ? ` · ${elapsed}s` : ""})…
-			</Text>
-		</Box>
-	);
 }
