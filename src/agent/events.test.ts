@@ -35,6 +35,28 @@ describe("initialState", () => {
 		expect(s.usage).toEqual(EMPTY_USAGE);
 		expect(s.model).toEqual(MODEL);
 	});
+
+	it("seeds messages from a resumed session so the UI shows prior turns", () => {
+		const prior: AgentMessage[] = [
+			{ role: "user", content: "from before", timestamp: 1 } as AgentMessage,
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "hi" }],
+				api: "chat",
+				provider: "p",
+				model: "m",
+				usage: EMPTY_USAGE,
+				stopReason: "stop",
+				timestamp: 2,
+			} as AgentMessage,
+		];
+		const s = initialState(MODEL, prior);
+		expect(s.messages).toHaveLength(2);
+		expect(s.status).toBe("idle");
+		// Copy, not reference — caller mutating the source array must not
+		// reach into our state.
+		expect(s.messages).not.toBe(prior);
+	});
 });
 
 describe("reducer · user-prompt", () => {

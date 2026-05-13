@@ -10,9 +10,9 @@ export type Action =
 	| { type: "error"; message: string }
 	| { type: "reset" };
 
-export function initialState(model: ChatState["model"]): ChatState {
+export function initialState(model: ChatState["model"], messages: AgentMessage[] = []): ChatState {
 	return {
-		messages: [],
+		messages: [...messages],
 		tools: new Map(),
 		status: "idle",
 		usage: EMPTY_USAGE,

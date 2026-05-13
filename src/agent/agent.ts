@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { defaultOAuthConfig } from "../auth/cli.js";
 import { CredentialsStore } from "../auth/credentials.js";
@@ -88,6 +88,13 @@ export interface AgentBundle {
 	 * "Resumed from 3h ago · 47 messages". Undefined for fresh sessions.
 	 */
 	resumedFrom?: { updatedAt: number; messageCount: number };
+	/**
+	 * The transcript loaded from a resumed session. Pi-agent-core already
+	 * has these in its internal state — this exposes them so the UI's
+	 * reducer can show the prior conversation on screen, not just in the
+	 * model's context. Empty when starting fresh.
+	 */
+	resumedMessages: AgentMessage[];
 }
 
 export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
@@ -314,5 +321,6 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		diagnostics,
 		subscribe,
 		resumedFrom: resumed ? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length } : undefined,
+		resumedMessages: resumed?.messages ?? [],
 	};
 }

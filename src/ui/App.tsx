@@ -80,7 +80,10 @@ interface ChatAppProps {
 function ChatApp({ bundle, onExit }: ChatAppProps) {
 	const [state, dispatch] = useReducer(
 		reducer,
-		initialState({ provider: bundle.model.provider, id: bundle.model.id, name: bundle.model.name }),
+		initialState(
+			{ provider: bundle.model.provider, id: bundle.model.id, name: bundle.model.name },
+			bundle.resumedMessages,
+		),
 	);
 	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
 	const [userQuery, setUserQuery] = useState<UserQuery | undefined>(bundle.userQueries.current());

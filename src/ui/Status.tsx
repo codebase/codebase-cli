@@ -9,6 +9,16 @@ import { Throbber } from "./Throbber.js";
  * fallback when the provider doesn't return usage info on message_end. */
 const CHARS_PER_TOKEN = 4;
 
+/**
+ * Approximate static-context tokens the model sees on every turn but
+ * that aren't in state.messages: system prompt, MEMORY.md addendum, and
+ * the tool-schema definitions. Used to seed the context bar so it reads
+ * 1-2% on a fresh session instead of misleadingly showing 0%. The real
+ * input + cacheRead from turnUsage always wins when available — this is
+ * only the fallback's baseline.
+ */
+const STATIC_CONTEXT_TOKENS = 3000;
+
 interface StatusProps {
 	state: ChatState;
 	cwd?: string;
@@ -217,7 +227,7 @@ export function estimateContextTokens(state: ChatState): number {
 	let chars = 0;
 	for (const msg of state.messages) chars += messageChars(msg);
 	if (state.streaming) chars += messageChars(state.streaming);
-	return Math.round(chars / CHARS_PER_TOKEN);
+	return STATIC_CONTEXT_TOKENS + Math.round(chars / CHARS_PER_TOKEN);
 }
 
 function messageChars(message: AgentMessage): number {

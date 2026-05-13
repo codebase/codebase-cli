@@ -16,8 +16,11 @@ function baseState(): ChatState {
 }
 
 describe("estimateContextTokens", () => {
-	it("returns 0 for an empty conversation", () => {
-		expect(estimateContextTokens(baseState())).toBe(0);
+	it("returns the static-context baseline for an empty conversation", () => {
+		// The system prompt + tool schemas are always in context even with
+		// zero messages; the bar reflects that with a small non-zero seed.
+		expect(estimateContextTokens(baseState())).toBeGreaterThan(0);
+		expect(estimateContextTokens(baseState())).toBeLessThan(10_000);
 	});
 
 	it("prefers turnUsage.input + cacheRead when the provider reports them", () => {
@@ -52,9 +55,13 @@ describe("estimateContextTokens", () => {
 				} as AgentMessage,
 			],
 		};
-		// 11 ("hello world") + 400 (x's) = 411 chars; 411 / 4 = ~103 tokens
-		expect(estimateContextTokens(state)).toBeGreaterThan(95);
-		expect(estimateContextTokens(state)).toBeLessThan(115);
+		// 11 ("hello world") + 400 (x's) = 411 chars; 411 / 4 = ~103 tokens.
+		// Plus the static-context baseline. Verify the delta from the baseline
+		// is in the right neighborhood rather than asserting an exact total.
+		const baseline = estimateContextTokens(baseState());
+		const delta = estimateContextTokens(state) - baseline;
+		expect(delta).toBeGreaterThan(95);
+		expect(delta).toBeLessThan(115);
 	});
 
 	it("falls back when turnUsage is present but reports zero (proxy stripped usage)", () => {
@@ -70,7 +77,9 @@ describe("estimateContextTokens", () => {
 			},
 			messages: [{ role: "user", content: "x".repeat(400), timestamp: 1 } as AgentMessage],
 		};
-		expect(estimateContextTokens(state)).toBeGreaterThan(95);
+		// Above the baseline by ~100 tokens (the 400-char message).
+		const baseline = estimateContextTokens({ ...baseState(), turnUsage: state.turnUsage });
+		expect(estimateContextTokens(state) - baseline).toBeGreaterThan(95);
 	});
 
 	it("includes streaming content so the bar fills mid-turn, not just at message_end", () => {
@@ -133,7 +142,7 @@ describe("estimateContextTokens", () => {
 				} as unknown as AgentMessage,
 			],
 		};
-		// 800 / 4 = 200 tokens
-		expect(estimateContextTokens(state)).toBe(200);
+		// 800 / 4 = 200 tokens above the baseline.
+		expect(estimateContextTokens(state) - estimateContextTokens(baseState())).toBe(200);
 	});
 });
