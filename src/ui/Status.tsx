@@ -27,23 +27,25 @@ interface StatusProps {
 }
 
 /**
- * Playful verbs we cycle through while the agent is thinking. They all
- * read as "the model is working." Kept ASCII-clean so they line up in
- * any terminal font.
+ * Engineering-themed verbs cycled while the agent is busy. The aesthetic
+ * is "your computer is working on this," not "your assistant is gently
+ * pondering" — verbs map to actual machine work (compiling, indexing,
+ * tracing) rather than human-cognition metaphors. ASCII-clean so they
+ * line up in any terminal font.
  */
 const THINKING_VERBS = [
 	"Thinking",
-	"Pondering",
-	"Synthesizing",
-	"Cogitating",
-	"Ruminating",
-	"Deliberating",
-	"Mulling",
-	"Marinating",
-	"Brewing",
-	"Contemplating",
-	"Reasoning",
-	"Considering",
+	"Compiling",
+	"Indexing",
+	"Resolving",
+	"Parsing",
+	"Tracing",
+	"Diffing",
+	"Profiling",
+	"Computing",
+	"Linking",
+	"Optimizing",
+	"Stashing",
 ];
 
 const STATUS_LABEL: Record<ChatState["status"], string> = {
