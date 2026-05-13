@@ -1,23 +1,11 @@
 import { basename } from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
 import { useEffect, useRef, useState } from "react";
+import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
 import type { ChatState } from "../types.js";
 import { Throbber } from "./Throbber.js";
 
-/** Average chars-per-token across the major model families. Used only as a
- * fallback when the provider doesn't return usage info on message_end. */
-const CHARS_PER_TOKEN = 4;
-
-/**
- * Approximate static-context tokens the model sees on every turn but
- * that aren't in state.messages: system prompt, MEMORY.md addendum, and
- * the tool-schema definitions. Used to seed the context bar so it reads
- * 1-2% on a fresh session instead of misleadingly showing 0%. The real
- * input + cacheRead from turnUsage always wins when available — this is
- * only the fallback's baseline.
- */
-const STATIC_CONTEXT_TOKENS = 3000;
+export { estimateContextTokens };
 
 interface StatusProps {
 	state: ChatState;
@@ -232,54 +220,6 @@ function useTokenRate(state: ChatState): number | undefined {
 	const dc = newest.c - oldest.c;
 	if (dc < 10) return undefined;
 	return Math.round(dc / CHARS_PER_TOKEN / dt);
-}
-
-/**
- * Tokens currently in the model's context, for the status-bar fill meter.
- * Prefers the last-turn's reported `input + cacheRead` from pi-ai, since
- * that's literally what the model saw. Falls back to char-based estimation
- * when the provider strips usage (e.g. some OAuth-fronted proxies) so the
- * bar still grows as the conversation grows. Streaming content is added
- * on top of the prior-turn baseline so the bar visibly fills during a turn
- * instead of jumping at message_end.
- */
-export function estimateContextTokens(state: ChatState): number {
-	if (state.turnUsage && state.turnUsage.input + state.turnUsage.cacheRead > 0) {
-		const reported = state.turnUsage.input + state.turnUsage.cacheRead;
-		const streamingExtra = Math.round(streamingChars(state) / CHARS_PER_TOKEN);
-		return reported + streamingExtra;
-	}
-	let chars = 0;
-	for (const msg of state.messages) chars += messageChars(msg);
-	if (state.streaming) chars += messageChars(state.streaming);
-	return STATIC_CONTEXT_TOKENS + Math.round(chars / CHARS_PER_TOKEN);
-}
-
-function messageChars(message: AgentMessage): number {
-	if (typeof message.content === "string") return message.content.length;
-	if (!Array.isArray(message.content)) return 0;
-	let total = 0;
-	for (const block of message.content) {
-		if (block.type === "text") total += block.text.length;
-		else if (block.type === "thinking") total += block.thinking.length;
-		else if (block.type === "toolCall") {
-			total += block.name.length;
-			total += JSON.stringify(block.arguments ?? {}).length;
-		}
-	}
-	return total;
-}
-
-/** Sum the visible text length of all text/thinking blocks in the live streaming message. */
-function streamingChars(state: ChatState): number {
-	const m = state.streaming;
-	if (!m || m.role !== "assistant") return 0;
-	let total = 0;
-	for (const block of m.content) {
-		if (block.type === "text") total += block.text.length;
-		else if (block.type === "thinking") total += block.thinking.length;
-	}
-	return total;
 }
 
 /**

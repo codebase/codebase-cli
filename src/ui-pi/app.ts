@@ -10,6 +10,7 @@ import {
 	type TUI,
 } from "@mariozechner/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
+import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
@@ -63,6 +64,11 @@ export class App extends Container {
 	private queuedPrompts: string[] = [];
 	/** Has the env reminder been prepended to a turn this session yet? */
 	private envInjected = false;
+	/** Last reported turn usage from pi-ai — feeds the ctx-bar via estimateContextTokens. */
+	private turnUsage: ChatState["turnUsage"];
+	/** Streaming-rate sampler — interval ticker that recalculates tok/s. */
+	private rateTimer: NodeJS.Timeout | undefined;
+	private rateSamples: Array<{ t: number; c: number }> = [];
 
 	constructor() {
 		super();
@@ -394,12 +400,61 @@ export class App extends Container {
 			tools: new Map(this.tools),
 			status: this.status,
 			usage: this.usage,
+			turnUsage: this.turnUsage,
+			streaming: this.streamingMessage,
 			model: {
 				provider: this.bundle.model.provider,
 				id: this.bundle.model.id,
 				name: this.bundle.model.name,
 			},
 		};
+	}
+
+	/**
+	 * Recompute the right-hand status-bar metrics — ctx-fill %, total cost,
+	 * and (when streaming) live tok/s. Cheap to call on every agent event;
+	 * pi-tui only redraws if the text actually changes.
+	 */
+	private pushMetrics(): void {
+		const state = this.buildChatStateShadow();
+		const usedTokens = estimateContextTokens(state);
+		const contextWindow = 200_000;
+		const ctxPct = contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
+		this.statusBar.setMetrics(ctxPct, this.usage.cost.total, this.computeTokRate());
+	}
+
+	private computeTokRate(): number | undefined {
+		if (this.status !== "streaming" || this.rateSamples.length < 2) return undefined;
+		const oldest = this.rateSamples[0];
+		const newest = this.rateSamples[this.rateSamples.length - 1];
+		const dt = (newest.t - oldest.t) / 1000;
+		if (dt < 0.5) return undefined;
+		const dc = newest.c - oldest.c;
+		if (dc < 10) return undefined;
+		return Math.round(dc / CHARS_PER_TOKEN / dt);
+	}
+
+	private startRateSampling(): void {
+		this.stopRateSampling();
+		this.rateSamples = [];
+		this.rateTimer = setInterval(() => {
+			const now = Date.now();
+			const state = this.buildChatStateShadow();
+			this.rateSamples.push({ t: now, c: streamingChars(state) });
+			const cutoff = now - 4000;
+			while (this.rateSamples.length > 0 && this.rateSamples[0].t < cutoff) {
+				this.rateSamples.shift();
+			}
+			this.pushMetrics();
+		}, 500);
+	}
+
+	private stopRateSampling(): void {
+		if (this.rateTimer) {
+			clearInterval(this.rateTimer);
+			this.rateTimer = undefined;
+		}
+		this.rateSamples = [];
 	}
 
 	private maybeDrainQueue(): void {
@@ -425,6 +480,7 @@ export class App extends Container {
 					this.status = "streaming";
 					this.transcript.setStreaming(event.message);
 					this.statusBar.setStatus("writing");
+					this.startRateSampling();
 				}
 				break;
 			case "message_update":
@@ -439,8 +495,10 @@ export class App extends Container {
 					this.transcript.appendMessage(event.message);
 					this.streamingMessage = undefined;
 					this.transcript.setStreaming(undefined);
+					this.stopRateSampling();
 					if ("usage" in event.message && event.message.usage) {
 						this.usage = mergeUsage(this.usage, event.message.usage);
+						this.turnUsage = event.message.usage;
 					}
 				}
 				break;
@@ -486,9 +544,11 @@ export class App extends Container {
 				this.busy = false;
 				this.status = "idle";
 				this.statusBar.setStatus("idle");
+				this.stopRateSampling();
 				this.maybeDrainQueue();
 				break;
 		}
+		this.pushMetrics();
 	}
 
 	dispose(): void {
@@ -498,6 +558,7 @@ export class App extends Container {
 		this.hidePermissionOverlay();
 		this.hideUserQueryOverlay();
 		this.hideModelPicker();
+		this.stopRateSampling();
 		this.bgShellPanel.dispose();
 		this.bundle.backgroundShells.killAllSync();
 		this.unsubscribe();
@@ -544,22 +605,33 @@ class StatusBar extends Container {
 	private readonly notes: Text;
 	private modelName: string;
 	private currentStatus = "idle";
+	private ctxPercent = 0;
+	private cost = 0;
+	private tokRate: number | undefined;
 	constructor(modelName: string) {
 		super();
 		this.modelName = modelName;
-		this.line = new Text(this.format(this.currentStatus), 1, 0);
+		this.line = new Text(this.format(), 1, 0);
 		this.notes = new Text("", 1, 0);
 		this.addChild(this.notes);
 		this.addChild(this.line);
 	}
 	setStatus(status: string): void {
 		this.currentStatus = status;
-		this.line.setText(this.format(status));
+		this.line.setText(this.format());
 		this.line.invalidate();
 	}
 	setModelName(name: string): void {
 		this.modelName = name;
-		this.line.setText(this.format(this.currentStatus));
+		this.line.setText(this.format());
+		this.line.invalidate();
+	}
+	/** Update the right-hand telemetry — ctx-fill %, total cost, and live tok/s while streaming. */
+	setMetrics(ctxPercent: number, cost: number, tokRate?: number): void {
+		this.ctxPercent = ctxPercent;
+		this.cost = cost;
+		this.tokRate = tokRate;
+		this.line.setText(this.format());
 		this.line.invalidate();
 	}
 	/** Display a one-shot note above the status row (e.g. "Attached: x.ts", queue events). */
@@ -567,9 +639,39 @@ class StatusBar extends Container {
 		this.notes.setText(line);
 		this.notes.invalidate();
 	}
-	private format(status: string): string {
-		return `${ansi.dim("[")}${status}${ansi.dim("]")} · ${this.modelName}`;
+	private format(): string {
+		const left = `${ansi.dim("[")}${this.currentStatus}${ansi.dim("]")} · ${this.modelName}`;
+		const bar = ctxBar(this.ctxPercent);
+		const ctxText = colorByThreshold(`${bar} ${this.ctxPercent}%`, this.ctxPercent);
+		const tokPart = this.tokRate !== undefined ? ` · ${this.tokRate} tok/s` : "";
+		const right = ansi.dim(`ctx ${ctxText}${tokPart} · $${formatCost(this.cost)}`);
+		return `${left}    ${right}`;
 	}
+}
+
+/** 6-cell eighth-block meter used for the ctx % bar. Mirrors the ink-era version exactly. */
+function ctxBar(pct: number): string {
+	const cells = 6;
+	const totalEighths = Math.round((pct / 100) * cells * 8);
+	const full = Math.floor(totalEighths / 8);
+	const remainder = totalEighths - full * 8;
+	const partials = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+	let out = "█".repeat(Math.min(full, cells));
+	if (full < cells && remainder > 0) out += partials[remainder] ?? "";
+	while (out.length < cells) out += "░";
+	return out;
+}
+
+function colorByThreshold(text: string, pct: number): string {
+	if (pct >= 90) return ansi.red(text);
+	if (pct >= 75) return ansi.yellow(text);
+	return text;
+}
+
+function formatCost(value: number): string {
+	if (value === 0) return "0.0000";
+	if (value < 0.01) return value.toFixed(4);
+	return value.toFixed(2);
 }
 
 /**
