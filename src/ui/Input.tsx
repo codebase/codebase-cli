@@ -1,5 +1,5 @@
 import { Box, Text, useInput, useStdin } from "ink";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, type ReactNode, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { logInputEvent } from "./debug-input.js";
 import {
 	backspace,
@@ -24,6 +24,15 @@ import { completePath, findAtTokenAt } from "./path-complete.js";
 export interface SlashCommandSuggestion {
 	name: string;
 	description?: string;
+}
+
+/** Imperative handle exposed through Input's ref. App uses this to wipe the
+ * buffer on a stand-alone Ctrl-C (input has text, agent is idle) without
+ * having to lift the entire input state. */
+export interface InputHandle {
+	/** If the buffer has non-whitespace text, clear it and return true.
+	 * Otherwise no-op and return false. */
+	clearIfHasText: () => boolean;
 }
 
 interface InputProps {
@@ -95,18 +104,28 @@ function pickPlaceholder(hasHistory: boolean): string {
  *   Ctrl-Z          undo
  *   Ctrl-C          busy → cancel turn (stay in app); double-tap → exit
  */
-export function Input({
-	disabled,
-	onSubmit,
-	onAbort,
-	commands,
-	history,
-	cwd,
-	suggestion,
-	onSuggestionDismiss,
-}: InputProps) {
+export const Input = forwardRef<InputHandle, InputProps>(function Input(
+	{ disabled, onSubmit, onAbort, commands, history, cwd, suggestion, onSuggestionDismiss }: InputProps,
+	ref,
+) {
 	const [state, setState] = useState(initialInputState());
 	const [suggestionIdx, setSuggestionIdx] = useState(0);
+
+	// Keep the latest state in a ref so the imperative handle below can
+	// read it without re-creating the handle on every keystroke.
+	const stateRef = useRef(state);
+	stateRef.current = state;
+	useImperativeHandle(
+		ref,
+		(): InputHandle => ({
+			clearIfHasText: () => {
+				if (stateRef.current.buffer.trim().length === 0) return false;
+				setState(initialInputState());
+				return true;
+			},
+		}),
+		[],
+	);
 	/**
 	 * History cursor:
 	 *   -1            → live buffer (no history navigation in progress)
@@ -403,7 +422,7 @@ export function Input({
 			</Box>
 		</Box>
 	);
-}
+});
 
 function SlashSuggestions({
 	suggestions,

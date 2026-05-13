@@ -1,5 +1,5 @@
 import { Box, Text, useApp, useInput } from "ink";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
@@ -15,7 +15,7 @@ import { buildAttachmentPrompt, collectAttachments } from "./attachments.js";
 import { CompactionBanner } from "./CompactionBanner.js";
 import { FirstRunSetup } from "./FirstRunSetup.js";
 import { HistoryStore } from "./history-store.js";
-import { Input } from "./Input.js";
+import { Input, type InputHandle } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { Permission } from "./Permission.js";
 import { Status } from "./Status.js";
@@ -97,6 +97,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			return next.length > 50 ? next.slice(next.length - 50) : next;
 		});
 	const [tasks, setTasks] = useState<readonly Task[]>(() => bundle.toolContext.tasks.list());
+	const inputRef = useRef<InputHandle | null>(null);
 
 	const registry = useMemo(() => {
 		const reg = new CommandRegistry();
@@ -220,19 +221,21 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		});
 	};
 
-	// Ctrl-C semantics:
-	//   • Any open overlay (Permission, UserQuery) gets dismissed first
-	//     so the user is never trapped behind a prompt with no escape.
-	//   • While the agent is busy: abort the turn. Stays in the app.
-	//   • A second Ctrl-C within DOUBLE_TAP_MS exits, regardless of
-	//     whether the previous press aborted or just landed a hint.
-	//     "Twice real fast" is universally understood as "I want out."
-	//   • While idle at the prompt: first press posts a hint + arms the
-	//     exit window so the second tap exits.
+	// Ctrl-C semantics, in priority order:
+	//   1. Open overlay (Permission, UserQuery) → dismiss it. Never trap
+	//      the user behind a prompt with no escape.
+	//   2. Agent busy → abort the turn. Stay in the app.
+	//   3. Idle, input has typed text → wipe the input. Lets the user
+	//      back out of a half-written prompt without having to backspace.
+	//   4. Idle, input empty → post a "Press Ctrl-C again to exit" hint
+	//      and arm the double-tap exit window.
+	//
+	// At any state, a second Ctrl-C within DOUBLE_TAP_MS exits cleanly —
+	// "twice real fast" is universally understood as "I want out."
 	//
 	// 1000ms is "real fast" — wide enough that intentional double-taps
 	// register, tight enough that mashing Ctrl-C twice while flustered
-	// doesn't accidentally exit. Tunable here if testers want it longer.
+	// doesn't accidentally exit.
 	const exitTimerRef = useMemo(() => ({ deadline: 0 }), []);
 	const handleAbort = () => {
 		const DOUBLE_TAP_MS = 1000;
@@ -243,11 +246,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		}
 		exitTimerRef.deadline = now + DOUBLE_TAP_MS;
 
-		// Overlays first: dismissing them brings the user back to a usable
-		// input row without exiting the agent loop. Permission denies the
-		// pending request (and any tool waiting on it surfaces the denial
-		// to the model as a normal tool error); UserQuery cancels the
-		// pending question.
+		// Overlays first.
 		if (permRequest) {
 			bundle.permissions.respond(permRequest.id, "deny");
 			if (busy) {
@@ -273,6 +272,11 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			// gets the user out without confirmation theater.
 			return;
 		}
+
+		// Idle with typed input → clear it, don't fall through to the
+		// exit-hint branch. The user is bailing on a prompt, not the app.
+		if (inputRef.current?.clearIfHasText()) return;
+
 		appendStatus("Press Ctrl-C again to exit.");
 	};
 
@@ -328,6 +332,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				/>
 			) : (
 				<Input
+					ref={inputRef}
 					disabled={busy}
 					onSubmit={handleSubmit}
 					onAbort={handleAbort}
