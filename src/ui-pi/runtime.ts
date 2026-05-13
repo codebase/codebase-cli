@@ -34,12 +34,14 @@ export async function runPiTuiApp(): Promise<void> {
 	}
 
 	tui.addChild(app);
+	app.attachToTui(tui);
 	tui.start();
 
 	// Resolve when the user signals exit (Ctrl-C twice, /exit). The App
 	// owns the exit promise so it can dispose cleanly first.
 	await app.waitForExit();
 
+	app.dispose();
 	tui.stop();
 	await terminal.drainInput().catch(() => undefined);
 }
