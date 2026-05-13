@@ -1,7 +1,10 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
-import { Container, Input as PiInput, Text, type TUI } from "@mariozechner/pi-tui";
+import { Container, Markdown, type OverlayHandle, Input as PiInput, Text, type TUI } from "@mariozechner/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
+import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
+import { PermissionOverlay } from "./permission-overlay.js";
+import { ansi, markdownTheme, roleColor } from "./theme.js";
 
 /**
  * Root pi-tui component. Mirrors ink/App.tsx in responsibilities — agent
@@ -22,6 +25,9 @@ export class App extends Container {
 	private busy = false;
 	private streamingMessage: AgentMessage | undefined;
 	private removeInputListener: (() => void) | undefined;
+	private permissionOverlay: { handle: OverlayHandle; component: PermissionOverlay } | undefined;
+	private removePermSubscription: (() => void) | undefined;
+	private tui: TUI | undefined;
 	/** Has the env reminder been prepended to a turn this session yet? */
 	private envInjected = false;
 
@@ -60,8 +66,38 @@ export class App extends Container {
 	 * have a TUI reference yet.
 	 */
 	attachToTui(tui: TUI): void {
+		this.tui = tui;
 		tui.setFocus(this.inputBar);
 		this.removeInputListener = tui.addInputListener((data) => this.handleGlobalInput(data));
+		// Permission requests arrive asynchronously from tool execution.
+		// Show the overlay when a request lands; dismiss when answered.
+		this.removePermSubscription = this.bundle.permissions.subscribe((req) => {
+			if (req) this.showPermissionOverlay(req);
+			else this.hidePermissionOverlay();
+		});
+	}
+
+	private showPermissionOverlay(req: import("../permissions/store.js").PermissionRequest): void {
+		if (!this.tui) return;
+		this.hidePermissionOverlay();
+		const component = new PermissionOverlay(req, (choice) => {
+			this.bundle.permissions.respond(req.id, choice);
+		});
+		const handle = this.tui.showOverlay(component, {
+			anchor: "center",
+			width: "70%",
+			minWidth: 50,
+		});
+		this.tui.setFocus(component.getFocusTarget());
+		this.permissionOverlay = { handle, component };
+	}
+
+	private hidePermissionOverlay(): void {
+		if (!this.permissionOverlay) return;
+		this.permissionOverlay.handle.hide();
+		this.permissionOverlay = undefined;
+		// Return focus to the editor when the overlay closes.
+		this.tui?.setFocus(this.inputBar);
 	}
 
 	waitForExit(): Promise<void> {
@@ -161,6 +197,8 @@ export class App extends Container {
 
 	dispose(): void {
 		this.removeInputListener?.();
+		this.removePermSubscription?.();
+		this.hidePermissionOverlay();
 		this.unsubscribe();
 	}
 }
@@ -253,33 +291,46 @@ class TranscriptView extends Container {
 }
 
 /**
- * Render one message as a Container with a header line + body. Phase 1
- * keeps this plain — role label, then content text. Tool calls / diffs /
- * markdown / spinners come in phase 2.
+ * Render one message as a Container with a role-colored header + body.
+ * Assistant text content goes through pi-tui's Markdown so code blocks,
+ * lists, links etc. render properly. Tool calls render via the
+ * toolActionLabel/toolActionPast helpers from the ink path so the
+ * surface text is identical (e.g. "Reading src/x.ts").
+ *
+ * `streaming` toggles the "…" suffix on the role label and uses the
+ * present-tense verb form for tool calls.
  */
 function renderMessage(message: AgentMessage, streaming = false): Container {
 	const c = new Container();
 	const role = message.role as string;
-	const label = role === "user" ? "you" : role === "assistant" ? "codebase" : role === "toolResult" ? "tool" : role;
-	c.addChild(new Text(label + (streaming ? " …" : ""), 1, 0));
-	const body = messageToPlainText(message);
-	if (body) c.addChild(new Text(body, 1, 0));
-	return c;
-}
+	const labelText =
+		role === "user" ? "you" : role === "assistant" ? "codebase" : role === "toolResult" ? "tool" : role;
+	const colorFn = roleColor[role as keyof typeof roleColor] ?? ((s: string) => s);
+	const header = `${colorFn(ansi.bold(labelText))}${streaming ? ansi.dim(" …") : ""}`;
+	c.addChild(new Text(header, 1, 0));
 
-function messageToPlainText(message: AgentMessage): string {
-	if (typeof message.content === "string") return message.content;
-	if (!Array.isArray(message.content)) return "";
-	const parts: string[] = [];
+	if (typeof message.content === "string") {
+		if (message.content) c.addChild(new Text(message.content, 1, 0));
+		return c;
+	}
+	if (!Array.isArray(message.content)) return c;
 	for (const block of message.content) {
-		if (block.type === "text" && typeof (block as { text?: string }).text === "string") {
-			parts.push((block as { text: string }).text);
-		} else if (block.type === "thinking" && typeof (block as { thinking?: string }).thinking === "string") {
-			parts.push(`(thinking) ${(block as { thinking: string }).thinking}`);
-		} else if (block.type === "toolCall") {
-			const tc = block as { name: string; arguments?: unknown };
-			parts.push(`→ ${tc.name}`);
+		const b = block as { type: string; text?: string; thinking?: string; name?: string; arguments?: unknown };
+		if (b.type === "text" && typeof b.text === "string") {
+			// Markdown for assistant content (code blocks, lists, links).
+			// For user/toolResult text, plain Text avoids style surprises.
+			if (role === "assistant") {
+				c.addChild(new Markdown(b.text, 1, 0, markdownTheme));
+			} else {
+				c.addChild(new Text(b.text, 1, 0));
+			}
+		} else if (b.type === "thinking" && typeof b.thinking === "string") {
+			c.addChild(new Text(ansi.dim(ansi.italic(`(thinking) ${b.thinking}`)), 1, 0));
+		} else if (b.type === "toolCall" && typeof b.name === "string") {
+			const label = streaming ? toolActionLabel(b.name, b.arguments) : toolActionPast(b.name, b.arguments);
+			const glyph = streaming ? ansi.magenta("…") : ansi.magenta("✓");
+			c.addChild(new Text(`${glyph} ${ansi.magenta(label)}`, 1, 0));
 		}
 	}
-	return parts.join("\n");
+	return c;
 }
