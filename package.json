@@ -61,6 +61,7 @@
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "0.74.0",
 		"@earendil-works/pi-ai": "0.74.0",
+		"@mariozechner/pi-tui": "^0.73.1",
 		"@types/diff": "^7.0.2",
 		"@types/proper-lockfile": "^4.1.4",
 		"diff": "^9.0.0",

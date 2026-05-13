@@ -81,14 +81,21 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 } else {
 	setTerminalTitle("codebase");
 	// Enable bracketed paste mode so the terminal wraps pasted content in
-	// CSI 200~ / 201~ markers. The Input component listens for them and
-	// collapses the content into a placeholder. terminal-restore.ts emits
-	// the matching disable sequence on every exit path.
+	// CSI 200~ / 201~ markers. terminal-restore.ts emits the matching
+	// disable sequence on every exit path.
 	if (process.stdout.isTTY) process.stdout.write("\x1b[?2004h");
-	// Disable ink's default ctrl-c handling. ink unmounts on ctrl-c but
-	// doesn't exit the process — leaves the user staring at a frozen
-	// terminal. We handle ctrl-c ourselves: first press aborts the agent
-	// and any in-flight overlay, a second press within 1s exits cleanly.
+	if (process.env.CODEBASE_PI_TUI === "1") {
+		// Opt-in pi-tui render path — differential renderer, no React.
+		// During the migration this is feature-gated; the ink path stays
+		// default until parity is verified.
+		const { runPiTuiApp } = await import("./ui-pi/runtime.js");
+		installTerminalRestoreHandlers();
+		await runPiTuiApp();
+		process.exit(0);
+	}
+	// Default ink/React path. Disable ink's default ctrl-c handling — ink
+	// unmounts on ctrl-c but doesn't exit the process — leaves the user
+	// staring at a frozen terminal. We handle ctrl-c ourselves.
 	const instance = render(<App />, { exitOnCtrlC: false });
 	installTerminalRestoreHandlers(instance);
 	instance.waitUntilExit().catch(() => {
