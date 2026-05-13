@@ -62,6 +62,39 @@ export function looksLikePaste(input: string): boolean {
 }
 
 const PASTE_PLACEHOLDER_RE = /\[Pasted #(\d+) · \d+ (?:lines|chars)\]/g;
+/** Anchored variants used to detect a placeholder hugging the cursor on either side. */
+const PASTE_PLACEHOLDER_RE_END = /\[Pasted #(\d+) · \d+ (?:lines|chars)\]$/;
+const PASTE_PLACEHOLDER_RE_START = /^\[Pasted #(\d+) · \d+ (?:lines|chars)\]/;
+
+/**
+ * If the buffer slice ending at `pos` finishes with a complete placeholder,
+ * return its start offset and id. Used by backspace to delete a whole
+ * placeholder atomically instead of chipping at the closing bracket.
+ */
+function placeholderEndingAt(buffer: string, pos: number): { start: number; id: number } | undefined {
+	const before = buffer.slice(0, pos);
+	const m = before.match(PASTE_PLACEHOLDER_RE_END);
+	if (!m) return undefined;
+	return { start: pos - m[0].length, id: Number.parseInt(m[1], 10) };
+}
+
+/**
+ * If the buffer slice starting at `pos` begins with a complete placeholder,
+ * return its end offset and id. Used by deleteForward.
+ */
+function placeholderStartingAt(buffer: string, pos: number): { end: number; id: number } | undefined {
+	const after = buffer.slice(pos);
+	const m = after.match(PASTE_PLACEHOLDER_RE_START);
+	if (!m) return undefined;
+	return { end: pos + m[0].length, id: Number.parseInt(m[1], 10) };
+}
+
+function dropPasteEntry(map: Record<number, PastedContent>, id: number): Record<number, PastedContent> {
+	if (!(id in map)) return map;
+	const next = { ...map };
+	delete next[id];
+	return next;
+}
 
 /**
  * Render the placeholder shown in the visible buffer when text is pasted.
@@ -136,6 +169,20 @@ export function insertChar(state: InputState, ch: string): InputState {
 
 export function backspace(state: InputState): InputState {
 	if (state.cursor === 0) return state;
+	// Atomic placeholder delete: backspacing at the right edge of a paste
+	// placeholder removes the whole placeholder instead of breaking off
+	// the closing bracket and leaving a fragment that won't re-expand.
+	const ph = placeholderEndingAt(state.buffer, state.cursor);
+	if (ph) {
+		return {
+			...state,
+			buffer: state.buffer.slice(0, ph.start) + state.buffer.slice(state.cursor),
+			cursor: ph.start,
+			pastedContents: dropPasteEntry(state.pastedContents, ph.id),
+			undoStack: pushUndo(state),
+			lastAction: "delete",
+		};
+	}
 	return {
 		...state,
 		buffer: state.buffer.slice(0, state.cursor - 1) + state.buffer.slice(state.cursor),
@@ -147,6 +194,17 @@ export function backspace(state: InputState): InputState {
 
 export function deleteForward(state: InputState): InputState {
 	if (state.cursor >= state.buffer.length) return state;
+	// Atomic placeholder delete on forward-delete from the left edge.
+	const ph = placeholderStartingAt(state.buffer, state.cursor);
+	if (ph) {
+		return {
+			...state,
+			buffer: state.buffer.slice(0, state.cursor) + state.buffer.slice(ph.end),
+			pastedContents: dropPasteEntry(state.pastedContents, ph.id),
+			undoStack: pushUndo(state),
+			lastAction: "delete",
+		};
+	}
 	return {
 		...state,
 		buffer: state.buffer.slice(0, state.cursor) + state.buffer.slice(state.cursor + 1),
