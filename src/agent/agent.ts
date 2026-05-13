@@ -16,6 +16,7 @@ import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
 import { PlanModeStore } from "../plan/store.js";
 import { SessionStore } from "../sessions/store.js";
+import { BackgroundShellStore } from "../tools/background-shell-store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
 import { buildTools } from "../tools/registry.js";
 import { TaskStore } from "../tools/task-store.js";
@@ -110,6 +111,8 @@ export interface AgentBundle {
 	 * model's context. Empty when starting fresh.
 	 */
 	resumedMessages: AgentMessage[];
+	/** Tracks long-running shells the agent spawned via background mode. */
+	backgroundShells: BackgroundShellStore;
 }
 
 export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
@@ -166,6 +169,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		planMode,
 		memory,
 		hooks,
+		backgroundShells: new BackgroundShellStore(),
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
@@ -360,5 +364,6 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		subscribe,
 		resumedFrom: resumed ? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length } : undefined,
 		resumedMessages: opts.initialMessages ?? resumed?.messages ?? [],
+		backgroundShells: toolContext.backgroundShells,
 	};
 }

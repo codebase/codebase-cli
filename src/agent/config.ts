@@ -209,9 +209,29 @@ function buildProxiedConfig(
 	const modelId = explicitModel ?? DEFAULT_MODELS[explicitProvider];
 	if (!modelId) return null;
 	const baseModel = getModel(explicitProvider, modelId as never) as Model<string> | undefined;
-	if (!baseModel) return null;
-	const proxiedModel: Model<string> = { ...baseModel, baseUrl: proxyBase };
-	return { model: proxiedModel, apiKey: accessToken, source: "proxy" };
+	if (baseModel) {
+		const proxiedModel: Model<string> = { ...baseModel, baseUrl: proxyBase };
+		return { model: proxiedModel, apiKey: accessToken, source: "proxy" };
+	}
+	// pi-ai's registry doesn't know this provider+modelId combo (common for
+	// backend-only models the proxy exposes, e.g. "codebase:MiniMax-M2.7"
+	// or custom in-house ids). The proxy speaks openai-completions for
+	// every upstream, so synthesizing an openai-compat model from a known
+	// template + the user's chosen id works regardless of whether pi-ai
+	// recognizes it locally. Without this fallback, /model would silently
+	// revert to Codebase Auto whenever the user picked anything pi-ai
+	// didn't have native cost / context-window data for.
+	const template = getModel("groq", "llama-3.3-70b-versatile") as Model<string> | undefined;
+	if (!template) return null;
+	const synthesized: Model<string> = {
+		...template,
+		id: modelId,
+		name: modelId,
+		baseUrl: proxyBase,
+		provider: explicitProvider as Model<string>["provider"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+	return { model: synthesized, apiKey: accessToken, source: "proxy" };
 }
 
 /**

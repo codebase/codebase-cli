@@ -4,6 +4,7 @@ import type { HookManager } from "../hooks/manager.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { PlanModeStore } from "../plan/store.js";
 import type { UserQueryStore } from "../user-queries/store.js";
+import type { BackgroundShellStore } from "./background-shell-store.js";
 import type { FileStateCache } from "./file-state-cache.js";
 import type { TaskStore } from "./task-store.js";
 
@@ -18,6 +19,8 @@ export interface ToolContext {
 	userQueries: UserQueryStore;
 	planMode: PlanModeStore;
 	memory: MemoryStore;
+	/** Long-running shells the agent spawned with `shell({ background: true })`. */
+	backgroundShells: BackgroundShellStore;
 	/**
 	 * User-defined hooks. Tools that care about lifecycle events (e.g.
 	 * dispatch_agent → SubagentStart/Stop) reach into this. Optional so

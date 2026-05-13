@@ -1,5 +1,5 @@
 import { Box, Text, useApp, useInput } from "ink";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
@@ -14,6 +14,7 @@ import type { Task } from "../tools/task-store.js";
 import type { ChatState } from "../types.js";
 import type { UserQuery } from "../user-queries/store.js";
 import { buildAttachmentPrompt, collectAttachments } from "./attachments.js";
+import { BackgroundShellPanel } from "./BackgroundShellPanel.js";
 import { CompactionBanner } from "./CompactionBanner.js";
 import { FirstRunSetup } from "./FirstRunSetup.js";
 import { HistoryStore } from "./history-store.js";
@@ -99,11 +100,12 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	const [statusLines, setStatusLines] = useState<string[]>([]);
 	// Cap the buffer so noisy emits (long /help, many !cmds) don't grow
 	// the status pane indefinitely. 50 rows ≈ a screen on most terms.
-	const appendStatus = (line: string) =>
+	const appendStatus = useCallback((line: string) => {
 		setStatusLines((prev) => {
 			const next = [...prev, line];
 			return next.length > 50 ? next.slice(next.length - 50) : next;
 		});
+	}, []);
 	const [tasks, setTasks] = useState<readonly Task[]>(() => bundle.toolContext.tasks.list());
 	const inputRef = useRef<InputHandle | null>(null);
 	const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -112,6 +114,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	// stack the next thing while the current turn is still running, the
 	// CC-style "type ahead" pattern.
 	const [queuedPrompts, setQueuedPrompts] = useState<readonly string[]>([]);
+	const [backgroundShells, setBackgroundShells] = useState(() => bundle.backgroundShells.list());
 
 	const registry = useMemo(() => {
 		const reg = new CommandRegistry();
@@ -159,6 +162,56 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	useEffect(() => {
 		return bundle.toolContext.tasks.subscribe((snapshot) => setTasks(snapshot));
 	}, [bundle]);
+
+	// SIGTERM any background shells still running when the process exits.
+	// Without this, dev servers / watchers spawned via background mode
+	// would survive the CLI and leak to the parent shell.
+	useEffect(() => {
+		const cleanup = () => bundle.backgroundShells.killAllSync();
+		process.on("exit", cleanup);
+		process.on("SIGINT", cleanup);
+		process.on("SIGTERM", cleanup);
+		return () => {
+			process.off("exit", cleanup);
+			process.off("SIGINT", cleanup);
+			process.off("SIGTERM", cleanup);
+		};
+	}, [bundle]);
+
+	// Notify the model when a backgrounded shell exits. Steer the message
+	// after the current turn so the agent sees it without us having to
+	// interrupt mid-stream. If the agent is idle, just surface a status
+	// line — re-waking the agent for a notification would be over-eager;
+	// the model picks it up via env / transcript on the user's next prompt.
+	useEffect(() => {
+		const prevStatus = new Map<string, string>();
+		return bundle.backgroundShells.subscribe((shells) => {
+			setBackgroundShells(shells);
+			for (const s of shells) {
+				const prev = prevStatus.get(s.id);
+				prevStatus.set(s.id, s.status);
+				if (prev === "running" && s.status !== "running") {
+					const summary =
+						s.status === "killed"
+							? `(killed${s.signal ? ` ${s.signal}` : ""})`
+							: `(exit code ${s.exitCode ?? "?"})`;
+					const note = `Background shell ${s.id} ${summary}: ${s.command}`;
+					appendStatus(`↪ ${note}`);
+					if (state.status !== "idle") {
+						try {
+							bundle.agent.steer({
+								role: "user",
+								content: `<system-reminder>${note}\nCall shell_output("${s.id}") to read the captured output if you need it.</system-reminder>`,
+								timestamp: Date.now(),
+							});
+						} catch {
+							// Agent isn't actively running — fine, status line covers it.
+						}
+					}
+				}
+			}
+		});
+	}, [bundle, state.status, appendStatus]);
 
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
 
@@ -407,6 +460,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			{compactionState.active ? <CompactionBanner state={compactionState} /> : null}
 			<ToolPanel tools={state.tools} />
 			<TaskPanel tasks={tasks} />
+			<BackgroundShellPanel shells={backgroundShells} />
 			{statusLines.length > 0 ? (
 				<Box flexDirection="column" paddingX={1} marginBottom={1}>
 					{statusLines.map((line, i) => (

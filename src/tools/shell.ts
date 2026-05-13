@@ -25,6 +25,12 @@ const Params = Type.Object({
 			description: "Kill the command after this many ms. Default 30000. Max 600000 (10 min).",
 		}),
 	),
+	background: Type.Optional(
+		Type.Boolean({
+			description:
+				"Set true to run the command in the background. Returns a task_id immediately instead of waiting for the command to finish. Use `shell_output` to read accumulated stdout/stderr later, and `shell_kill` to terminate. Right for dev servers, file watchers, build daemons — anything that doesn't naturally exit. The agent will be notified when the background process exits.",
+		}),
+	),
 });
 
 export type ShellParams = Static<typeof Params>;
@@ -65,6 +71,34 @@ export function createShell(ctx: ToolContext): AgentTool<typeof Params, ShellDet
 		executionMode: "sequential",
 		execute: async (toolCallId, params, signal, onUpdate) => {
 			const cwd = resolveSubCwd(ctx.cwd, params.cwd);
+
+			// Background mode: spawn detached, return immediately with a
+			// task_id. The agent can read output via shell_output and
+			// terminate via shell_kill. The store fires its own listeners
+			// when the process exits, which App.tsx hooks up to notify the
+			// model via agent.steer().
+			if (params.background) {
+				const record = ctx.backgroundShells.spawn(params.command, cwd);
+				const text =
+					`Started background shell ${record.id}: ${params.command}\n` +
+					`Read accumulated output with shell_output("${record.id}"); terminate with shell_kill("${record.id}").\n` +
+					`You'll be notified when this process exits.`;
+				return {
+					details: {
+						command: params.command,
+						exitCode: null,
+						signal: null,
+						durationMs: 0,
+						bytesTotal: 0,
+						truncated: false,
+						spillPath: null,
+						timedOut: false,
+						aborted: false,
+					},
+					content: [{ type: "text", text }],
+				};
+			}
+
 			const timeoutMs = params.timeout_ms ?? DEFAULT_TIMEOUT_MS;
 			const startedAt = Date.now();
 

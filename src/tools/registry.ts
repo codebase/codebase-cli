@@ -18,6 +18,8 @@ import { createNotebookEdit } from "./notebook-edit.js";
 import { createPlanModeTools } from "./plan-mode.js";
 import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
+import { createShellKill } from "./shell-kill.js";
+import { createShellOutput } from "./shell-output.js";
 import { createTaskTools } from "./tasks.js";
 import type { ToolContext } from "./types.js";
 import { createWebFetch } from "./web-fetch.js";
@@ -36,6 +38,8 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createNotebookEdit(ctx),
 		createWriteFile(ctx),
 		createShell(ctx),
+		createShellOutput(ctx),
+		createShellKill(ctx),
 		createListFiles(ctx),
 		createGlob(ctx),
 		createGrep(ctx),
