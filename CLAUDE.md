@@ -8,10 +8,8 @@ TUI, tools, slash commands, permissions, OAuth, sessions, and the headless
 / JSON-RPC entry points; pi-mono owns the agent loop and provider
 protocols.
 
-Goal: a **better Claude Code** — simpler architecture, any LLM provider,
-single `npm i -g` install. Not a clone. We study CC's source as a feature-coverage
-benchmark and to learn from their architectural mistakes; we do not copy
-their code or prompt wording verbatim (open-source IP discipline).
+Goals: simple architecture, any LLM provider, single `npm i -g` install,
+designed to fit cleanly in a terminal session.
 
 For deep context, read [`.settings/`](.settings/) first — `tenets.md`,
 `architecture.md`, `extending.md`, `testing.md`. Those are the canonical
@@ -144,36 +142,31 @@ CODEBASE_SCOPES         override requested scopes
 - Don't commit aspirational documentation. The code is the spec; docs
   follow the code.
 
-## Competitive context: Claude Code
+## Architectural shape
 
-We have CC's source as a benchmark. The tenets we hold differently:
+A few load-bearing decisions you should know going in:
 
-| Aspect | CC | codebase-cli |
-|---|---|---|
-| TUI framework | ink + 512K LOC | ink + ~22K LOC |
-| Tool interface | Each tool a snowflake; BashTool ~160K bytes | One `Tool` interface, ~45 implementations |
-| Permissions | AST parsers + ML classifiers + hook cascade | Effect-based policies, ~600 LOC |
-| State | 30+ field god object | Single immutable `ChatState`, reducer-driven |
-| Compaction | Three uncoordinated strategies | One proactive strategy with calibrated budget |
-| Distribution | Bun lock-in, custom bundler | Plain `npm i -g`, `tsc` only |
-| Providers | Anthropic-first | Any provider via pi-ai |
-
-The Ink-LOC contrast is the headline number: ink is fine; CC's *use* of
-it is the problem. Our thesis: 80% of CC's value in 5% of the code, by
-making better foundational choices.
-
-When you add a feature, ask: "how did CC do this, and what's a simpler
-way that avoids their pain points?"
+- **One `Tool` interface** for everything (~45 implementations in `src/tools/`).
+  Adding a tool is mechanical: declare effects, validate args with TypeBox,
+  export. No per-tool snowflakes.
+- **Effect-based permissions** (`reads_fs`, `writes_fs`, `runs_shell`,
+  `network`). Policies match on effects, not tool names. ~600 LOC total.
+- **Single immutable `ChatState`** driven by a typed reducer in
+  `src/agent/events.ts`. Every UI state transition flows through it; the
+  reducer is tested exhaustively in `events.test.ts`.
+- **One proactive compaction strategy** with a calibrated token budget.
+  See `src/compaction/`.
+- **Plain `npm i -g`** distribution. `tsc` only, no bundler.
 
 ## Recognized project files
 
 The CLI auto-loads these from the project root and injects them into
 the system prompt:
 
-- `AGENTS.md` (OpenAI Codex)
-- `CLAUDE.md` (Claude Code / this convention)
+- `AGENTS.md`
+- `CLAUDE.md`
 - `CODEX.md`
-- `.cursorrules` (Cursor)
+- `.cursorrules`
 
 ## Direct dependencies
 

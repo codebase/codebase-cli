@@ -28,10 +28,10 @@ export function useSpinner(active: boolean, intervalMs = 90): string {
 
 /**
  * Tool calls that are pure reads — runs of these collapse into a single
- * "Read N files" / "Searched 3 patterns" line, the Claude Code pattern.
- * Keep the set tight: anything that mutates state, runs shell, or has a
- * meaningful argument shape (grep query, fetch URL) reads weird when
- * collapsed and stays per-row.
+ * "Read N files" / "Searched 3 patterns" line. Keep the set tight:
+ * anything that mutates state, runs shell, or has a meaningful argument
+ * shape (grep query, fetch URL) reads weird when collapsed and stays
+ * per-row.
  */
 export const COLLAPSIBLE_READ_TOOLS: ReadonlySet<string> = new Set(["read_file"]);
 

@@ -470,7 +470,7 @@ const init: Command = {
 		const template = [
 			"# Project Instructions",
 			"",
-			"This file is auto-loaded by `codebase` (and Claude Code) on session start.",
+			"This file is auto-loaded by `codebase` on session start.",
 			"Use it to capture project-specific rules and context the agent should follow.",
 			"",
 			"## What this project is",
@@ -548,8 +548,7 @@ const mcp: Command = {
 		const configPath = join(homedir(), ".codebase", "config.json");
 		ctx.emit(
 			"MCP support is on the Phase 9 roadmap; the runtime hasn't shipped it yet.\n" +
-				`when it lands, server config will live at ${configPath} under "mcp_servers", ` +
-				"matching Claude Code's shape so existing config files port over.",
+				`When it lands, server config will live at ${configPath} under "mcp_servers".`,
 		);
 		return { handled: true };
 	},

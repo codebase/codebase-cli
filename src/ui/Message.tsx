@@ -15,8 +15,7 @@ interface MessageProps {
 	/**
 	 * Per-tool-call status from the agent loop. Used to render tool-call
 	 * blocks with a live spinner + present tense ("Reading X") while
-	 * running, and a ✓/✗ + past tense ("Read X") once complete — the
-	 * Claude Code pattern.
+	 * running, and a ✓/✗ + past tense ("Read X") once complete.
 	 */
 	tools?: ReadonlyMap<string, ToolExecution>;
 }

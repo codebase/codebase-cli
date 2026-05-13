@@ -18,11 +18,8 @@ import type { AgentBundle } from "./agent.js";
  */
 
 /**
- * Instructions appended as a final user message. The *technique* —
- * meta-prompting an assistant to predict the next user input — is a
- * common pattern across coding tools, but the wording below is
- * original to this project (Claude Code uses a similar idea with
- * different words; we're not copying that text).
+ * Instructions appended as a final user message. Meta-prompts the model
+ * to predict the user's next input rather than respond as the assistant.
  */
 const SUGGESTION_PROMPT = `Switching to autocomplete mode for one reply.
 
@@ -123,10 +120,9 @@ function extractText(message: Awaited<ReturnType<typeof completeSimple>>): strin
 }
 
 /**
- * Filter out suggestions that don't look like real user input. The list
- * is a pragmatic subset of Claude Code's filters — anything the model
- * tends to emit when it doesn't know what to suggest but isn't quite
- * willing to say nothing.
+ * Filter out suggestions that don't look like real user input. Catches
+ * the things the model emits when it doesn't know what to suggest but
+ * isn't willing to stay silent.
  */
 function shouldFilterSuggestion(text: string): boolean {
 	const lower = text.toLowerCase();
@@ -141,7 +137,7 @@ function shouldFilterSuggestion(text: string): boolean {
 	// Evaluative one-liners — these aren't actions, they're chitchat the
 	// user wouldn't typically type to drive forward.
 	if (/^(looks good|thanks|nice|great|ok|okay|yes)\.?$/i.test(text.trim())) return true;
-	// Too long — keep ghost-text legible (12 words is the cap CC uses).
+	// Too long — keep ghost-text legible in the input row.
 	if (text.split(/\s+/).length > 12) return true;
 	// Multi-sentence — pick a single utterance.
 	if (/[.!?]\s+\S/.test(text)) return true;

@@ -6,9 +6,8 @@ import { resolve } from "node:path";
  * against this before writing — if the on-disk mtime drifted, the LLM has
  * stale context and we error out instead of silently overwriting.
  *
- * Mirrors Claude Code's `src/utils/fileStateCache.ts` plus extensions for
- * encoding (BOM, line endings) so the matching round-trip survives Windows
- * authored files and CRLF projects.
+ * Tracks BOM and line-ending detection so an edit round-trip survives
+ * Windows-authored files and CRLF projects without spurious diffs.
  */
 export interface FileSnapshot {
 	/** Absolute, normalized path. */

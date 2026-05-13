@@ -266,7 +266,7 @@ export function Input({
 
 		// Esc clears the buffer back to empty (and exits history mode) so
 		// the user can bail out of a half-typed prompt without having to
-		// hammer Backspace. Matches CC's behavior; harmless when empty.
+		// hammer Backspace. Harmless when the buffer is already empty.
 		if (key.escape) {
 			if (state.buffer.length === 0 && historyIdx < 0) return;
 			setState(initialInputState());
@@ -277,9 +277,10 @@ export function Input({
 		}
 
 		if (key.return) {
-			// `\<Enter>` inserts a newline instead of submitting — the CC
-			// convention for multi-line input. Strip the trailing `\` and
-			// replace it with a newline so the buffer reads cleanly.
+			// `\<Enter>` inserts a newline instead of submitting — the
+			// terminal-idiomatic way to enter multi-line input. Strip the
+			// trailing `\` and replace it with a newline so the buffer
+			// reads cleanly.
 			if (state.buffer.endsWith("\\") && state.cursor === state.buffer.length) {
 				const stripped = state.buffer.slice(0, -1);
 				setState({ ...initialInputState(), buffer: `${stripped}\n`, cursor: stripped.length + 1 });

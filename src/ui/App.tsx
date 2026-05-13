@@ -147,11 +147,11 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	const { suggestion, dismiss: dismissSuggestion } = usePromptSuggestion(bundle, state.status, state.messages.length);
 
 	const handleSubmit = async (text: string) => {
-		// `!cmd` runs a shell command directly — the CC convention for
-		// "I just want to check something real quick" without involving
-		// the LLM. We bypass the agent loop entirely and inject the
-		// output as a synthetic user / toolResult pair so it shows up in
-		// the transcript but doesn't end up in the model's context.
+		// `!cmd` runs a shell command directly without involving the LLM —
+		// "I just want to check something real quick." We bypass the agent
+		// loop entirely and inject the output as a synthetic user /
+		// toolResult pair so it shows up in the transcript but doesn't end
+		// up in the model's context.
 		if (text.startsWith("!") && text.length > 1) {
 			await runShellEscape(text.slice(1), bundle.toolContext.cwd, appendStatus);
 			return;

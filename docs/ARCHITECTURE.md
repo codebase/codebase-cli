@@ -31,8 +31,6 @@ now TypeScript on top of `@earendil-works/pi-agent-core` + `@earendil-works/pi-a
 - Slash commands → `src/commands/`
 
 For the rationale behind those choices, read [`.settings/tenets.md`](../.settings/tenets.md).
-The "what CC got wrong" analysis in the old blueprint is preserved in
-condensed form in [`CLAUDE.md`](../CLAUDE.md#competitive-context-claude-code).
 
 The full prior document is available in git history; `git log --follow docs/ARCHITECTURE.md`
 finds the commits.

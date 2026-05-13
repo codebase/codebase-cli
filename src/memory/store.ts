@@ -113,9 +113,8 @@ export class MemoryStore {
 	/**
 	 * MEMORY.md content trimmed to fit a system-prompt injection budget.
 	 * Line cut first (≤200 lines), then byte cut at the next newline so
-	 * we never split a list entry mid-line. Mirrors Claude Code's
-	 * truncateEntrypointContent() so injection plays nice with prompt
-	 * cache boundaries.
+	 * we never split a list entry mid-line. Keeps injection length stable
+	 * across saves so prompt-cache boundaries don't shift.
 	 */
 	truncatedIndex(): string {
 		const raw = this.index();

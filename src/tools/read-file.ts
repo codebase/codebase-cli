@@ -132,10 +132,9 @@ export function createReadFile(ctx: ToolContext): AgentTool<typeof Params, ReadF
 			const slice = allLines.slice(startIdx, endIdx);
 			// Use a literal arrow instead of \t so the gutter renders tight in
 			// every terminal (TUI / pager / web echo). cat -n's tab gets
-			// expanded to the next tab stop by most renderers, producing the
-			// ugly 8-column gap users complained about. Matches Claude Code's
-			// `${num}→${content}` format, which models are already familiar
-			// with from training data.
+			// expanded to the next tab stop by most renderers, producing an
+			// ugly 8-column gap. The `${num}→${content}` format also reads
+			// well in model context where tab-alignment is unreliable.
 			const formatted = slice.map((line, i) => `${pad6(startIdx + i + 1)}→${line}`).join("\n");
 			const tail = isPartialView ? `\n... (showing lines ${startIdx + 1}-${endIdx} of ${totalLines})` : "";
 

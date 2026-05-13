@@ -1,9 +1,6 @@
 /**
  * Schema for codebase-cli's layered config files. Forward-compatible:
  * unknown keys are preserved on read but ignored by typed consumers.
- *
- * The shape mirrors Claude Code's `~/.claude/settings.json` where
- * possible so files port over with minimal edits.
  */
 export interface Config {
 	/**

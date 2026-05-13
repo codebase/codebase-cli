@@ -17,9 +17,9 @@ interface StatusProps {
 }
 
 /**
- * Playful verbs we cycle through while the agent is thinking — the
- * Claude Code signature. They all read as "the model is working".
- * Kept ASCII-clean so they line up in any terminal font.
+ * Playful verbs we cycle through while the agent is thinking. They all
+ * read as "the model is working." Kept ASCII-clean so they line up in
+ * any terminal font.
  */
 const THINKING_VERBS = [
 	"Thinking",
@@ -55,10 +55,10 @@ const STATUS_COLOR: Record<ChatState["status"], string> = {
 };
 
 /**
- * Bottom status line — matches Claude Code's pattern: spinner + state
- * on the left, model + cwd + context % + cost on the right. Stays on
- * one row in normal terminal widths; the cwd basename is the only
- * dynamic-length piece so we always show what matters.
+ * Bottom status line — spinner + state on the left, model + cwd +
+ * context % + cost on the right. Stays on one row in normal terminal
+ * widths; the cwd basename is the only dynamic-length piece so we
+ * always show what matters.
  */
 export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
@@ -296,8 +296,8 @@ function ContextWarning({ pct }: { pct: number }) {
 /**
  * Boxed error card. Headers the error with ERROR + a one-line summary,
  * then shows the rest of the message body (if multi-line) in dim text.
- * Matches Claude Code's pattern of giving fatal errors visual weight
- * so the user doesn't miss them in a busy transcript.
+ * Fatal errors need visual weight so the user doesn't miss them in a
+ * busy transcript.
  */
 function ErrorCard({ message }: { message: string }) {
 	const lines = message.split("\n");
