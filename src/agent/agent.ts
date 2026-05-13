@@ -113,7 +113,6 @@ export interface AgentBundle {
 
 export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const cwd = opts.cwd ?? process.cwd();
-	const systemPrompt = opts.systemPrompt ?? buildSystemPrompt(cwd);
 
 	// Persisted model preference from `~/.codebase/config.json` (set via
 	// `/model`) seeds the override when the caller hasn't passed one
@@ -173,6 +172,18 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			}),
 	};
 
+	// Build tools once so we can both register them with the Agent AND
+	// inject a one-liner per tool into the system prompt — saves the model
+	// from discovering tool surface area through trial and error.
+	const tools = buildTools(toolContext);
+
+	const systemPrompt =
+		opts.systemPrompt ??
+		buildSystemPrompt({
+			cwd,
+			tools: tools.map((t) => ({ name: t.name, description: t.description })),
+		});
+
 	// MEMORY.md gets concatenated onto the system prompt at agent creation.
 	// Reload-after-save is a Phase 11 polish item.
 	const fullSystemPrompt = systemPrompt + buildMemoryAddendum(memory);
@@ -181,7 +192,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		initialState: {
 			model,
 			systemPrompt: fullSystemPrompt,
-			tools: buildTools(toolContext),
+			tools,
 			messages: opts.initialMessages ?? resumed?.messages ?? [],
 		},
 		getApiKey: () => apiKey,
