@@ -201,3 +201,60 @@ This branch is **planning only.** Code changes happen on a separate
 implementation branch once the decisions above are settled. The next step is
 the user reviewing this doc, settling the open questions, and then we cut
 `feat/pi-tui-phase-0`.
+
+---
+
+## Implementation status (as of 2026-05-13)
+
+Decisions settled: React goes, pi-tui renderer + pi-tui's Editor, flag
+named `CODEBASE_PI_TUI=1`, one-week soak target. Work landed on
+`experiment/pi-tui-migration`. Branch builds clean (`npm run check`) and
+all 663 tests pass.
+
+**Phase 0–4 (parity behind the flag): done.**
+
+| Commit | Phase | Surface |
+|---|---|---|
+| `89ab194` | 0 | Flag dispatch, runtime, stub root container |
+| `448d032` | 1 | Welcome banner, status bar, input, transcript, agent wiring |
+| `1fd968e` | 2 | Streaming pane, tools, Permission + UserQuery overlays |
+| `c1577bf` | 3 | Slash commands, type-ahead queue, bg-shell panel |
+| `9b14a9a` | 4a | Editor (multi-line + kill-ring + paste markers), persistent history, `@path` + slash autocomplete, `!cmd` |
+| `ff78642` | 4b | Model picker overlay + mid-session model swap |
+| `74ba42d` | 4c | ctx% bar, live tok/s, total cost in status bar |
+| `3c5b839` | 4d | CompactionBanner + TaskPanel |
+| `f8e3986` | 4e | Router-aware submit (chat short-circuit, plan flow) |
+
+### Not yet ported (intentionally deferred)
+
+- **`FirstRunSetup.tsx`** — the no-provider-configured wizard. The
+  pi-tui runtime currently surfaces a `Configuration error:` message to
+  stderr and exits, telling the user to run `codebase auth login`. Fine
+  for an opt-in flag; needed before default-switch.
+- **`Welcome.tsx` rich banner** — the one-line `WelcomeBanner` is
+  serviceable but the ink-era variant has cwd / resumed-from context.
+  Easy port, low priority.
+- **Suggestion ghost-text** (`usePromptSuggestion`) — pi-tui Editor
+  doesn't expose a ghost-text hook today. Either we add one upstream
+  or accept the regression for one release.
+- **Debug-input logging** — `CODEBASE_DEBUG_INPUT=1` only logs through
+  the ink path's `debug-input.ts` helper.
+
+### Phase 5 (default-switch + cleanup) — not started
+
+Deliberately stopped here. Phase 5 is destructive: it deletes
+`src/ui/`, drops `react` and `ink` from `package.json`, and flips the
+flag default. The pi-tui path has been smoke-tested via TypeScript
+build + module-import checks but not yet driven in an interactive TTY.
+
+**Suggested next step:** `CODEBASE_PI_TUI=1 codebase` in a real
+terminal, run through the common flows (chat, tools, model picker,
+`@path` attachments, `!cmd`, /resume, Ctrl-C twice to exit). If
+behavior holds, port the deferred items above, then run phase 5 in
+this order:
+
+1. Wire `FirstRunSetup` for the pi-tui path.
+2. Update `cli.tsx` to default to pi-tui; keep `CODEBASE_INK_TUI=1`
+   as the backout for one release.
+3. After a release, delete `src/ui/` and drop `react` + `ink` from
+   `package.json` + `package-lock.json`.
