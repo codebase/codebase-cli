@@ -13,6 +13,7 @@ import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
+import { ConfigStore } from "../config/store.js";
 import type { ChatState, ToolExecution } from "../types.js";
 import { EMPTY_USAGE } from "../types.js";
 import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js";
@@ -20,6 +21,7 @@ import { HistoryStore } from "../ui/history-store.js";
 import { runShellEscape } from "../ui/shell-escape.js";
 import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
+import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
 import { PermissionOverlay } from "./permission-overlay.js";
 import { ansi, editorTheme, markdownTheme, roleColor } from "./theme.js";
 import { UserQueryOverlay } from "./user-query-overlay.js";
@@ -32,14 +34,14 @@ import { UserQueryOverlay } from "./user-query-overlay.js";
  * children directly; pi-tui's line-diff renderer handles the redraw.
  */
 export class App extends Container {
-	private readonly bundle: AgentBundle;
+	private bundle: AgentBundle;
 	private readonly transcript: TranscriptView;
 	private readonly statusBar: StatusBar;
 	private inputBar: Editor | undefined;
 	private readonly bgShellPanel: BackgroundShellPanel;
 	private readonly registry: CommandRegistry;
 	private readonly historyStore: HistoryStore;
-	private readonly unsubscribe: () => void;
+	private unsubscribe: () => void;
 	private exitResolve: (() => void) | undefined;
 	private readonly exitPromise: Promise<void>;
 	private exitArmedAt = 0;
@@ -48,6 +50,7 @@ export class App extends Container {
 	private removeInputListener: (() => void) | undefined;
 	private permissionOverlay: { handle: OverlayHandle; component: PermissionOverlay } | undefined;
 	private userQueryOverlay: { handle: OverlayHandle; component: UserQueryOverlay } | undefined;
+	private modelPickerOverlay: { handle: OverlayHandle; component: ModelPickerOverlay } | undefined;
 	private removePermSubscription: (() => void) | undefined;
 	private removeUserQuerySubscription: (() => void) | undefined;
 	private tui: TUI | undefined;
@@ -284,16 +287,104 @@ export class App extends Container {
 			},
 			exit: () => this.exitResolve?.(),
 			registry: this.registry,
-			switchModel: async () => {
-				// Hot-swap not yet implemented in pi-tui path. Phase 4 item.
-				this.statusBar.note("/model switching not yet implemented on the pi-tui path");
-			},
+			switchModel: (spec) => this.switchModel(spec),
 			openModelPicker: () => {
-				this.statusBar.note("model picker not yet implemented on the pi-tui path");
+				void this.openModelPicker();
 			},
 		});
 		if (!result.handled) {
 			this.statusBar.note(`unknown command: ${text.split(/\s/)[0]}`);
+		}
+	}
+
+	/**
+	 * Show the inline model picker overlay. Fetches the available-models
+	 * list lazily on open (proxy sessions only); BYOK setups can't switch
+	 * mid-session — they pick at launch via env vars.
+	 */
+	private async openModelPicker(): Promise<void> {
+		if (!this.tui) return;
+		this.statusBar.note("loading available models…");
+		try {
+			const models = await loadAvailableModels(this.bundle);
+			this.statusBar.note("");
+			this.showModelPicker(models);
+		} catch (err) {
+			this.statusBar.note(`model list failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	private showModelPicker(models: ModelOption[]): void {
+		if (!this.tui) return;
+		this.hideModelPicker();
+		const component = new ModelPickerOverlay(
+			this.bundle.model.id,
+			this.bundle.model.provider,
+			models,
+			(spec) => {
+				this.hideModelPicker();
+				void this.switchModel(spec);
+			},
+			() => this.hideModelPicker(),
+		);
+		const handle = this.tui.showOverlay(component, { anchor: "center", width: "70%", minWidth: 50 });
+		this.tui.setFocus(component.getFocusTarget());
+		this.modelPickerOverlay = { handle, component };
+	}
+
+	private hideModelPicker(): void {
+		if (!this.modelPickerOverlay) return;
+		this.modelPickerOverlay.handle.hide();
+		this.modelPickerOverlay = undefined;
+		if (this.inputBar) this.tui?.setFocus(this.inputBar);
+	}
+
+	/**
+	 * Mid-session model swap. Aborts the current turn if active, persists
+	 * the choice, then rebuilds the agent bundle with the new model
+	 * keeping the existing transcript so the conversation continues
+	 * seamlessly. `spec === null` clears the preference and reverts to
+	 * the proxy's Codebase Auto default.
+	 */
+	private async switchModel(spec: { provider?: string; modelId: string } | null): Promise<void> {
+		try {
+			if (this.bundle.agent.signal && !this.bundle.agent.signal.aborted) {
+				try {
+					this.bundle.agent.abort();
+				} catch {
+					// Already done; not a problem.
+				}
+			}
+			try {
+				new ConfigStore({ cwd: this.bundle.toolContext.cwd }).setPreferredModel(spec ?? null);
+			} catch {
+				// Persistence is non-fatal — the in-session swap will still work.
+			}
+			const previousMessages = [...this.messages];
+			this.unsubscribe();
+			const next = createAgent({
+				cwd: this.bundle.toolContext.cwd,
+				modelOverride: spec ?? undefined,
+				initialMessages: previousMessages,
+				resume: false,
+			});
+			this.bundle = next;
+			this.unsubscribe = this.bundle.subscribe((event) => this.handleAgentEvent(event));
+			this.statusBar.setModelName(next.model.name);
+			this.statusBar.note(`Switched to ${next.model.name} (${next.model.provider}/${next.model.id}).`);
+			// Permissions + userQuery stores are also bundle-scoped, re-subscribe.
+			this.removePermSubscription?.();
+			this.removeUserQuerySubscription?.();
+			this.removePermSubscription = this.bundle.permissions.subscribe((req) => {
+				if (req) this.showPermissionOverlay(req);
+				else this.hidePermissionOverlay();
+			});
+			this.removeUserQuerySubscription = this.bundle.userQueries.subscribe((q) => {
+				if (q) this.showUserQueryOverlay(q);
+				else this.hideUserQueryOverlay();
+			});
+		} catch (err) {
+			this.statusBar.note(`model switch failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	}
 
@@ -406,10 +497,32 @@ export class App extends Container {
 		this.removeUserQuerySubscription?.();
 		this.hidePermissionOverlay();
 		this.hideUserQueryOverlay();
+		this.hideModelPicker();
 		this.bgShellPanel.dispose();
 		this.bundle.backgroundShells.killAllSync();
 		this.unsubscribe();
 	}
+}
+
+/**
+ * Fetch the /models endpoint from the proxy session. Mirrors the ink
+ * path's helper — kept inline here so the pi-tui code doesn't reach
+ * back into `src/ui/App.tsx`, which goes away in phase 5.
+ */
+async function loadAvailableModels(bundle: AgentBundle): Promise<ModelOption[]> {
+	if (bundle.source !== "proxy") {
+		throw new Error("BYOK session — use CODEBASE_PROVIDER + CODEBASE_MODEL env vars at launch to switch.");
+	}
+	const baseUrl = (bundle.model.baseUrl ?? "").replace(/\/+$/, "");
+	if (!baseUrl) throw new Error("model has no baseUrl — can't query the proxy");
+	const apiKey = await bundle.agent.getApiKey?.(bundle.model.provider);
+	if (!apiKey) throw new Error("not signed in — run `codebase auth login`");
+	const res = await fetch(`${baseUrl}/models`, {
+		headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+	});
+	if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+	const json = (await res.json()) as { models?: ModelOption[] };
+	return json.models ?? [];
 }
 
 /** Static one-line banner — only renders once at the top of the transcript. */
@@ -429,7 +542,7 @@ class WelcomeBanner extends Container {
 class StatusBar extends Container {
 	private readonly line: Text;
 	private readonly notes: Text;
-	private readonly modelName: string;
+	private modelName: string;
 	private currentStatus = "idle";
 	constructor(modelName: string) {
 		super();
@@ -442,6 +555,11 @@ class StatusBar extends Container {
 	setStatus(status: string): void {
 		this.currentStatus = status;
 		this.line.setText(this.format(status));
+		this.line.invalidate();
+	}
+	setModelName(name: string): void {
+		this.modelName = name;
+		this.line.setText(this.format(this.currentStatus));
 		this.line.invalidate();
 	}
 	/** Display a one-shot note above the status row (e.g. "Attached: x.ts", queue events). */
