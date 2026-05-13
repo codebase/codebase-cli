@@ -427,3 +427,58 @@ describe("reducer · usage merging", () => {
 		expect(s.usage.totalTokens).toBe(100);
 	});
 });
+
+describe("reducer · post-abort event suppression", () => {
+	it("ignores turn_end while status is aborted (would otherwise re-disable input)", () => {
+		let s = dispatch(freshState(), { type: "agent-event", event: { type: "agent_start" } as AgentEvent });
+		expect(s.status).toBe("thinking");
+		s = dispatch(s, { type: "abort" });
+		expect(s.status).toBe("aborted");
+		// Abandoned turn's tail arrives — must NOT flip us to thinking.
+		s = dispatch(s, { type: "agent-event", event: { type: "turn_end" } as AgentEvent });
+		expect(s.status).toBe("aborted");
+	});
+
+	it("ignores agent_end while status is aborted", () => {
+		const s = dispatch(
+			{ ...freshState(), status: "aborted" },
+			{
+				type: "agent-event",
+				event: { type: "agent_end" } as AgentEvent,
+			},
+		);
+		expect(s.status).toBe("aborted");
+	});
+
+	it("a subsequent user-prompt clears the aborted state and starts a fresh turn", () => {
+		const s = dispatch({ ...freshState(), status: "aborted" }, { type: "user-prompt", text: "try again" });
+		expect(s.status).toBe("thinking");
+	});
+
+	it("still applies tool_execution_end while aborted so spinners clear visually", () => {
+		let s = dispatch(freshState(), {
+			type: "agent-event",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "t1",
+				toolName: "shell",
+				args: {},
+			} as unknown as AgentEvent,
+		});
+		s = dispatch(s, { type: "abort" });
+		expect(s.status).toBe("aborted");
+		expect(s.tools.get("t1")?.status).toBe("running");
+		s = dispatch(s, {
+			type: "agent-event",
+			event: {
+				type: "tool_execution_end",
+				toolCallId: "t1",
+				result: "interrupted",
+				isError: true,
+			} as unknown as AgentEvent,
+		});
+		expect(s.tools.get("t1")?.status).toBe("error");
+		// Status itself stays "aborted" — we don't let the abandoned turn flip it.
+		expect(s.status).toBe("aborted");
+	});
+});

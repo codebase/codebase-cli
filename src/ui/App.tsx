@@ -1,4 +1,4 @@
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
@@ -218,11 +218,14 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 	};
 
 	// Ctrl-C semantics:
+	//   • Any open overlay (Permission, UserQuery) gets dismissed first
+	//     so the user is never trapped behind a prompt with no escape.
 	//   • While the agent is busy: abort the turn. Stays in the app.
 	//   • A second Ctrl-C within DOUBLE_TAP_MS exits, regardless of
 	//     whether the previous press aborted or just landed a hint.
 	//     "Twice real fast" is universally understood as "I want out."
-	//   • While idle: first press posts a hint + arms the exit window.
+	//   • While idle at the prompt: first press posts a hint + arms the
+	//     exit window so the second tap exits.
 	//
 	// 1000ms is "real fast" — wide enough that intentional double-taps
 	// register, tight enough that mashing Ctrl-C twice while flustered
@@ -236,6 +239,29 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			return;
 		}
 		exitTimerRef.deadline = now + DOUBLE_TAP_MS;
+
+		// Overlays first: dismissing them brings the user back to a usable
+		// input row without exiting the agent loop. Permission denies the
+		// pending request (and any tool waiting on it surfaces the denial
+		// to the model as a normal tool error); UserQuery cancels the
+		// pending question.
+		if (permRequest) {
+			bundle.permissions.respond(permRequest.id, "deny");
+			if (busy) {
+				bundle.agent.abort();
+				dispatch({ type: "abort" });
+			}
+			return;
+		}
+		if (userQuery) {
+			bundle.userQueries.cancel(userQuery.id);
+			if (busy) {
+				bundle.agent.abort();
+				dispatch({ type: "abort" });
+			}
+			return;
+		}
+
 		if (busy) {
 			bundle.agent.abort();
 			dispatch({ type: "abort" });
@@ -246,6 +272,14 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		}
 		appendStatus("Press Ctrl-C again to exit.");
 	};
+
+	// Top-level Ctrl-C capture. Fires regardless of which child component
+	// is mounted (Input, Permission, UserQuery) so the user always has a
+	// way out. The per-component handlers stay for their other shortcuts
+	// (Esc to deny, etc.) but Ctrl-C now routes through here.
+	useInput((input, key) => {
+		if (key.ctrl && input === "c") handleAbort();
+	});
 
 	return (
 		<Box flexDirection="column">

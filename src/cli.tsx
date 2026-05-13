@@ -85,7 +85,11 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	// collapses the content into a placeholder. terminal-restore.ts emits
 	// the matching disable sequence on every exit path.
 	if (process.stdout.isTTY) process.stdout.write("\x1b[?2004h");
-	const instance = render(<App />);
+	// Disable ink's default ctrl-c handling. ink unmounts on ctrl-c but
+	// doesn't exit the process — leaves the user staring at a frozen
+	// terminal. We handle ctrl-c ourselves: first press aborts the agent
+	// and any in-flight overlay, a second press within 1s exits cleanly.
+	const instance = render(<App />, { exitOnCtrlC: false });
 	installTerminalRestoreHandlers(instance);
 	instance.waitUntilExit().catch(() => {
 		process.exit(1);

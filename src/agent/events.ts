@@ -64,6 +64,14 @@ export function reducer(state: ChatState, action: Action): ChatState {
 			return initialState(state.model);
 
 		case "agent-event":
+			// When the user has aborted a turn, ignore the abandoned turn's
+			// tail events that would flip status back to thinking/idle (and
+			// thus re-disable the input). The next user-prompt action resets
+			// status cleanly. Tool execution and message events still apply
+			// so any in-flight spinners and partial messages settle visually.
+			if (state.status === "aborted" && (action.event.type === "turn_end" || action.event.type === "agent_end")) {
+				return state;
+			}
 			return applyAgentEvent(state, action.event);
 	}
 }

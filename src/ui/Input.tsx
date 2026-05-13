@@ -147,10 +147,10 @@ export function Input({
 		// we can diagnose "key X doesn't work" reports from real terminals.
 		logInputEvent(input, key);
 
-		if (key.ctrl && input === "c") {
-			onAbort?.();
-			return;
-		}
+		// Ctrl-C is owned by App's top-level useInput (it needs to fire
+		// even when Input is hidden behind an overlay). Swallow it here
+		// so we don't double-dispatch onAbort.
+		if (key.ctrl && input === "c") return;
 
 		if (disabled) return;
 
