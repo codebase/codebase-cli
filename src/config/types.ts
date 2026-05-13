@@ -21,6 +21,19 @@ export interface Config {
 		deny?: string[];
 	};
 
+	/**
+	 * Persisted model preference. When set, used as the model override on
+	 * proxy/OAuth sessions instead of "Codebase Auto". Written by /model
+	 * (without --session) and read by resolveConfig at agent start.
+	 *
+	 * `provider` is optional — when omitted, the modelId is sent through
+	 * the proxy verbatim and the backend's registry routes it.
+	 */
+	model?: {
+		provider?: string;
+		modelId: string;
+	};
+
 	/** Forward-compatibility: unknown keys are preserved on load. */
 	[key: string]: unknown;
 }

@@ -127,3 +127,58 @@ describe("mergeConfig", () => {
 		expect(mergeConfig(base, overlay).permissions?.allow).toEqual(["x"]);
 	});
 });
+
+describe("ConfigStore — model preference persistence", () => {
+	let home: string;
+	let cwd: string;
+
+	beforeEach(() => {
+		home = mkdtempSync(join(tmpdir(), "cfg-model-home-"));
+		cwd = mkdtempSync(join(tmpdir(), "cfg-model-cwd-"));
+	});
+
+	afterEach(() => {
+		rmSync(home, { recursive: true, force: true });
+		rmSync(cwd, { recursive: true, force: true });
+	});
+
+	it("returns undefined when no preference has been saved", () => {
+		const store = new ConfigStore({ home, cwd });
+		expect(store.preferredModel()).toBeUndefined();
+	});
+
+	it("persists a model preference and reads it back on a fresh store", () => {
+		const a = new ConfigStore({ home, cwd });
+		a.setPreferredModel({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+		const b = new ConfigStore({ home, cwd });
+		expect(b.preferredModel()).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+	});
+
+	it("persists a provider-less spec (modelId only)", () => {
+		new ConfigStore({ home, cwd }).setPreferredModel({ modelId: "MiniMax-M2.7" });
+		expect(new ConfigStore({ home, cwd }).preferredModel()).toEqual({ modelId: "MiniMax-M2.7" });
+	});
+
+	it("clears the preference when passed null", () => {
+		const store = new ConfigStore({ home, cwd });
+		store.setPreferredModel({ provider: "groq", modelId: "llama-3.3-70b-versatile" });
+		store.setPreferredModel(null);
+		expect(store.preferredModel()).toBeUndefined();
+	});
+
+	it("preserves unrelated user-config fields when writing model", () => {
+		mkdirSync(join(home, ".codebase"), { recursive: true });
+		writeFileSync(
+			join(home, ".codebase", "config.json"),
+			JSON.stringify({
+				permissions: { allow: ["read_file"] },
+				unknownFutureField: "must survive",
+			}),
+		);
+		new ConfigStore({ home, cwd }).setPreferredModel({ modelId: "MiniMax-M2.7" });
+		const store = new ConfigStore({ home, cwd });
+		expect(store.preferredModel()).toEqual({ modelId: "MiniMax-M2.7" });
+		expect(store.allowPatterns()).toEqual(["read_file"]);
+		expect((store.load() as { unknownFutureField: string }).unknownFutureField).toBe("must survive");
+	});
+});

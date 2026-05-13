@@ -6,6 +6,7 @@ import { initialState, reducer } from "../agent/events.js";
 import { routeUserInput } from "../agent/router.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
+import { ConfigStore } from "../config/store.js";
 import type { PermissionRequest } from "../permissions/store.js";
 import { runPlanFlow } from "../plan/run-flow.js";
 import type { Task } from "../tools/task-store.js";
@@ -17,6 +18,7 @@ import { FirstRunSetup } from "./FirstRunSetup.js";
 import { HistoryStore } from "./history-store.js";
 import { Input, type InputHandle } from "./Input.js";
 import { MessageList } from "./MessageList.js";
+import { type ModelOption, ModelPicker } from "./ModelPicker.js";
 import { Permission } from "./Permission.js";
 import { Status } from "./Status.js";
 import { runShellEscape } from "./shell-escape.js";
@@ -69,20 +71,25 @@ export function App() {
 		);
 	}
 
-	return <ChatApp bundle={bundle} onExit={exit} />;
+	return <ChatApp initialBundle={bundle} onExit={exit} />;
 }
 
 interface ChatAppProps {
-	bundle: AgentBundle;
+	initialBundle: AgentBundle;
 	onExit: () => void;
 }
 
-function ChatApp({ bundle, onExit }: ChatAppProps) {
+function ChatApp({ initialBundle, onExit }: ChatAppProps) {
+	// Bundle is state, not a memo: /model rebuilds the agent in place and
+	// swaps the bundle so the active conversation continues against a new
+	// model. Subscription effects below depend on `bundle`, so they
+	// re-attach automatically each swap.
+	const [bundle, setBundle] = useState<AgentBundle>(initialBundle);
 	const [state, dispatch] = useReducer(
 		reducer,
 		initialState(
-			{ provider: bundle.model.provider, id: bundle.model.id, name: bundle.model.name },
-			bundle.resumedMessages,
+			{ provider: initialBundle.model.provider, id: initialBundle.model.id, name: initialBundle.model.name },
+			initialBundle.resumedMessages,
 		),
 	);
 	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
@@ -98,6 +105,7 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		});
 	const [tasks, setTasks] = useState<readonly Task[]>(() => bundle.toolContext.tasks.list());
 	const inputRef = useRef<InputHandle | null>(null);
+	const [modelPickerOpen, setModelPickerOpen] = useState(false);
 
 	const registry = useMemo(() => {
 		const reg = new CommandRegistry();
@@ -173,6 +181,8 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 				},
 				exit: onExit,
 				registry,
+				switchModel,
+				openModelPicker: () => setModelPickerOpen(true),
 			});
 			if (result.handled) return;
 		}
@@ -280,6 +290,43 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 		appendStatus("Press Ctrl-C again to exit.");
 	};
 
+	/**
+	 * Mid-session model swap. Aborts the current run if active, captures
+	 * the transcript, then rebuilds the agent bundle with the new model
+	 * and the existing messages so the conversation continues seamlessly
+	 * against the new model. `spec === null` resets to the default
+	 * (Codebase Auto for OAuth users, env-resolved default otherwise).
+	 */
+	const switchModel = async (spec: { provider?: string; modelId: string } | null): Promise<void> => {
+		try {
+			if (bundle.agent.signal && !bundle.agent.signal.aborted) {
+				bundle.agent.abort();
+			}
+			// Persist the choice so the next launch starts on the same model.
+			// Null clears the saved preference and reverts to the default
+			// (Codebase Auto for proxy sessions).
+			try {
+				new ConfigStore({ cwd: bundle.toolContext.cwd }).setPreferredModel(spec ?? null);
+			} catch {
+				// Persistence failure is non-fatal; the in-session swap still works.
+			}
+			const next = createAgent({
+				cwd: bundle.toolContext.cwd,
+				modelOverride: spec ?? undefined,
+				initialMessages: state.messages,
+				resume: false,
+			});
+			setBundle(next);
+			dispatch({
+				type: "model-switched",
+				model: { provider: next.model.provider, id: next.model.id, name: next.model.name },
+			});
+			appendStatus(`Switched to ${next.model.name} (${next.model.provider}/${next.model.id}).`);
+		} catch (err) {
+			appendStatus(`model switch failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	};
+
 	// Top-level Ctrl-C capture. Fires regardless of which child component
 	// is mounted (Input, Permission, UserQuery) so the user always has a
 	// way out. The per-component handlers stay for their other shortcuts
@@ -330,6 +377,17 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 					onAnswer={(answer) => bundle.userQueries.respond(userQuery.id, answer)}
 					onCancel={() => bundle.userQueries.cancel(userQuery.id)}
 				/>
+			) : modelPickerOpen ? (
+				<ModelPicker
+					currentId={bundle.model.id}
+					currentProvider={bundle.model.provider}
+					loadModels={() => loadAvailableModels(bundle)}
+					onSelect={(spec) => {
+						setModelPickerOpen(false);
+						void switchModel(spec);
+					}}
+					onCancel={() => setModelPickerOpen(false)}
+				/>
 			) : (
 				<Input
 					ref={inputRef}
@@ -345,6 +403,28 @@ function ChatApp({ bundle, onExit }: ChatAppProps) {
 			)}
 		</Box>
 	);
+}
+
+/**
+ * Fetch the user's available models from the inference proxy. Used by
+ * the ModelPicker overlay. Throws on auth / network / non-2xx so the
+ * overlay can render its error state instead of pretending the list is
+ * empty.
+ */
+async function loadAvailableModels(bundle: AgentBundle): Promise<ModelOption[]> {
+	if (bundle.source !== "proxy") {
+		throw new Error("BYOK session — use CODEBASE_PROVIDER + CODEBASE_MODEL env vars at launch to switch.");
+	}
+	const baseUrl = (bundle.model.baseUrl ?? "").replace(/\/+$/, "");
+	if (!baseUrl) throw new Error("model has no baseUrl — can't query the proxy");
+	const apiKey = await bundle.agent.getApiKey?.(bundle.model.provider);
+	if (!apiKey) throw new Error("not signed in — run `codebase auth login`");
+	const res = await fetch(`${baseUrl}/models`, {
+		headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+	});
+	if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+	const json = (await res.json()) as { models?: ModelOption[] };
+	return json.models ?? [];
 }
 
 /** Extract the user-visible text from a content array (image messages). */

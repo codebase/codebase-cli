@@ -504,3 +504,25 @@ describe("reducer · post-abort event suppression", () => {
 		expect(s.status).toBe("aborted");
 	});
 });
+
+describe("reducer · model-switched", () => {
+	it("replaces the model, clears tools/streaming/error, sets status idle, KEEPS messages", () => {
+		const prior: ChatState = {
+			...freshState(),
+			messages: [{ role: "user", content: "preserved", timestamp: 1 } as AgentMessage],
+			tools: new Map([["t1", { id: "t1", name: "shell", args: {}, status: "running", startedAt: 1 }]]),
+			streaming: { role: "assistant" } as AgentMessage,
+			status: "streaming",
+			error: "old error",
+		};
+		const newModel = { provider: "anthropic", id: "claude-sonnet-4-5", name: "Sonnet 4.5" };
+		const s = dispatch(prior, { type: "model-switched", model: newModel });
+		expect(s.model).toEqual(newModel);
+		expect(s.tools.size).toBe(0);
+		expect(s.streaming).toBeUndefined();
+		expect(s.status).toBe("idle");
+		expect(s.error).toBeUndefined();
+		// Transcript continues across model swap.
+		expect(s.messages).toHaveLength(1);
+	});
+});

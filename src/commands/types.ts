@@ -17,6 +17,18 @@ export interface CommandContext {
 	 * needing to import every command's metadata separately.
 	 */
 	registry: CommandRegistry;
+	/**
+	 * Mid-session model swap. `spec === null` resets to the default model
+	 * (Codebase Auto for proxy users). Aborts the current turn if active,
+	 * rebuilds the agent with the new model, preserves the transcript.
+	 */
+	switchModel: (spec: { provider?: string; modelId: string } | null) => Promise<void>;
+	/**
+	 * Open the inline interactive model picker. Triggered by `/model` with
+	 * no args. The picker fetches the available-models list, renders an
+	 * arrow-navigable overlay, and calls back into switchModel on Enter.
+	 */
+	openModelPicker: () => void;
 }
 
 export interface CommandResult {

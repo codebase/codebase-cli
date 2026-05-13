@@ -64,6 +64,20 @@ export interface CreateAgentOptions {
 	 * Production code never sets this.
 	 */
 	configOverride?: { model: ResolvedConfig["model"]; apiKey: string; source: ResolvedConfig["source"] };
+	/**
+	 * Runtime model override for proxy/OAuth sessions. Lets the user swap
+	 * models via /model without restarting. Format: `{ provider?, modelId }`.
+	 * Provider is optional — when omitted, the model id is sent verbatim
+	 * through the proxy and the backend's registry resolves it.
+	 */
+	modelOverride?: { provider?: string; modelId: string };
+	/**
+	 * Seed the agent's transcript from an in-memory message list rather
+	 * than from `~/.codebase/sessions/`. Used by the runtime model switch:
+	 * we rebuild the agent with the existing conversation so the user
+	 * doesn't lose context, but we don't want to disk-roundtrip.
+	 */
+	initialMessages?: AgentMessage[];
 }
 
 export interface AgentBundle {
@@ -98,9 +112,18 @@ export interface AgentBundle {
 }
 
 export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
-	const { model, apiKey, source } = opts.configOverride ?? resolveConfig();
 	const cwd = opts.cwd ?? process.cwd();
 	const systemPrompt = opts.systemPrompt ?? buildSystemPrompt(cwd);
+
+	// Persisted model preference from `~/.codebase/config.json` (set via
+	// `/model`) seeds the override when the caller hasn't passed one
+	// explicitly. Explicit runtime overrides still win.
+	const persistedConfig = new ConfigStore({ cwd });
+	const persistedModel = persistedConfig.preferredModel();
+	const effectiveOverride =
+		opts.modelOverride ??
+		(persistedModel?.modelId ? { provider: persistedModel.provider, modelId: persistedModel.modelId } : undefined);
+	const { model, apiKey, source } = opts.configOverride ?? resolveConfig({ modelOverride: effectiveOverride });
 
 	// OAuth-sourced credentials rotate ~hourly; build a refresh-aware getter
 	// so the agent never sends a stale access token after the first refresh
@@ -111,7 +134,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			: null;
 	const getApiKey = tokenManager ? () => tokenManager.getAccessToken() : () => apiKey;
 
-	const config = new ConfigStore({ cwd });
+	const config = persistedConfig;
 	const permissions = new PermissionStore({
 		allowPatterns: config.allowPatterns(),
 		denyPatterns: config.denyPatterns(),
@@ -159,7 +182,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			model,
 			systemPrompt: fullSystemPrompt,
 			tools: buildTools(toolContext),
-			messages: resumed?.messages ?? [],
+			messages: opts.initialMessages ?? resumed?.messages ?? [],
 		},
 		getApiKey: () => apiKey,
 		transformContext: async (messages, signal) => {
@@ -321,6 +344,6 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		diagnostics,
 		subscribe,
 		resumedFrom: resumed ? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length } : undefined,
-		resumedMessages: resumed?.messages ?? [],
+		resumedMessages: opts.initialMessages ?? resumed?.messages ?? [],
 	};
 }

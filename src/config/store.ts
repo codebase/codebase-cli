@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type Config, EMPTY_CONFIG } from "./types.js";
 
 export interface ConfigStoreOptions {
@@ -69,6 +69,30 @@ export class ConfigStore {
 	/** Convenience: get the resolved permission deny patterns. */
 	denyPatterns(): readonly string[] {
 		return this.load().permissions?.deny ?? [];
+	}
+
+	/** Convenience: get the persisted model preference, if any. */
+	preferredModel(): Config["model"] {
+		return this.load().model;
+	}
+
+	/**
+	 * Persist a model preference at the *user* layer (`~/.codebase/config.json`).
+	 * Pass `null` to clear. Reads-then-writes the user file so unrelated
+	 * fields are preserved. Cache is invalidated; next load() picks up the
+	 * change.
+	 */
+	setPreferredModel(model: Config["model"] | null): void {
+		const existing = readLayer(this.userPath) ?? { ...EMPTY_CONFIG };
+		const next: Config = { ...existing };
+		if (model === null) {
+			delete next.model;
+		} else {
+			next.model = model;
+		}
+		mkdirSync(dirname(this.userPath), { recursive: true });
+		writeFileSync(this.userPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o644 });
+		this.invalidate();
 	}
 }
 

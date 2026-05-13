@@ -8,7 +8,9 @@ export type Action =
 	| { type: "chat-reply"; text: string }
 	| { type: "abort" }
 	| { type: "error"; message: string }
-	| { type: "reset" };
+	| { type: "reset" }
+	/** Mid-session model swap. Keeps the transcript, refreshes model + clears agent-specific bits. */
+	| { type: "model-switched"; model: ChatState["model"] };
 
 export function initialState(model: ChatState["model"], messages: AgentMessage[] = []): ChatState {
 	return {
@@ -62,6 +64,19 @@ export function reducer(state: ChatState, action: Action): ChatState {
 
 		case "reset":
 			return initialState(state.model);
+
+		case "model-switched":
+			return {
+				...state,
+				model: action.model,
+				// New agent instance can't honor old tool execution state.
+				tools: new Map(),
+				streaming: undefined,
+				// Status flips to idle so the input row enables immediately
+				// even if the old agent's tail events haven't fully drained.
+				status: "idle",
+				error: undefined,
+			};
 
 		case "agent-event":
 			// When the user has aborted a turn, ignore the abandoned turn's

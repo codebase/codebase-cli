@@ -58,12 +58,20 @@ export class ConfigError extends Error {}
 export interface ResolveConfigOptions {
 	env?: NodeJS.ProcessEnv;
 	credentials?: CredentialsStore;
+	/**
+	 * Runtime model override. When set on an OAuth/proxy session, replaces
+	 * the resolved model id (and optionally provider) so a user can swap
+	 * mid-session via `/model <id>` without restarting. Ignored when no
+	 * proxy session is active.
+	 */
+	modelOverride?: { provider?: string; modelId: string };
 }
 
 export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOptions = process.env): ResolvedConfig {
 	const opts = isProcessEnv(envOrOpts) ? { env: envOrOpts } : envOrOpts;
 	const env = opts.env ?? process.env;
 	const credentials = opts.credentials ?? new CredentialsStore();
+	const override = opts.modelOverride;
 
 	// 1. Saved credentials. Routing depends on the source:
 	//    - codebase / manual → proxy through codebase.design
@@ -75,7 +83,7 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 			const byok = buildByokConfig(creds.provider as KnownProvider, creds.accessToken);
 			if (byok) return byok;
 		} else if (useProxy) {
-			const proxied = buildProxiedConfig(env, creds.accessToken);
+			const proxied = buildProxiedConfig(env, creds.accessToken, override);
 			if (proxied) return proxied;
 		}
 	}
@@ -165,21 +173,28 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
  * the bearer scope on the token, so this works for any model the
  * user's account has access to.
  */
-function buildProxiedConfig(env: NodeJS.ProcessEnv, accessToken: string): ResolvedConfig | null {
-	const explicitProvider = env.CODEBASE_PROVIDER as KnownProvider | undefined;
-	const explicitModel = env.CODEBASE_MODEL;
+function buildProxiedConfig(
+	env: NodeJS.ProcessEnv,
+	accessToken: string,
+	override?: { provider?: string; modelId: string },
+): ResolvedConfig | null {
+	// Runtime override (set via /model) wins over env vars wins over the default.
+	const explicitProvider = (override?.provider ?? env.CODEBASE_PROVIDER) as KnownProvider | undefined;
+	const explicitModel = override?.modelId ?? env.CODEBASE_MODEL;
 	const proxyBase = (env.CODEBASE_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE).replace(/\/+$/, "");
 
-	// Default: "Codebase Auto" — synthesized openai-compat model.
-	// Can't use pi-ai's registry here because "codebase" isn't a
-	// KnownProvider; clone a known chat-completions model and override.
+	// No provider + no model → "Codebase Auto" (the routed default).
+	// No provider + an explicit model id → synthesize an openai-compat model
+	// against that id. Pi-ai dispatches by `model.id` in the request body;
+	// the proxy's model registry is the gatekeeper for what actually exists.
 	if (!explicitProvider) {
 		const template = getModel("groq", "llama-3.3-70b-versatile") as Model<string> | undefined;
 		if (!template) return null;
+		const isDefault = !explicitModel;
 		const model: Model<string> = {
 			...template,
-			id: "MiniMax-M2.7",
-			name: "Codebase Auto",
+			id: explicitModel ?? "MiniMax-M2.7",
+			name: isDefault ? "Codebase Auto" : (explicitModel ?? "Codebase Auto"),
 			baseUrl: proxyBase,
 			// Override provider so the status bar and /model don't lie about
 			// where this is served from. pi-ai uses `provider` mainly for

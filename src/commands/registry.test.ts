@@ -10,6 +10,8 @@ function fakeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
 		clearDisplay: vi.fn(),
 		exit: vi.fn(),
 		registry: new CommandRegistry(),
+		switchModel: vi.fn(async () => {}),
+		openModelPicker: vi.fn(),
 		...overrides,
 	};
 }
