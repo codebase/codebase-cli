@@ -2,9 +2,16 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { Container, Markdown, type OverlayHandle, Input as PiInput, Text, type TUI } from "@mariozechner/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
+import { BUILTIN_COMMANDS } from "../commands/builtins.js";
+import { CommandRegistry } from "../commands/registry.js";
+import type { ChatState, ToolExecution } from "../types.js";
+import { EMPTY_USAGE } from "../types.js";
+import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js";
 import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
+import { BackgroundShellPanel } from "./background-shell-panel.js";
 import { PermissionOverlay } from "./permission-overlay.js";
 import { ansi, markdownTheme, roleColor } from "./theme.js";
+import { UserQueryOverlay } from "./user-query-overlay.js";
 
 /**
  * Root pi-tui component. Mirrors ink/App.tsx in responsibilities — agent
@@ -18,6 +25,8 @@ export class App extends Container {
 	private readonly transcript: TranscriptView;
 	private readonly statusBar: StatusBar;
 	private readonly inputBar: PiInput;
+	private readonly bgShellPanel: BackgroundShellPanel;
+	private readonly registry: CommandRegistry;
 	private readonly unsubscribe: () => void;
 	private exitResolve: (() => void) | undefined;
 	private readonly exitPromise: Promise<void>;
@@ -26,8 +35,17 @@ export class App extends Container {
 	private streamingMessage: AgentMessage | undefined;
 	private removeInputListener: (() => void) | undefined;
 	private permissionOverlay: { handle: OverlayHandle; component: PermissionOverlay } | undefined;
+	private userQueryOverlay: { handle: OverlayHandle; component: UserQueryOverlay } | undefined;
 	private removePermSubscription: (() => void) | undefined;
+	private removeUserQuerySubscription: (() => void) | undefined;
 	private tui: TUI | undefined;
+	/** Shadow state — the subset of ChatState our slash commands actually read. */
+	private readonly messages: AgentMessage[] = [];
+	private readonly tools = new Map<string, ToolExecution>();
+	private status: ChatState["status"] = "idle";
+	private usage = EMPTY_USAGE;
+	/** Prompts typed while busy; drained one-at-a-time when the agent goes idle. */
+	private queuedPrompts: string[] = [];
 	/** Has the env reminder been prepended to a turn this session yet? */
 	private envInjected = false;
 
@@ -41,9 +59,11 @@ export class App extends Container {
 		// If we resumed, the saved transcript already includes env context
 		// from the prior session — don't re-inject on first turn.
 		if (this.bundle.resumedMessages.length > 0) this.envInjected = true;
+		this.messages.push(...this.bundle.resumedMessages);
 
 		this.transcript = new TranscriptView(this.bundle.resumedMessages);
 		this.statusBar = new StatusBar(this.bundle.model.name);
+		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells);
 		this.inputBar = new PiInput();
 		this.inputBar.onSubmit = (text) => {
 			this.inputBar.setValue("");
@@ -51,8 +71,12 @@ export class App extends Container {
 			void this.handleSubmit(text);
 		};
 
+		this.registry = new CommandRegistry();
+		this.registry.registerAll(BUILTIN_COMMANDS);
+
 		this.addChild(new WelcomeBanner(this.bundle.model.name));
 		this.addChild(this.transcript);
+		this.addChild(this.bgShellPanel);
 		this.addChild(this.statusBar);
 		this.addChild(this.inputBar);
 
@@ -69,12 +93,36 @@ export class App extends Container {
 		this.tui = tui;
 		tui.setFocus(this.inputBar);
 		this.removeInputListener = tui.addInputListener((data) => this.handleGlobalInput(data));
-		// Permission requests arrive asynchronously from tool execution.
-		// Show the overlay when a request lands; dismiss when answered.
+		// Permission + UserQuery requests arrive asynchronously from tool
+		// execution. Show the overlay when one lands; dismiss when answered.
 		this.removePermSubscription = this.bundle.permissions.subscribe((req) => {
 			if (req) this.showPermissionOverlay(req);
 			else this.hidePermissionOverlay();
 		});
+		this.removeUserQuerySubscription = this.bundle.userQueries.subscribe((q) => {
+			if (q) this.showUserQueryOverlay(q);
+			else this.hideUserQueryOverlay();
+		});
+	}
+
+	private showUserQueryOverlay(q: import("../user-queries/store.js").UserQuery): void {
+		if (!this.tui) return;
+		this.hideUserQueryOverlay();
+		const component = new UserQueryOverlay(
+			q,
+			(answer) => this.bundle.userQueries.respond(q.id, answer),
+			() => this.bundle.userQueries.cancel(q.id),
+		);
+		const handle = this.tui.showOverlay(component, { anchor: "center", width: "70%", minWidth: 50 });
+		this.tui.setFocus(component.getFocusTarget());
+		this.userQueryOverlay = { handle, component };
+	}
+
+	private hideUserQueryOverlay(): void {
+		if (!this.userQueryOverlay) return;
+		this.userQueryOverlay.handle.hide();
+		this.userQueryOverlay = undefined;
+		this.tui?.setFocus(this.inputBar);
 	}
 
 	private showPermissionOverlay(req: import("../permissions/store.js").PermissionRequest): void {
@@ -135,33 +183,112 @@ export class App extends Container {
 	private async handleSubmit(text: string): Promise<void> {
 		const trimmed = text.trim();
 		if (!trimmed) return;
-		// Inject env on the first agent turn of a fresh session so the
-		// model sees cwd / git / date. Stays out of the system prompt to
-		// keep the prompt cache intact.
-		let promptText = trimmed;
+
+		// Slash commands and `!cmd` shell escapes bypass the agent and the
+		// type-ahead queue. They run immediately so the user never has to
+		// wait for a turn to finish before, say, /help or !git status.
+		if (trimmed.startsWith("/")) {
+			await this.dispatchSlash(trimmed);
+			return;
+		}
+		if (trimmed.startsWith("!") && trimmed.length > 1) {
+			// !cmd escape — phase 3 just surfaces the unsupported notice;
+			// porting runShellEscape's child-process logic is a phase-4 item.
+			this.statusBar.note("!cmd not yet wired in pi-tui path");
+			return;
+		}
+
+		// Mid-turn typing: agent is busy → queue the prompt for after the
+		// current turn ends. Drained automatically when status flips back
+		// to idle.
+		if (this.busy) {
+			this.queuedPrompts.push(trimmed);
+			const preview = trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
+			this.statusBar.note(`↩ queued (${this.queuedPrompts.length}): ${preview}`);
+			return;
+		}
+
+		// `@path` tokens auto-attach file contents to the prompt so the
+		// user doesn't have to spend a tool turn just to put a file in
+		// context.
+		const attachments = collectAttachments(trimmed, this.bundle.toolContext.cwd);
+		const augmented = attachments.length > 0 ? buildAttachmentPrompt(trimmed, attachments) : trimmed;
+		if (attachments.length > 0) {
+			this.statusBar.note(`Attached: ${attachments.map((a) => a.relPath).join(", ")}`);
+		}
+
+		let promptText = augmented;
 		if (!this.envInjected) {
-			promptText = `${buildEnvironmentReminder(this.bundle.toolContext.cwd)}\n\n${trimmed}`;
+			promptText = `${buildEnvironmentReminder(this.bundle.toolContext.cwd)}\n\n${augmented}`;
 			this.envInjected = true;
 		}
+		const userMsg: AgentMessage = { role: "user", content: trimmed, timestamp: Date.now() };
+		this.messages.push(userMsg);
 		this.transcript.appendUserMessage(trimmed);
 		this.bundle.agent.prompt(promptText).catch(() => {
-			// Errors are surfaced via the message_end / agent_end event path;
-			// the .prompt() promise's own rejection isn't useful here.
+			// Errors surface via agent_end with errorMessage; rejection here isn't useful.
 		});
+	}
+
+	private async dispatchSlash(text: string): Promise<void> {
+		const result = await this.registry.dispatch(text, {
+			bundle: this.bundle,
+			state: this.buildChatStateShadow(),
+			emit: (line) => this.statusBar.note(line),
+			clearDisplay: () => {
+				this.transcript.clear();
+				this.messages.length = 0;
+			},
+			exit: () => this.exitResolve?.(),
+			registry: this.registry,
+			switchModel: async () => {
+				// Hot-swap not yet implemented in pi-tui path. Phase 4 item.
+				this.statusBar.note("/model switching not yet implemented on the pi-tui path");
+			},
+			openModelPicker: () => {
+				this.statusBar.note("model picker not yet implemented on the pi-tui path");
+			},
+		});
+		if (!result.handled) {
+			this.statusBar.note(`unknown command: ${text.split(/\s/)[0]}`);
+		}
+	}
+
+	private buildChatStateShadow(): ChatState {
+		return {
+			messages: [...this.messages],
+			tools: new Map(this.tools),
+			status: this.status,
+			usage: this.usage,
+			model: {
+				provider: this.bundle.model.provider,
+				id: this.bundle.model.id,
+				name: this.bundle.model.name,
+			},
+		};
+	}
+
+	private maybeDrainQueue(): void {
+		if (this.busy || this.queuedPrompts.length === 0) return;
+		const next = this.queuedPrompts.shift();
+		if (next) void this.handleSubmit(next);
 	}
 
 	private handleAgentEvent(event: AgentEvent): void {
 		switch (event.type) {
 			case "agent_start":
 				this.busy = true;
+				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
 				break;
 			case "turn_start":
+				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
 				break;
 			case "message_start":
 				if (event.message.role === "assistant") {
 					this.streamingMessage = event.message;
+					this.status = "streaming";
 					this.transcript.setStreaming(event.message);
 					this.statusBar.setStatus("writing");
 				}
@@ -174,23 +301,58 @@ export class App extends Container {
 				break;
 			case "message_end":
 				if (event.message.role !== "user") {
+					this.messages.push(event.message);
 					this.transcript.appendMessage(event.message);
 					this.streamingMessage = undefined;
 					this.transcript.setStreaming(undefined);
+					if ("usage" in event.message && event.message.usage) {
+						this.usage = mergeUsage(this.usage, event.message.usage);
+					}
 				}
 				break;
-			case "tool_execution_start":
+			case "tool_execution_start": {
+				this.status = "tool";
+				const exec: ToolExecution = {
+					id: event.toolCallId,
+					name: event.toolName,
+					args: event.args,
+					status: "running",
+					startedAt: Date.now(),
+				};
+				this.tools.set(exec.id, exec);
 				this.statusBar.setStatus(`tool: ${event.toolName}`);
 				break;
-			case "tool_execution_end":
+			}
+			case "tool_execution_update": {
+				const existing = this.tools.get(event.toolCallId);
+				if (existing) {
+					this.tools.set(event.toolCallId, { ...existing, result: stringifyResult(event.partialResult) });
+				}
+				break;
+			}
+			case "tool_execution_end": {
+				const existing = this.tools.get(event.toolCallId);
+				if (existing) {
+					this.tools.set(event.toolCallId, {
+						...existing,
+						status: event.isError ? "error" : "done",
+						endedAt: Date.now(),
+						result: stringifyResult(event.result),
+						error: event.isError ? stringifyResult(event.result) : undefined,
+					});
+				}
 				this.statusBar.setStatus("thinking");
 				break;
+			}
 			case "turn_end":
+				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
 				break;
 			case "agent_end":
 				this.busy = false;
+				this.status = "idle";
 				this.statusBar.setStatus("idle");
+				this.maybeDrainQueue();
 				break;
 		}
 	}
@@ -198,7 +360,11 @@ export class App extends Container {
 	dispose(): void {
 		this.removeInputListener?.();
 		this.removePermSubscription?.();
+		this.removeUserQuerySubscription?.();
 		this.hidePermissionOverlay();
+		this.hideUserQueryOverlay();
+		this.bgShellPanel.dispose();
+		this.bundle.backgroundShells.killAllSync();
 		this.unsubscribe();
 	}
 }
@@ -219,19 +385,29 @@ class WelcomeBanner extends Container {
  */
 class StatusBar extends Container {
 	private readonly line: Text;
+	private readonly notes: Text;
 	private readonly modelName: string;
+	private currentStatus = "idle";
 	constructor(modelName: string) {
 		super();
 		this.modelName = modelName;
-		this.line = new Text(this.format("idle"), 1, 0);
+		this.line = new Text(this.format(this.currentStatus), 1, 0);
+		this.notes = new Text("", 1, 0);
+		this.addChild(this.notes);
 		this.addChild(this.line);
 	}
 	setStatus(status: string): void {
+		this.currentStatus = status;
 		this.line.setText(this.format(status));
 		this.line.invalidate();
 	}
+	/** Display a one-shot note above the status row (e.g. "Attached: x.ts", queue events). */
+	note(line: string): void {
+		this.notes.setText(line);
+		this.notes.invalidate();
+	}
 	private format(status: string): string {
-		return `[${status}] · ${this.modelName}`;
+		return `${ansi.dim("[")}${status}${ansi.dim("]")} · ${this.modelName}`;
 	}
 }
 
@@ -261,6 +437,15 @@ class TranscriptView extends Container {
 
 	appendMessage(message: AgentMessage): void {
 		this.history.addChild(renderMessage(message));
+		this.history.invalidate();
+	}
+
+	clear(): void {
+		// /clear handler: wipe the visible transcript. Recreate the child
+		// list by mutating the internal array — Container doesn't expose a
+		// removeChild today.
+		const hist = this.history as unknown as { children: unknown[] };
+		hist.children = [];
 		this.history.invalidate();
 	}
 
@@ -300,6 +485,33 @@ class TranscriptView extends Container {
  * `streaming` toggles the "…" suffix on the role label and uses the
  * present-tense verb form for tool calls.
  */
+function mergeUsage(a: typeof EMPTY_USAGE, b: typeof EMPTY_USAGE): typeof EMPTY_USAGE {
+	return {
+		input: a.input + b.input,
+		output: a.output + b.output,
+		cacheRead: a.cacheRead + b.cacheRead,
+		cacheWrite: a.cacheWrite + b.cacheWrite,
+		totalTokens: a.totalTokens + b.totalTokens,
+		cost: {
+			input: a.cost.input + b.cost.input,
+			output: a.cost.output + b.cost.output,
+			cacheRead: a.cost.cacheRead + b.cost.cacheRead,
+			cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite,
+			total: a.cost.total + b.cost.total,
+		},
+	};
+}
+
+function stringifyResult(value: unknown): string {
+	if (value === undefined || value === null) return "";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
 function renderMessage(message: AgentMessage, streaming = false): Container {
 	const c = new Container();
 	const role = message.role as string;
