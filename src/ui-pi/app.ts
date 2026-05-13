@@ -22,8 +22,10 @@ import { HistoryStore } from "../ui/history-store.js";
 import { runShellEscape } from "../ui/shell-escape.js";
 import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
+import { CompactionBanner } from "./compaction-banner.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
 import { PermissionOverlay } from "./permission-overlay.js";
+import { TaskPanel } from "./task-panel.js";
 import { ansi, editorTheme, markdownTheme, roleColor } from "./theme.js";
 import { UserQueryOverlay } from "./user-query-overlay.js";
 
@@ -40,6 +42,8 @@ export class App extends Container {
 	private readonly statusBar: StatusBar;
 	private inputBar: Editor | undefined;
 	private readonly bgShellPanel: BackgroundShellPanel;
+	private readonly compactionBanner: CompactionBanner;
+	private readonly taskPanel: TaskPanel;
 	private readonly registry: CommandRegistry;
 	private readonly historyStore: HistoryStore;
 	private unsubscribe: () => void;
@@ -85,6 +89,8 @@ export class App extends Container {
 		this.transcript = new TranscriptView(this.bundle.resumedMessages);
 		this.statusBar = new StatusBar(this.bundle.model.name);
 		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells);
+		this.compactionBanner = new CompactionBanner(this.bundle.compactionMonitor);
+		this.taskPanel = new TaskPanel(this.bundle.toolContext.tasks);
 		this.historyStore = new HistoryStore({ cwd: this.bundle.toolContext.cwd });
 
 		this.registry = new CommandRegistry();
@@ -92,6 +98,8 @@ export class App extends Container {
 
 		this.addChild(new WelcomeBanner(this.bundle.model.name));
 		this.addChild(this.transcript);
+		this.addChild(this.compactionBanner);
+		this.addChild(this.taskPanel);
 		this.addChild(this.bgShellPanel);
 		this.addChild(this.statusBar);
 
@@ -378,6 +386,12 @@ export class App extends Container {
 			this.unsubscribe = this.bundle.subscribe((event) => this.handleAgentEvent(event));
 			this.statusBar.setModelName(next.model.name);
 			this.statusBar.note(`Switched to ${next.model.name} (${next.model.provider}/${next.model.id}).`);
+			// Re-bind every bundle-scoped store: compaction monitor, tasks,
+			// and background shells all changed reference when createAgent
+			// produced a fresh bundle.
+			this.compactionBanner.rebind(next.compactionMonitor);
+			this.taskPanel.rebind(next.toolContext.tasks);
+			this.bgShellPanel.rebind(next.backgroundShells);
 			// Permissions + userQuery stores are also bundle-scoped, re-subscribe.
 			this.removePermSubscription?.();
 			this.removeUserQuerySubscription?.();
@@ -559,6 +573,8 @@ export class App extends Container {
 		this.hideUserQueryOverlay();
 		this.hideModelPicker();
 		this.stopRateSampling();
+		this.compactionBanner.dispose();
+		this.taskPanel.dispose();
 		this.bgShellPanel.dispose();
 		this.bundle.backgroundShells.killAllSync();
 		this.unsubscribe();
