@@ -54,6 +54,7 @@
 		"check": "npm run typecheck && npm run lint && npm test",
 		"bench": "node bench/run.mjs",
 		"bench:report": "node bench/aggregate.mjs",
+		"bench:micro": "vitest bench --run",
 		"prepublishOnly": "npm run clean && npm run check && npm run build",
 		"prepack": "npm run build"
 	},
