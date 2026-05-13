@@ -18,19 +18,98 @@
 
 export type Action = "type" | "kill" | "yank" | "delete" | "move" | "undo" | "init";
 
+export interface PastedContent {
+	id: number;
+	content: string;
+	lines: number;
+}
+
 export interface InputState {
 	buffer: string;
 	cursor: number;
 	killRing: string[];
 	undoStack: Array<{ buffer: string; cursor: number }>;
 	lastAction: Action;
+	/** Map of paste id → original content for placeholder expansion at submit. */
+	pastedContents: Record<number, PastedContent>;
+	/** Monotonic counter; next paste in this buffer gets this id. */
+	nextPasteId: number;
 }
 
 const MAX_UNDO = 100;
 const MAX_KILL_RING = 60;
 
 export function initialInputState(): InputState {
-	return { buffer: "", cursor: 0, killRing: [], undoStack: [], lastAction: "init" };
+	return {
+		buffer: "",
+		cursor: 0,
+		killRing: [],
+		undoStack: [],
+		lastAction: "init",
+		pastedContents: {},
+		nextPasteId: 1,
+	};
+}
+
+/**
+ * A useInput tick is a paste rather than a keystroke when it contains a
+ * newline (typed `\<Enter>` is handled in the key.return branch, not as
+ * printable text — so any `\n` here came from the OS paste buffer) or
+ * when it's substantially longer than a normal keystroke / IME chunk.
+ */
+export function looksLikePaste(input: string): boolean {
+	return input.includes("\n") || input.length >= 100;
+}
+
+const PASTE_PLACEHOLDER_RE = /\[Pasted #(\d+) · \d+ (?:lines|chars)\]/g;
+
+/**
+ * Render the placeholder shown in the visible buffer when text is pasted.
+ * Multi-line pastes use a line count; single-line long pastes show char
+ * count — different signals for what the user's eye expects to track.
+ */
+export function formatPastePlaceholder(id: number, content: string): string {
+	const lines = content.split("\n").length;
+	if (lines > 1) return `[Pasted #${id} · ${lines} lines]`;
+	return `[Pasted #${id} · ${content.length} chars]`;
+}
+
+/**
+ * Stash pasted content under a fresh id and insert a placeholder at the
+ * cursor. The buffer stays short and readable; the real text re-inflates
+ * at submit via expandPastes(). Pastes follow normal insertChar undo
+ * snapshots — Ctrl-Z will pop the placeholder *and* the side entry stays
+ * in pastedContents, harmless because nothing will reference it.
+ */
+export function insertPaste(state: InputState, content: string): InputState {
+	if (!content) return state;
+	const id = state.nextPasteId;
+	const placeholder = formatPastePlaceholder(id, content);
+	const inserted = insertChar(state, placeholder);
+	return {
+		...inserted,
+		pastedContents: {
+			...state.pastedContents,
+			[id]: { id, content, lines: content.split("\n").length },
+		},
+		nextPasteId: id + 1,
+	};
+}
+
+/**
+ * Replace `[Pasted #N · ...]` placeholders with their original content.
+ * Called at submit time so the agent sees the real text. Orphaned ids
+ * (placeholder deleted out of the buffer) are silently dropped — only
+ * the ones still present in the buffer expand. Placeholders we don't
+ * recognize (e.g. user typed something that matches the pattern) pass
+ * through unchanged so we don't corrupt their literal input.
+ */
+export function expandPastes(buffer: string, pastedContents: Record<number, PastedContent>): string {
+	return buffer.replace(PASTE_PLACEHOLDER_RE, (match, idStr) => {
+		const id = Number.parseInt(idStr, 10);
+		const entry = pastedContents[id];
+		return entry ? entry.content : match;
+	});
 }
 
 export function setBuffer(state: InputState, buffer: string): InputState {

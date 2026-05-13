@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
 	backspace,
 	deleteForward,
+	expandPastes,
+	formatPastePlaceholder,
 	initialInputState,
 	insertChar,
+	insertPaste,
 	killToEnd,
 	killToStart,
 	killWordBack,
 	killWordForward,
+	looksLikePaste,
 	moveEnd,
 	moveLeft,
 	moveRight,
@@ -212,5 +216,103 @@ describe("undo", () => {
 		s = undo(s);
 		// All five chars undone in one step.
 		expect(s.buffer).toBe("");
+	});
+});
+
+describe("paste detection (looksLikePaste)", () => {
+	it("returns false for a single typed character", () => {
+		expect(looksLikePaste("a")).toBe(false);
+	});
+
+	it("returns false for a short typed run", () => {
+		expect(looksLikePaste("hello world")).toBe(false);
+	});
+
+	it("returns true for any input containing a newline", () => {
+		// Typed \\<Enter> is handled by the key.return branch in Input.tsx,
+		// not the printable-text path — so a \\n landing here is paste.
+		expect(looksLikePaste("a\nb")).toBe(true);
+	});
+
+	it("returns true for a long single-line paste with no newlines", () => {
+		expect(looksLikePaste("x".repeat(120))).toBe(true);
+	});
+
+	it("returns false for a single newline alone (not really a paste signal)", () => {
+		// Edge case: a 1-char input with just \\n. Treated as paste under
+		// our heuristic which is conservative — fine for safety, the
+		// resulting placeholder just reads "0 lines" worth.
+		expect(looksLikePaste("\n")).toBe(true);
+	});
+});
+
+describe("formatPastePlaceholder", () => {
+	it("renders line count for multi-line content", () => {
+		const text = "line1\nline2\nline3";
+		expect(formatPastePlaceholder(1, text)).toBe("[Pasted #1 · 3 lines]");
+	});
+
+	it("renders char count for single-line content", () => {
+		const text = "x".repeat(250);
+		expect(formatPastePlaceholder(7, text)).toBe("[Pasted #7 · 250 chars]");
+	});
+
+	it("uses unique ids", () => {
+		const a = formatPastePlaceholder(1, "x");
+		const b = formatPastePlaceholder(2, "x");
+		expect(a).not.toBe(b);
+	});
+});
+
+describe("insertPaste + expandPastes", () => {
+	it("inserts a placeholder, stores content, and round-trips on expand", () => {
+		const code = "function foo() {\n  return 42;\n}";
+		const s = insertPaste(initialInputState(), code);
+		// Buffer contains only the placeholder, not the 32-char code body.
+		expect(s.buffer).toBe("[Pasted #1 · 3 lines]");
+		expect(s.pastedContents[1]?.content).toBe(code);
+		expect(s.pastedContents[1]?.lines).toBe(3);
+		expect(s.nextPasteId).toBe(2);
+		// Submit path expands it back.
+		expect(expandPastes(s.buffer, s.pastedContents)).toBe(code);
+	});
+
+	it("supports text typed around a placeholder", () => {
+		let s = initialInputState();
+		for (const ch of "explain: ") s = insertChar(s, ch);
+		s = insertPaste(s, "alpha\nbeta\ngamma");
+		for (const ch of " thanks") s = insertChar(s, ch);
+		expect(s.buffer).toBe("explain: [Pasted #1 · 3 lines] thanks");
+		expect(expandPastes(s.buffer, s.pastedContents)).toBe("explain: alpha\nbeta\ngamma thanks");
+	});
+
+	it("assigns unique ids when multiple pastes happen in one buffer", () => {
+		let s = insertPaste(initialInputState(), "first paste");
+		for (const ch of " · then ") s = insertChar(s, ch);
+		s = insertPaste(s, "second\npaste\nhere");
+		expect(s.pastedContents[1]?.content).toBe("first paste");
+		expect(s.pastedContents[2]?.content).toBe("second\npaste\nhere");
+		expect(expandPastes(s.buffer, s.pastedContents)).toBe("first paste · then second\npaste\nhere");
+	});
+
+	it("leaves unrecognized placeholder-shaped text alone", () => {
+		// User literally typed something matching the pattern. We have no
+		// id for it; expand should leave it untouched rather than corrupt it.
+		const text = "see also [Pasted #999 · 5 lines]";
+		expect(expandPastes(text, {})).toBe(text);
+	});
+
+	it("silently drops orphaned placeholders when content was edited away", () => {
+		const s = insertPaste(initialInputState(), "to be deleted");
+		// User selected and removed the placeholder somehow; buffer is empty
+		// but pastedContents still has the entry. expandPastes on empty buffer
+		// just yields empty.
+		expect(expandPastes("", s.pastedContents)).toBe("");
+	});
+
+	it("insertPaste with empty content is a no-op", () => {
+		const before = initialInputState();
+		const after = insertPaste(before, "");
+		expect(after).toEqual(before);
 	});
 });

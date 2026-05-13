@@ -4,11 +4,14 @@ import { logInputEvent } from "./debug-input.js";
 import {
 	backspace,
 	deleteForward,
+	expandPastes,
 	initialInputState,
 	insertChar,
+	insertPaste,
 	killToEnd,
 	killToStart,
 	killWordBack,
+	looksLikePaste,
 	moveEnd,
 	moveLeft,
 	moveRight,
@@ -287,7 +290,7 @@ export function Input({
 			// registry's not-found path surface the typo.
 			const trimmed = state.buffer.trim();
 			if (trimmed.length > 0) {
-				onSubmit(trimmed);
+				onSubmit(expandPastes(trimmed, state.pastedContents));
 				setState(initialInputState());
 				setSuggestionIdx(0);
 				setHistoryIdx(-1);
@@ -360,7 +363,7 @@ export function Input({
 				setPathIdx(0);
 				lastAtTokenRef.current = null;
 			}
-			setState(insertChar(state, input));
+			setState(looksLikePaste(input) ? insertPaste(state, input) : insertChar(state, input));
 		}
 	});
 
