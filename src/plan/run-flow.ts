@@ -8,6 +8,13 @@ export interface PlanFlowHandlers {
 	onReply: (text: string) => void;
 	/** Surface a plan-flow failure to the user. */
 	onError: (message: string) => void;
+	/**
+	 * Environment block to prepend to the final agent prompt when this is
+	 * the first agent invocation of the session. Lets the agent see cwd /
+	 * date / git status without baking those into the cacheable system
+	 * prompt. Undefined when the session already has prior assistant turns.
+	 */
+	envReminderForFirstTurn?: string;
 }
 
 /**
@@ -25,7 +32,7 @@ export async function runPlanFlow(
 	originalPrompt: string,
 	handlers: PlanFlowHandlers,
 ): Promise<void> {
-	const { onReply, onError } = handlers;
+	const { onReply, onError, envReminderForFirstTurn } = handlers;
 	const qaHistory: QAPair[] = [];
 	try {
 		for (let i = 0; i < MAX_QUESTIONS; i++) {
@@ -54,7 +61,8 @@ export async function runPlanFlow(
 			const choice = matchOption(decision, ["Yes — run it", "Revise", "Cancel"]);
 			if (choice === "Yes — run it") {
 				const finalPrompt = buildAgentPrompt(originalPrompt, plan, qaHistory);
-				bundle.agent.prompt(finalPrompt).catch((err: unknown) => {
+				const withEnv = envReminderForFirstTurn ? `${envReminderForFirstTurn}\n\n${finalPrompt}` : finalPrompt;
+				bundle.agent.prompt(withEnv).catch((err: unknown) => {
 					onError(err instanceof Error ? err.message : String(err));
 				});
 				return;

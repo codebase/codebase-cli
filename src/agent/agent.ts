@@ -180,7 +180,6 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const systemPrompt =
 		opts.systemPrompt ??
 		buildSystemPrompt({
-			cwd,
 			tools: tools.map((t) => ({ name: t.name, description: t.description })),
 		});
 

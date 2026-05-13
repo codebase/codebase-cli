@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { hostname, platform } from "node:os";
 
 export interface BuildSystemPromptOptions {
-	cwd?: string;
 	/**
 	 * Active tool list. When provided, an "Available tools" section is
 	 * inlined so the model doesn't have to discover tool surface area
@@ -12,24 +11,24 @@ export interface BuildSystemPromptOptions {
 }
 
 /**
- * Top-level system prompt for the main agent. Layered as:
+ * Static system prompt for the main agent. Deliberately omits every
+ * session-specific value (cwd, date, git status, platform) so the
+ * prompt is byte-stable across sessions for the same tool set — that's
+ * what lets Anthropic's prompt cache hit between turns AND between
+ * sessions. Dynamic environment context is delivered separately via
+ * buildEnvironmentReminder() and prepended to the user's first turn.
+ *
+ * Layered as:
  *   1. Identity + verbs the agent can perform
- *   2. Behavior rules (anti-patterns to avoid, verification, system-reminder
- *      semantics)
+ *   2. Behavior rules (anti-patterns, verification, system-reminder semantics)
  *   3. Task-checklist policy when create_task/update_task are available
  *   4. Available tools, auto-built from the registered tool set
- *   5. Environment block (cwd, platform, date, optional git summary)
  *
- * Deliberately short — most agents on this codebase will see ~600-1000
- * tokens of prompt, not 6000+. The bullets are concrete things-to-avoid
- * rather than vibes-prompts; concrete rules bind model behavior, vague
- * ones don't.
+ * Deliberately short — most agents see ~600-1000 tokens of prompt, not
+ * 6000+. The bullets are concrete things-to-avoid rather than
+ * vibes-prompts; concrete rules bind model behavior, vague ones don't.
  */
-export function buildSystemPrompt(opts: BuildSystemPromptOptions | string = {}): string {
-	// Back-compat: callers used to pass `cwd: string` directly. Accept that
-	// shape and lift it into the options object.
-	const options: BuildSystemPromptOptions = typeof opts === "string" ? { cwd: opts } : opts;
-	const cwd = options.cwd ?? process.cwd();
+export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 	const lines: string[] = [];
 
 	lines.push("You are codebase, a CLI coding agent. You help with software engineering tasks in the user's terminal.");
@@ -95,25 +94,36 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions | string = {}):
 	);
 	lines.push("  - Append new tasks if you discover work mid-stream; cancel tasks that turned out to be unnecessary.");
 
-	if (options.tools && options.tools.length > 0) {
+	if (opts.tools && opts.tools.length > 0) {
 		lines.push("");
 		lines.push("# Available tools");
-		for (const t of options.tools) {
+		for (const t of opts.tools) {
 			lines.push(`- ${t.name} — ${firstLine(t.description)}`);
 		}
 	}
 
-	lines.push("");
-	lines.push("# Environment");
+	return lines.join("\n");
+}
+
+/**
+ * Per-session environment context, delivered as a `<system-reminder>`
+ * block at the front of the user's first turn rather than baked into
+ * the system prompt. Keeping these values out of the system prompt is
+ * what lets the prompt cache hit across sessions for the same tool set
+ * — cwd, date, and git status all vary in ways that would otherwise
+ * blow the cache every turn.
+ */
+export function buildEnvironmentReminder(cwd: string = process.cwd()): string {
+	const lines: string[] = [];
+	lines.push("<system-reminder>");
+	lines.push("Environment:");
 	lines.push(`- cwd: ${cwd}`);
 	lines.push(`- platform: ${platform()}`);
 	lines.push(`- host: ${hostname()}`);
 	lines.push(`- date: ${new Date().toISOString().slice(0, 10)}`);
-	const gitSummary = readGitSummary(cwd);
-	if (gitSummary) {
-		for (const line of gitSummary) lines.push(line);
-	}
-
+	const git = readGitSummary(cwd);
+	if (git) for (const line of git) lines.push(line);
+	lines.push("</system-reminder>");
 	return lines.join("\n");
 }
 

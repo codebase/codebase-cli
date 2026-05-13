@@ -4,6 +4,7 @@ import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
 import { routeUserInput } from "../agent/router.js";
+import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { ConfigStore } from "../config/store.js";
@@ -217,6 +218,9 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 				await runPlanFlow(bundle, text, {
 					onReply: (replyText) => dispatch({ type: "chat-reply", text: replyText }),
 					onError: (message) => dispatch({ type: "error", message }),
+					envReminderForFirstTurn: shouldInjectEnv(state.messages)
+						? buildEnvironmentReminder(bundle.toolContext.cwd)
+						: undefined,
 				});
 				return;
 			}
@@ -226,7 +230,14 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			appendStatus(`(router fell back to agent: ${err instanceof Error ? err.message : err})`);
 		}
 
-		bundle.agent.prompt(augmentedText).catch((err: unknown) => {
+		// First turn of a fresh (non-resumed) session carries the env block as
+		// a system-reminder. Subsequent turns inherit it via cached transcript;
+		// the system prompt itself stays byte-stable so the prompt cache hits
+		// across sessions for the same tool set.
+		const promptText = shouldInjectEnv(state.messages)
+			? `${buildEnvironmentReminder(bundle.toolContext.cwd)}\n\n${augmentedText}`
+			: augmentedText;
+		bundle.agent.prompt(promptText).catch((err: unknown) => {
 			dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
 		});
 	};
@@ -403,6 +414,17 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			)}
 		</Box>
 	);
+}
+
+/**
+ * True if the env reminder should be prepended to the user's next agent
+ * prompt. We inject on the first user→agent interaction of a session
+ * (no assistant messages in the transcript yet). For resumed sessions
+ * the saved env from the prior run is already in the transcript, so we
+ * skip — re-injection would just waste tokens and confuse the model.
+ */
+function shouldInjectEnv(messages: readonly { role: string }[]): boolean {
+	return !messages.some((m) => m.role === "assistant");
 }
 
 /**
