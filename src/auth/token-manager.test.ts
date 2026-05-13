@@ -138,3 +138,62 @@ describe("TokenManager", () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 });
+
+describe("TokenManager — multi-process coordination", () => {
+	let dataRoot: string;
+
+	beforeEach(() => {
+		dataRoot = mkdtempSync(join(tmpdir(), "tm-mp-"));
+	});
+
+	afterEach(() => {
+		rmSync(dataRoot, { recursive: true, force: true });
+		vi.restoreAllMocks();
+	});
+
+	it("two TokenManagers refreshing concurrently produce only one refresh round-trip", async () => {
+		const storeA = new CredentialsStore({ dataRoot });
+		const storeB = new CredentialsStore({ dataRoot });
+		storeA.save(freshCreds({ expiresAt: Date.now() + 5_000 }));
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					setTimeout(
+						() =>
+							resolve(
+								new Response(JSON.stringify({ access_token: "access-NEW", expires_in: 3600 }), {
+									status: 200,
+									headers: { "Content-Type": "application/json" },
+								}),
+							),
+						50,
+					);
+				}),
+		);
+		const tmA = new TokenManager({ store: storeA, oauthConfig: OAUTH });
+		const tmB = new TokenManager({ store: storeB, oauthConfig: OAUTH });
+		const [a, b] = await Promise.all([tmA.getAccessToken(), tmB.getAccessToken()]);
+		expect(a).toBe("access-NEW");
+		expect(b).toBe("access-NEW");
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("a TokenManager started after another process refreshed reads the rotated token without refreshing", async () => {
+		const storeA = new CredentialsStore({ dataRoot });
+		storeA.save(freshCreds({ expiresAt: Date.now() + 5_000 }));
+		vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify({ access_token: "access-NEW", expires_in: 3600 }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+		const tmA = new TokenManager({ store: storeA, oauthConfig: OAUTH });
+		await tmA.getAccessToken();
+		// Now another process starts up with its own TokenManager.
+		const fetchSpyLate = vi.spyOn(globalThis, "fetch");
+		const storeB = new CredentialsStore({ dataRoot });
+		const tmB = new TokenManager({ store: storeB, oauthConfig: OAUTH });
+		await expect(tmB.getAccessToken()).resolves.toBe("access-NEW");
+		expect(fetchSpyLate).not.toHaveBeenCalled();
+	});
+});
