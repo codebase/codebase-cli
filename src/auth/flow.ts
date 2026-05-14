@@ -386,17 +386,19 @@ export async function runOAuthLogin(
 
 	const callbackPromise = awaitCallback(server, state, config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-	if (isHeadlessSession()) {
-		opts.onManualUrl?.(authUrl, "headless session detected — open the URL manually in your browser");
-	} else {
-		try {
-			await openBrowserFn(authUrl);
-		} catch (err) {
-			// DON'T tear down the server: the user can still complete
-			// sign-in by opening the URL themselves. Surface the URL via
-			// onManualUrl and continue waiting for the callback.
-			opts.onManualUrl?.(authUrl, `auto-open failed: ${err instanceof Error ? err.message : String(err)}`);
-		}
+	// Always surface the URL to the caller so it's visible even when
+	// auto-open succeeds. Browser-open auto-detection is unreliable
+	// (xdg-open hangs on some boxes, `open` on macOS silently no-ops in
+	// some shells, SSH forwarding makes localhost-callbacks tricky), so
+	// the printed URL is the primary UX — auto-open is best-effort gravy.
+	const reason = isHeadlessSession() ? "headless session — open the URL manually" : "open this URL in your browser";
+	opts.onManualUrl?.(authUrl, reason);
+
+	// Fire-and-forget the browser open. Don't await — xdg-open / `open`
+	// can hang indefinitely on some configurations, and we already gave
+	// the user the URL above.
+	if (!isHeadlessSession()) {
+		openBrowserFn(authUrl).catch(() => undefined);
 	}
 
 	const { code } = await callbackPromise;
