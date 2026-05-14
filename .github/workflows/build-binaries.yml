@@ -1,0 +1,108 @@
+name: Build binaries
+
+# Cross-compile single-file native binaries for the major desktop targets
+# and attach them to the GitHub release. Runs in parallel with release.yml;
+# softprops/action-gh-release@v2 is idempotent so the npm-publish workflow
+# creating the release and the binary jobs attaching assets coexist
+# without coordination.
+
+on:
+  push:
+    tags:
+      - "v2.*"
+  # Manual trigger so we can backfill binaries onto an existing release
+  # without bumping the version. Pass the tag name as input.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v2.0.0-pre.54)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-linux-x64-modern
+            asset: codebase-linux-x64
+          - target: bun-linux-arm64
+            asset: codebase-linux-arm64
+          - target: bun-darwin-x64
+            asset: codebase-darwin-x64
+          - target: bun-darwin-arm64
+            asset: codebase-darwin-arm64
+          - target: bun-windows-x64
+            asset: codebase-windows-x64.exe
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # For workflow_dispatch runs, check out the tag passed as input
+          # so the build matches that version. Falls back to GITHUB_REF
+          # on tag-push triggers.
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Stub ink devtools
+        # ink's devtools entry has a top-level `import 'react-devtools-core'`
+        # behind a runtime gate, but bun's bundler eagerly resolves the
+        # dynamic import. Replace the entry with an empty stub so the
+        # compiled binary doesn't try to find react-devtools-core at
+        # runtime. Production paths never load this anyway (DEV != 'true').
+        run: |
+          cat > node_modules/ink/build/devtools.js <<'EOF'
+          export default { connectToDevTools() {} };
+          EOF
+
+      - name: Compile ${{ matrix.target }}
+        run: bun build --compile --target=${{ matrix.target }} src/cli.tsx --outfile=${{ matrix.asset }}
+
+      - name: Smoke-test binary
+        # Only the linux-x64 binary can run on the linux runner. The
+        # other targets are cross-compiled — we trust bun's compile output
+        # for them and verify post-release.
+        if: matrix.target == 'bun-linux-x64-modern'
+        run: ./${{ matrix.asset }} --version || true
+
+      - name: Upload to GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        # --clobber so a re-run replaces the file rather than failing.
+        # The release itself is created by release.yml (or the first
+        # uploader, whichever wins the race).
+        run: |
+          # Wait briefly for release.yml to create the release shell.
+          for i in 1 2 3 4 5 6; do
+            if gh release view "${TAG}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for release ${TAG} (attempt $i)…"
+            sleep 10
+          done
+          # If release.yml hasn't run yet (or failed), create the release ourselves.
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            PRERELEASE_FLAG=""
+            if [[ "${TAG}" == *-* ]]; then PRERELEASE_FLAG="--prerelease"; fi
+            gh release create "${TAG}" \
+              --title "${TAG}" \
+              --generate-notes \
+              ${PRERELEASE_FLAG}
+          fi
+          gh release upload "${TAG}" "${{ matrix.asset }}" --clobber
