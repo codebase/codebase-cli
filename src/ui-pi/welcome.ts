@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { basename } from "node:path";
-import { Container, Text } from "@earendil-works/pi-tui";
+import { type Component, visibleWidth } from "@earendil-works/pi-tui";
 import { ansi } from "./theme.js";
 
 interface WelcomeProps {
@@ -12,53 +12,90 @@ interface WelcomeProps {
 }
 
 /**
- * Empty-state welcome banner shown at the top of a fresh chat. Mirrors
- * the ink-era Welcome — model + cwd + git + auth source on the left,
- * "what you can do" hints below. Pure render (no animation), so we
- * build it once at App construction and let pi-tui's line-diff renderer
- * handle the redraw when the surrounding transcript scrolls it out of
- * view.
+ * Static pixel-C brand mark. 5-row × 4-col grid mirroring
+ * web/public/favicon.svg: 9 filled pixels (3 top + 3 left + 3 bottom)
+ * each rendered as two block chars so the shape reads proportionally
+ * in a 1:2 cell-ratio terminal.
  */
-export class WelcomeBanner extends Container {
+const FILL = "██";
+const GAP = "  ";
+const PIXEL_C_ROWS: readonly string[] = [
+	`${GAP}${FILL}${FILL}${FILL}`,
+	FILL,
+	FILL,
+	FILL,
+	`${GAP}${FILL}${FILL}${FILL}`,
+];
+
+/**
+ * Empty-state welcome banner shown at the top of a fresh chat. Mirrors
+ * the ink-era Welcome: PixelC logo on the left, model + cwd + git +
+ * auth source in a column on the right, "what you can do" hints
+ * underneath the whole header.
+ *
+ * Pi-tui doesn't ship a flex / row layout, so we implement render()
+ * ourselves to draw the two columns side by side. The hint block is
+ * a normal vertical list of lines after the row block.
+ */
+export class WelcomeBanner implements Component {
+	private readonly logoRows: string[];
+	private readonly infoRows: string[];
+	private readonly hintRows: string[];
+
 	constructor(props: WelcomeProps) {
-		super();
+		this.logoRows = PIXEL_C_ROWS.map((r) => ansi.bold(ansi.cyan(r)));
+
 		const cwdLabel = basename(props.cwd) || props.cwd;
 		const sourceLabel =
 			props.source === "proxy" ? "signed in via codebase.design" : props.source === "byok" ? "BYOK" : props.source;
 		const gitInfo = readGitInfo(props.cwd);
 
-		this.addChild(new Text(ansi.bold(ansi.cyan("codebase")), 1, 0));
-		this.addChild(new Text(ansi.dim(props.modelName), 1, 0));
-		this.addChild(new Text(ansi.dim(`${cwdLabel} · ${sourceLabel}`), 1, 0));
+		const info: string[] = [];
+		info.push(ansi.bold(ansi.cyan("codebase")));
+		info.push(ansi.dim(props.modelName));
+		info.push(ansi.dim(`${cwdLabel} · ${sourceLabel}`));
 		if (gitInfo) {
 			const dirtyPart =
 				gitInfo.dirty > 0 ? ` · ${gitInfo.dirty} uncommitted change${gitInfo.dirty === 1 ? "" : "s"}` : " · clean";
-			this.addChild(new Text(ansi.dim(`${gitInfo.branch}${dirtyPart}`), 1, 0));
+			info.push(ansi.dim(`${gitInfo.branch}${dirtyPart}`));
 		}
 		if (props.resumedFrom) {
-			this.addChild(new Text("", 1, 0));
-			this.addChild(
-				new Text(
-					`${ansi.cyan("↻ Resumed from")} ${ansi.cyan(formatAgo(props.resumedFrom.updatedAt))}` +
-						ansi.dim(` · ${props.resumedFrom.messageCount} messages`),
-					1,
-					0,
-				),
+			info.push(
+				`${ansi.cyan("↻ Resumed from")} ${ansi.cyan(formatAgo(props.resumedFrom.updatedAt))}${ansi.dim(
+					` · ${props.resumedFrom.messageCount} messages`,
+				)}`,
 			);
 		}
-		this.addChild(new Text("", 1, 0));
-		this.addChild(new Text(ansi.dim("Ask me to read code, edit files, run commands, or anything in between."), 1, 0));
-		this.addChild(
-			new Text(
-				ansi.dim(
-					`${ansi.cyan("/")} commands · ${ansi.cyan("!")}shell · ${ansi.cyan("↑↓")} history · ${ansi.cyan("Tab")} complete · ${ansi.cyan("\\")}+Enter newline`,
-				),
-				1,
-				0,
+		this.infoRows = info;
+
+		this.hintRows = [
+			"",
+			ansi.dim("Ask me to read code, edit files, run commands, or anything in between."),
+			ansi.dim(
+				`${ansi.cyan("/")} commands · ${ansi.cyan("!")}shell · ${ansi.cyan("↑↓")} history · ${ansi.cyan("Tab")} complete · ${ansi.cyan("\\")}+Enter newline`,
 			),
-		);
-		this.addChild(new Text(ansi.dim("Ctrl-C twice to exit."), 1, 0));
-		this.addChild(new Text("", 1, 0));
+			ansi.dim("Ctrl-C twice to exit."),
+			"",
+		];
+	}
+
+	render(_width: number): string[] {
+		const out: string[] = [];
+		const logoWidth = this.logoRows.reduce((max, r) => Math.max(max, visibleWidth(r)), 0);
+		const gutter = "  "; // 2-col gap between logo and text column
+		const rows = Math.max(this.logoRows.length, this.infoRows.length);
+		for (let i = 0; i < rows; i++) {
+			const logoLine = this.logoRows[i] ?? "";
+			const pad = " ".repeat(Math.max(0, logoWidth - visibleWidth(logoLine)));
+			const infoLine = this.infoRows[i] ?? "";
+			out.push(` ${logoLine}${pad}${gutter}${infoLine}`);
+		}
+		for (const hint of this.hintRows) out.push(` ${hint}`);
+		return out;
+	}
+
+	invalidate(): void {
+		// Static content — nothing to recompute.
 	}
 }
 

@@ -31,6 +31,7 @@ import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js"
 import { PermissionOverlay } from "./permission-overlay.js";
 import { TaskPanel } from "./task-panel.js";
 import { ansi, editorTheme, roleColor } from "./theme.js";
+import { LiveToolPanel } from "./tool-panel-live.js";
 import { UserQueryOverlay } from "./user-query-overlay.js";
 import { WelcomeBanner } from "./welcome.js";
 
@@ -51,6 +52,7 @@ export class App extends Container {
 	private readonly taskPanel: TaskPanel;
 	private readonly errorCard: ErrorCard;
 	private readonly contextWarning: ContextWarning;
+	private readonly liveToolPanel: LiveToolPanel;
 	private readonly registry: CommandRegistry;
 	private readonly historyStore: HistoryStore;
 	private unsubscribe: () => void;
@@ -109,6 +111,7 @@ export class App extends Container {
 		this.taskPanel = new TaskPanel(this.bundle.toolContext.tasks, requestRender);
 		this.errorCard = new ErrorCard();
 		this.contextWarning = new ContextWarning();
+		this.liveToolPanel = new LiveToolPanel(this.tools);
 		this.historyStore = new HistoryStore({ cwd: this.bundle.toolContext.cwd });
 
 		this.registry = new CommandRegistry();
@@ -127,6 +130,7 @@ export class App extends Container {
 		this.addChild(this.taskPanel);
 		this.addChild(this.errorCard);
 		this.addChild(this.contextWarning);
+		this.addChild(this.liveToolPanel);
 		this.addChild(this.bgShellPanel);
 		this.addChild(this.statusBar);
 
@@ -790,9 +794,13 @@ async function loadAvailableModels(bundle: AgentBundle): Promise<ModelOption[]> 
  */
 const THROBBER_FRAMES = ["░", "▒", "▓", "█", "█", "▓", "▒", "░"];
 
+/** Max status notes to keep in the rolling buffer. Beyond this oldest entries roll off. */
+const STATUS_NOTE_BUFFER = 8;
+
 class StatusBar extends Container {
 	private readonly line: Text;
-	private readonly notes: Text;
+	private readonly notesContainer: Container;
+	private noteBuffer: string[] = [];
 	private modelName: string;
 	private readonly cwdLabel: string;
 	private currentStatus = "idle";
@@ -805,8 +813,8 @@ class StatusBar extends Container {
 		this.modelName = modelName;
 		this.cwdLabel = basename(cwd) || cwd;
 		this.line = new Text(this.format(), 1, 0);
-		this.notes = new Text("", 1, 0);
-		this.addChild(this.notes);
+		this.notesContainer = new Container();
+		this.addChild(this.notesContainer);
 		this.addChild(this.line);
 	}
 	setStatus(status: string): void {
@@ -832,9 +840,26 @@ class StatusBar extends Container {
 		this.line.setText(this.format());
 		this.line.invalidate();
 	}
+	/**
+	 * Append a status note to the rolling buffer. Empty strings clear the
+	 * buffer entirely (useful for ack messages after a loading note).
+	 * Beyond STATUS_NOTE_BUFFER lines the oldest entries roll off so the
+	 * pane stays bounded.
+	 */
 	note(line: string): void {
-		this.notes.setText(line);
-		this.notes.invalidate();
+		if (line === "") {
+			this.noteBuffer = [];
+		} else {
+			this.noteBuffer.push(line);
+			if (this.noteBuffer.length > STATUS_NOTE_BUFFER) {
+				this.noteBuffer = this.noteBuffer.slice(-STATUS_NOTE_BUFFER);
+			}
+		}
+		this.notesContainer.clear();
+		for (const entry of this.noteBuffer) {
+			this.notesContainer.addChild(new Text(ansi.dim(entry), 1, 0));
+		}
+		this.notesContainer.invalidate();
 	}
 	private format(): string {
 		const isBusy = this.currentStatus !== "idle";
