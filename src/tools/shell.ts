@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import type { AgentTool, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
 import { TimeoutError } from "./errors.js";
+import { validateShellCommand } from "./shell-validator.js";
 import type { ToolContext } from "./types.js";
 
 const Params = Type.Object({
@@ -72,6 +73,38 @@ export function createShell(ctx: ToolContext): AgentTool<typeof Params, ShellDet
 		execute: async (toolCallId, params, signal, onUpdate) => {
 			const cwd = resolveSubCwd(ctx.cwd, params.cwd);
 
+			// Pre-flight validator: refuse a small set of unambiguously
+			// destructive patterns BEFORE spawn, regardless of permission
+			// policy. Auto-approve doesn't bypass this — CI runners
+			// shouldn't be one bad model output away from `rm -rf $HOME`.
+			const verdict = validateShellCommand(params.command);
+			if (verdict.verdict === "block") {
+				return {
+					details: {
+						command: params.command,
+						exitCode: null,
+						signal: null,
+						durationMs: 0,
+						bytesTotal: 0,
+						truncated: false,
+						spillPath: null,
+						timedOut: false,
+						aborted: false,
+					},
+					isError: true,
+					content: [
+						{
+							type: "text",
+							text:
+								`Command refused by the shell validator: ${verdict.reason}.\n\n` +
+								"This is a hard block — the command was not executed. If this " +
+								"is a false positive, restructure the command (e.g. target the " +
+								"specific subdirectory explicitly) and try again.",
+						},
+					],
+				};
+			}
+
 			// Background mode: spawn detached, return immediately with a
 			// task_id. The agent can read output via shell_output and
 			// terminate via shell_kill. The store fires its own listeners
@@ -111,7 +144,10 @@ export function createShell(ctx: ToolContext): AgentTool<typeof Params, ShellDet
 			const child: ChildProcess = spawn(params.command, {
 				shell: true,
 				cwd,
-				env: process.env,
+				// Clone instead of passing process.env directly — a shell
+				// command that does `export FOO=bar` would otherwise leak
+				// into the agent's own environment for every subsequent spawn.
+				env: { ...process.env },
 				stdio: ["ignore", "pipe", "pipe"],
 				detached: process.platform !== "win32",
 			});

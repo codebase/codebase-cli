@@ -24,7 +24,10 @@ export function runHook(config: HookConfig, context: HookEventContext, signal?: 
 			child = spawn(config.command, {
 				shell: true,
 				cwd: context.workingDir,
-				env: process.env,
+				// Clone instead of passing process.env directly — a hook that
+				// does `export FOO=bar` would otherwise mutate the agent's
+				// own environment for every subsequent spawn.
+				env: { ...process.env },
 				stdio: ["pipe", "pipe", "pipe"],
 			});
 		} catch (err) {
@@ -42,7 +45,19 @@ export function runHook(config: HookConfig, context: HookEventContext, signal?: 
 			});
 		}, timeoutMs);
 
-		const onAbort = () => child.kill("SIGTERM");
+		const onAbort = () => {
+			// Send SIGTERM, then resolve so callers waiting on us aren't
+			// stuck if the child (or its shell wrapper) doesn't propagate
+			// the signal. With shell:true the signal lands on sh, not
+			// necessarily on the child it spawned, so we can't trust the
+			// `close` event to arrive.
+			try {
+				child.kill("SIGTERM");
+			} catch {
+				// best-effort
+			}
+			finish({ exitCode: 1, stdout: "", stderr: "hook aborted" });
+		};
 		signal?.addEventListener("abort", onAbort);
 
 		try {

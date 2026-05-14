@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/assets/codebase-mark.svg" alt="codebase" width="96" />
-</p>
-
 <h1 align="center">codebase</h1>
 
 <p align="center">
@@ -15,8 +11,9 @@
 </p>
 
 <p align="center">
-  <strong>Powered by <a href="https://github.com/earendil-works/pi">pi</a></strong> &nbsp;·&nbsp;
-  <em>The agent loop, provider adapters, and session protocol come from <a href="https://github.com/earendil-works/pi">pi-mono</a>.</em>
+  Built on <strong><a href="https://github.com/earendil-works/pi">pi</a></strong> &mdash;
+  the agent loop, provider adapters, and session protocol that make this whole
+  thing tick. <a href="https://github.com/earendil-works/pi">Go give them a star.</a>
 </p>
 
 ---

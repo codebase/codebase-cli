@@ -183,10 +183,97 @@ Dev:
 Don't add a dep without a real second use case in mind. The stdlib +
 the deps above can do almost everything.
 
+## Hooks
+
+User-configurable shell commands that fire on agent lifecycle events.
+Loaded from `~/.codebase/hooks.json` (user) and `./.codebase/hooks.json`
+(project, merged after user). Each hook gets the event context as JSON
+on stdin so shell hooks can `jq` whatever fields they care about.
+
+### Schema
+
+```json
+{
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "edit_file|write_file:src/**",
+      "command": "scripts/lint-staged.sh",
+      "timeout": 15000,
+      "async": false
+    }
+  ]
+}
+```
+
+### Events that fire
+
+```
+PreToolUse        before any tool runs — exit 2 to block the call
+PostToolUse       after any tool returns — non-blocking observer
+PostEdit          after a write_file / edit_file / multi_edit /
+                  notebook_edit succeeds — formatter / linter / commit
+                  hooks live here
+UserPromptSubmit  before a user-initiated prompt reaches the agent —
+                  exit 2 to refuse the submit (e.g. block secrets)
+SessionStart      once per agent boot
+Stop              after the agent settles a turn — payload includes
+                  the final assistant text in .finalMessage
+PreCompact        before the compaction engine runs
+PostCompact       after compaction — payload includes
+                  .collapsedMessageCount and .truncatedTokens
+SubagentStart     before dispatch_agent spawns a subagent
+SubagentStop      after the subagent run completes
+```
+
+### Matcher syntax
+
+- `undefined` or empty — match every event of that type
+- `"tool"` — exact tool name
+- `"toolA|toolB"` — either tool
+- `"tool:pathGlob"` — tool name AND file path matches the glob
+- `"*:pathGlob"` — any tool whose file path matches
+
+Globs use `*` (no separator) and `**` (with separators), gitignore-style.
+
+### Blocking vs async
+
+- Default (`async: false`): the agent waits for the hook to exit
+  before continuing. Exit code 2 blocks the action and the hook's
+  stderr is surfaced to the model so it can self-correct.
+- `async: true`: fire-and-forget. The agent doesn't wait, and a
+  non-zero exit is invisible unless `CODEBASE_DEBUG=1` is set.
+
+### Timeout
+
+`timeout` is milliseconds; default 30000. After the timeout we send
+SIGTERM and treat the hook as failed (exit code 1, "hook timed out"
+in stderr). Blocking hooks that time out do NOT block the action by
+default — only an actual exit-2 blocks.
+
+### Payload schema
+
+```ts
+{
+  event: HookEvent,
+  workingDir: string,            // cwd the agent is running in
+  toolName?: string,             // tool events
+  toolArgs?: unknown,            // tool events
+  filePath?: string,             // tool events that operate on a file
+  userPrompt?: string,           // UserPromptSubmit
+  finalMessage?: string,         // Stop
+  messageCount?: number,         // Pre/PostCompact
+  collapsedMessageCount?: number,// PostCompact
+  truncatedTokens?: number,      // PostCompact
+  subagentType?: string,         // Subagent events
+  subagentPrompt?: string,       // SubagentStart
+  subagentSuccess?: boolean      // SubagentStop
+}
+```
+
 ## In-flight features
 
-- **MCP**: there's a `/mcp` placeholder slash command but real MCP
-  client support hasn't shipped. The pi-mono roadmap calls it Phase 9.
-- **Hooks**: scaffold under `src/hooks/`; user-configurable pre/post-turn
-  and pre/post-tool hooks. Check current state before relying on them.
-- **Skills**: scaffold under `src/skills/` for per-skill SYSTEM.md additions.
+- **MCP**: real MCP client support hasn't shipped (the `/mcp`
+  placeholder was removed). The pi-mono roadmap will likely add this.
+- **Skills**: bundled + platform-fetched skills work; local
+  user skills (`~/.codebase/skills/*.md`) coming.

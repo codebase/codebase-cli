@@ -13,7 +13,7 @@ import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
-import { BUILTIN_COMMANDS } from "../commands/builtins.js";
+import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { ConfigStore } from "../config/store.js";
 import { runPlanFlow } from "../plan/run-flow.js";

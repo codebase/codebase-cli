@@ -57,11 +57,10 @@ export interface PlatformLoaderOptions {
  *   not signed in         → returns [] without a network call
  *   network error         → returns the last cached body if any,
  *                           else [] (silent — never crashes a session)
- *   404 (endpoint TBD)    → caches an empty bundle, returns []
- *                           (no warning — the backend half is
- *                           expected to land later, see
- *                           docs/plans/2026-05-09-codebase-cli-
- *                           oauth-server-side.md §3-4)
+ *   404                   → caches an empty bundle, returns []
+ *                           (no warning — the user's tier may not
+ *                           include skills, or the endpoint may not
+ *                           be live yet on a particular deployment)
  *   200                   → caches body + ETag, returns shaped list
  *   304 (ETag match)      → bumps the cache timestamp, returns cached
  */

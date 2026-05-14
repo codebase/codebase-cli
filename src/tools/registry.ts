@@ -28,7 +28,7 @@ import { createWriteFile } from "./write-file.js";
 
 /**
  * Returns every built-in tool, configured against the given context.
- * Phase 2 commits append factories to this list one by one.
+ * Add new tools by importing their factory and appending it here.
  */
 export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 	return [

@@ -16,6 +16,8 @@ import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
 import { PlanModeStore } from "../plan/store.js";
 import { SessionStore } from "../sessions/store.js";
+import type { AssetRegistry } from "../skills/loader.js";
+import { buildAssetRegistry } from "../skills/registry-factory.js";
 import { BackgroundShellStore } from "../tools/background-shell-store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
 import { buildTools } from "../tools/registry.js";
@@ -97,7 +99,20 @@ export interface AgentBundle {
 	sessions: SessionStore;
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
+	/**
+	 * Curated assets — skills, templates, prompts — sourced from
+	 * ~/.codebase/{skills,templates,prompts}/ and (when signed in)
+	 * codebase.foundation. Consumers read on demand; no auto-merge into
+	 * the system prompt today.
+	 */
+	assets: AssetRegistry;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
+	/**
+	 * User-initiated prompt — fires UserPromptSubmit hooks; honors exit-code-2
+	 * veto. Callers that originate prompts from real user input should use
+	 * this instead of `agent.prompt()` directly.
+	 */
+	submitUserPrompt: (text: string) => Promise<{ submitted: boolean; reason?: string }>;
 	/**
 	 * Set when `--resume` actually loaded a prior session, with its
 	 * timestamp + message count so the welcome banner can say
@@ -149,6 +164,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
 	const diagnostics = new DiagnosticsEngine({ cwd });
+	// PlatformLoader is gated on a real auth session — for now we skip
+	// it (LocalLoader still works). A future change wires it once we have
+	// a stable endpoint contract and the user is signed in.
+	const assets = buildAssetRegistry();
 
 	const glueModels = resolveGlueModels({ parentModel: model, parentApiKey: apiKey });
 	const glue = new GlueClient({
@@ -188,8 +207,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			tools: tools.map((t) => ({ name: t.name, description: t.description })),
 		});
 
-	// MEMORY.md gets concatenated onto the system prompt at agent creation.
-	// Reload-after-save is a Phase 11 polish item.
+	// MEMORY.md gets concatenated onto the system prompt at agent creation;
+	// edits during a session don't take effect until next launch.
 	// Project-instruction file (first of AGENTS.md / CLAUDE.md / CODEX.md /
 	// .cursorrules) gets pinned to the prompt so the agent sees the
 	// project's conventions on every turn. Memory addendum is appended
@@ -279,6 +298,18 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 				signal,
 			);
 
+			// PostEdit fires for write-family tools so hooks can run formatters
+			// / linters / commit-on-save scripts targeted specifically at file
+			// mutations (instead of having to filter inside a generic
+			// PostToolUse handler).
+			if (filePath && WRITE_TOOL_NAMES.has(ctx.toolCall.name)) {
+				await hooks.dispatch(
+					"PostEdit",
+					{ event: "PostEdit", toolName: ctx.toolCall.name, toolArgs: ctx.args, filePath, workingDir: cwd },
+					signal,
+				);
+			}
+
 			// After a write/edit tool, run language checkers on the affected file
 			// and steer the result into the next turn. Fire-and-forget so the
 			// tool result return isn't blocked by a 15s checker run.
@@ -296,15 +327,15 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 						});
 					})
 					.catch((err) => {
-						// Diagnostics failures are non-fatal — surface only when the
-						// user opted into debug. Silent before; that buried a real
+						// Diagnostics failures are non-fatal — but always-stderr
+						// instead of debug-only, because the previous behavior
+						// (silent under default settings) hid a real production
 						// bug where a checker hung and the user thought the tool
-						// itself was slow.
-						if (process.env.CODEBASE_DEBUG === "1") {
-							process.stderr.write(
-								`[diagnostics] ${absPath}: ${err instanceof Error ? err.message : String(err)}\n`,
-							);
-						}
+						// itself was slow. Visible to anyone watching the terminal;
+						// the agent keeps running.
+						process.stderr.write(
+							`[diagnostics] ${absPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+						);
 					});
 			}
 			return undefined;
@@ -340,10 +371,60 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				},
 			});
-		} catch {
-			// Persistence is best-effort — don't crash the agent over a write failure.
+		} catch (err) {
+			// Persistence is best-effort — never crash the agent over a write
+			// failure. But silent failure used to mean the user lost work to
+			// a full disk with no warning, so surface to stderr so support is
+			// possible. Visible to anyone watching the terminal; the agent
+			// keeps running.
+			const msg = err instanceof Error ? err.message : String(err);
+			process.stderr.write(`[session] save failed (${sessions.filePath}): ${msg}\n`);
 		}
+
+		// Stop fires once the agent settles after a turn — useful for "ping
+		// my phone when the long task finishes" style hooks. Fire-and-forget
+		// so a misconfigured hook can't gate the agent_end notification.
+		const finalMessage = lastAssistantText(event.messages);
+		void hooks.dispatch("Stop", { event: "Stop", workingDir: cwd, finalMessage }).catch(() => undefined);
 	});
+
+	// SessionStart fires once per createAgent. Lets hooks pre-seed context
+	// (e.g. "add project status to memory") before any user prompt lands.
+	// Fire-and-forget because nothing else is waiting on it.
+	void hooks.dispatch("SessionStart", { event: "SessionStart", workingDir: cwd }).catch(() => undefined);
+
+	/**
+	 * Submit a user-initiated prompt — fires UserPromptSubmit through the
+	 * hook chain first so audit / lint hooks can veto with exit code 2.
+	 * Subagent prompts (dispatch-agent) skip this and call agent.prompt
+	 * directly because they aren't user-initiated.
+	 *
+	 * Returns `{ submitted: false, reason }` when a sync hook blocked the
+	 * submit, otherwise resolves to `{ submitted: true }` after the agent
+	 * accepted the prompt. The agent's own turn lifecycle still emits
+	 * events on bundle.subscribe.
+	 */
+	const submitUserPrompt = async (text: string): Promise<{ submitted: boolean; reason?: string }> => {
+		const outcome = await hooks.dispatch("UserPromptSubmit", {
+			event: "UserPromptSubmit",
+			workingDir: cwd,
+			userPrompt: text,
+		});
+		if (outcome.blocked) {
+			return { submitted: false, reason: outcome.reason };
+		}
+		// Await the agent's turn so headless callers can chain on a real
+		// promise that reflects when the conversation has settled. Interactive
+		// callers don't await us — they subscribe to bundle.subscribe for the
+		// streaming events independent of this resolution.
+		try {
+			await agent.prompt(text);
+		} catch {
+			// Agent errors flow out as agent_end events with errorMessage on
+			// the bundle.subscribe stream; callers handle them there.
+		}
+		return { submitted: true };
+	};
 
 	void agentRef;
 	return {
@@ -361,9 +442,29 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		sessions,
 		hooks,
 		diagnostics,
+		assets,
 		subscribe,
+		submitUserPrompt,
 		resumedFrom: resumed ? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length } : undefined,
 		resumedMessages: opts.initialMessages ?? resumed?.messages ?? [],
 		backgroundShells: toolContext.backgroundShells,
 	};
+}
+
+/** Extract the trailing assistant text content from an array of messages. */
+function lastAssistantText(messages: AgentMessage[]): string | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "assistant") continue;
+		if (typeof m.content === "string") return m.content || undefined;
+		if (Array.isArray(m.content)) {
+			const text = m.content
+				.filter((b): b is { type: "text"; text: string } => (b as { type: string }).type === "text")
+				.map((b) => b.text)
+				.join("");
+			return text || undefined;
+		}
+		return undefined;
+	}
+	return undefined;
 }

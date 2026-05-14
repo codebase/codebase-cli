@@ -45,7 +45,19 @@ export function createShellKill(ctx: ToolContext): AgentTool<typeof Params> {
 					],
 				};
 			}
-			await ctx.backgroundShells.kill(params.task_id);
+			const result = await ctx.backgroundShells.kill(params.task_id);
+			if (result.outcome === "signal-failed") {
+				return {
+					details: undefined,
+					content: [
+						{
+							type: "text",
+							text: `Background shell ${params.task_id} did not respond to SIGTERM/SIGKILL — it may already be dead, or the OS refused the signal. Check with shell_output.`,
+						},
+					],
+					isError: true,
+				};
+			}
 			const after = ctx.backgroundShells.get(params.task_id);
 			return {
 				details: undefined,

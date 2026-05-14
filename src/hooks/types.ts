@@ -54,6 +54,14 @@ export interface HookEventContext {
 	subagentPrompt?: string;
 	/** SubagentStop only — was the subagent run successful? */
 	subagentSuccess?: boolean;
+
+	// UserPromptSubmit-specific:
+	/** UserPromptSubmit — the raw text the user submitted. Hooks can reject with exit 2. */
+	userPrompt?: string;
+
+	// Stop-specific:
+	/** Stop — the agent's final message text (last assistant message), if any. */
+	finalMessage?: string;
 }
 
 export interface HookResult {

@@ -2,7 +2,7 @@ import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
-import { type AgentBundle, createAgent } from "../agent/agent.js";
+import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import type { PermissionRequest } from "../permissions/store.js";
 import {
@@ -35,6 +35,11 @@ export interface AppServerOptions {
 	resume?: boolean;
 	/** When true, every tool call that would prompt the user auto-allows. */
 	autoApprove?: boolean;
+	/**
+	 * Test escape hatch — forwarded straight to createAgent so tests
+	 * can inject a pi-ai faux provider. Production never sets this.
+	 */
+	configOverride?: CreateAgentOptions["configOverride"];
 }
 
 /**
@@ -60,7 +65,11 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 
 	let bundle: AgentBundle;
 	try {
-		bundle = createAgent({ resume: opts.resume, autoApprove: opts.autoApprove });
+		bundle = createAgent({
+			resume: opts.resume,
+			autoApprove: opts.autoApprove,
+			configOverride: opts.configOverride,
+		});
 	} catch (e) {
 		const msg = e instanceof ConfigError ? e.message : e instanceof Error ? e.message : String(e);
 		stderr.write(`app-server: ${msg}\n`);

@@ -62,9 +62,15 @@ export async function runPlanFlow(
 			if (choice === "Yes — run it") {
 				const finalPrompt = buildAgentPrompt(originalPrompt, plan, qaHistory);
 				const withEnv = envReminderForFirstTurn ? `${envReminderForFirstTurn}\n\n${finalPrompt}` : finalPrompt;
-				bundle.agent.prompt(withEnv).catch((err: unknown) => {
-					onError(err instanceof Error ? err.message : String(err));
-				});
+				// Plan-mode "approve" is a user decision, so the final prompt
+				// goes through the UserPromptSubmit hook surface like any
+				// other user-initiated submit.
+				bundle
+					.submitUserPrompt(withEnv)
+					.then((result) => {
+						if (!result.submitted && result.reason) onError(`Hook blocked plan: ${result.reason}`);
+					})
+					.catch((err: unknown) => onError(err instanceof Error ? err.message : String(err)));
 				return;
 			}
 			if (choice === "Cancel") {

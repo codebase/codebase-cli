@@ -113,11 +113,30 @@ async function loginCmd(
 	out: (m: string) => void,
 	err: (m: string) => void,
 ): Promise<number> {
-	out("opening your browser to sign in…");
-	out("(if it doesn't open, the URL will be printed)");
 	try {
-		const creds = await runOAuthLogin(config);
+		const creds = await runOAuthLogin(config, {
+			onManualUrl: (url) => {
+				out("Open this URL to sign in:");
+				out("");
+				out(`  ${url}`);
+				out("");
+				// SSH callers need to reach the localhost callback on this box.
+				// Print the port-forward command preemptively so a remote login
+				// just works — they paste both commands and are done.
+				if (process.env.SSH_CONNECTION || process.env.SSH_TTY) {
+					const port = new URL(url).searchParams.get("redirect_uri")?.match(/:(\d+)\//)?.[1];
+					if (port) {
+						out("Detected SSH session. From your laptop, forward the callback port first:");
+						out("");
+						out(`  ssh -L ${port}:127.0.0.1:${port} <user>@<host>`);
+						out("");
+					}
+				}
+				out("Waiting for sign-in…");
+			},
+		});
 		store.save(creds);
+		out("");
 		out(`signed in${creds.email ? ` as ${creds.email}` : ""}.`);
 		return 0;
 	} catch (e) {
