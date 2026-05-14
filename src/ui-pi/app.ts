@@ -134,7 +134,14 @@ export class App extends Container {
 		this.addChild(this.bgShellPanel);
 		this.addChild(this.statusBar);
 
-		this.unsubscribe = this.bundle.subscribe((event) => this.handleAgentEvent(event));
+		// Async handler so the event loop can yield between events — pi-tui's
+// timer + render scheduler need microtask gaps to fire. Without `async`
+// here, a burst of agent events drains the microtask queue without
+// letting setTimeout-driven renders or interval-driven spinners ever
+// run, and the user sees nothing until they press a key.
+this.unsubscribe = this.bundle.subscribe(async (event) => {
+	this.handleAgentEvent(event);
+});
 	}
 
 	/**
@@ -508,7 +515,14 @@ export class App extends Container {
 				resume: false,
 			});
 			this.bundle = next;
-			this.unsubscribe = this.bundle.subscribe((event) => this.handleAgentEvent(event));
+			// Async handler so the event loop can yield between events — pi-tui's
+// timer + render scheduler need microtask gaps to fire. Without `async`
+// here, a burst of agent events drains the microtask queue without
+// letting setTimeout-driven renders or interval-driven spinners ever
+// run, and the user sees nothing until they press a key.
+this.unsubscribe = this.bundle.subscribe(async (event) => {
+	this.handleAgentEvent(event);
+});
 			this.statusBar.setModelName(next.model.name);
 			this.statusBar.note(`Switched to ${next.model.name} (${next.model.provider}/${next.model.id}).`);
 			// Re-bind every bundle-scoped store: compaction monitor, tasks,
@@ -650,6 +664,9 @@ export class App extends Container {
 				this.startSpinners();
 				// Any new turn clears any stale error from the prior run.
 				this.errorCard.hide();
+				// Immediate paint on turn start so the user sees "thinking"
+				// + throbber without waiting on the 16ms render timer.
+				this.tui?.requestRender();
 				break;
 			case "turn_start":
 				this.status = "thinking";
@@ -669,6 +686,10 @@ export class App extends Container {
 				if (event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.transcript.setStreaming(event.message);
+					// Streaming tokens are the user-visible signal that the
+					// agent is alive — render aggressively per chunk so the
+					// text actually appears as it arrives.
+					this.tui?.requestRender();
 				}
 				break;
 			case "message_end":
