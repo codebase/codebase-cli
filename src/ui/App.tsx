@@ -5,7 +5,7 @@ import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
-import { BUILTIN_COMMANDS } from "../commands/builtins.js";
+import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { ConfigStore } from "../config/store.js";
 import type { PermissionRequest } from "../permissions/store.js";
