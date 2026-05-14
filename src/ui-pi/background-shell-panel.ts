@@ -1,4 +1,4 @@
-import { Container, Text } from "@mariozechner/pi-tui";
+import { Container, Text } from "@earendil-works/pi-tui";
 import type { BackgroundShellRecord, BackgroundShellStore } from "../tools/background-shell-store.js";
 import { ansi } from "./theme.js";
 

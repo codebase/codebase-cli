@@ -1,4 +1,4 @@
-import { Container, Text } from "@mariozechner/pi-tui";
+import { Container, Text } from "@earendil-works/pi-tui";
 import type { Task, TaskStatus, TaskStore } from "../tools/task-store.js";
 import { ansi } from "./theme.js";
 

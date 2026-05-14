@@ -1,4 +1,4 @@
-import { Container, SelectList, Text } from "@mariozechner/pi-tui";
+import { Container, SelectList, Text } from "@earendil-works/pi-tui";
 import type { PermissionRequest, ResponseChoice } from "../permissions/store.js";
 import { ansi, selectListTheme } from "./theme.js";
 

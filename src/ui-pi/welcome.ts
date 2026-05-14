@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { basename } from "node:path";
-import { Container, Text } from "@mariozechner/pi-tui";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { ansi } from "./theme.js";
 
 interface WelcomeProps {

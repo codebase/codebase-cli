@@ -1,4 +1,4 @@
-import { Container, SelectList, Text } from "@mariozechner/pi-tui";
+import { Container, SelectList, Text } from "@earendil-works/pi-tui";
 import { ansi, selectListTheme } from "./theme.js";
 
 export interface ModelOption {

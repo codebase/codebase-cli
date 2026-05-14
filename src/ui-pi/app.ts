@@ -8,7 +8,7 @@ import {
 	type OverlayHandle,
 	Text,
 	type TUI,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
 import { routeUserInput } from "../agent/router.js";
@@ -24,6 +24,7 @@ import { HistoryStore } from "../ui/history-store.js";
 import { runShellEscape } from "../ui/shell-escape.js";
 import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
+import { ContextWarning, ErrorCard } from "./banners.js";
 import { CompactionBanner } from "./compaction-banner.js";
 import { buildMessageBlocks, MessageView } from "./message-view.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
@@ -48,6 +49,8 @@ export class App extends Container {
 	private readonly bgShellPanel: BackgroundShellPanel;
 	private readonly compactionBanner: CompactionBanner;
 	private readonly taskPanel: TaskPanel;
+	private readonly errorCard: ErrorCard;
+	private readonly contextWarning: ContextWarning;
 	private readonly registry: CommandRegistry;
 	private readonly historyStore: HistoryStore;
 	private unsubscribe: () => void;
@@ -79,6 +82,9 @@ export class App extends Container {
 	private rateSamples: Array<{ t: number; c: number }> = [];
 	/** Spinner timer — drives the status-bar throbber + per-tool-call spinners while busy. */
 	private spinnerTimer: NodeJS.Timeout | undefined;
+	/** Tracks bg-shell status transitions so we only notify the model once per exit. */
+	private bgShellPrevStatus = new Map<string, string>();
+	private removeBgShellSubscription: (() => void) | undefined;
 
 	constructor() {
 		super();
@@ -97,6 +103,8 @@ export class App extends Container {
 		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells);
 		this.compactionBanner = new CompactionBanner(this.bundle.compactionMonitor);
 		this.taskPanel = new TaskPanel(this.bundle.toolContext.tasks);
+		this.errorCard = new ErrorCard();
+		this.contextWarning = new ContextWarning();
 		this.historyStore = new HistoryStore({ cwd: this.bundle.toolContext.cwd });
 
 		this.registry = new CommandRegistry();
@@ -113,6 +121,8 @@ export class App extends Container {
 		this.addChild(this.transcript);
 		this.addChild(this.compactionBanner);
 		this.addChild(this.taskPanel);
+		this.addChild(this.errorCard);
+		this.addChild(this.contextWarning);
 		this.addChild(this.bgShellPanel);
 		this.addChild(this.statusBar);
 
@@ -164,6 +174,35 @@ export class App extends Container {
 		this.removeUserQuerySubscription = this.bundle.userQueries.subscribe((q) => {
 			if (q) this.showUserQueryOverlay(q);
 			else this.hideUserQueryOverlay();
+		});
+		// Bg-shell exit notifier: when a backgrounded shell stops, steer
+		// a system-reminder into the agent so the model sees the exit
+		// (and can call shell_output for captured logs). If the agent is
+		// idle, surface a status note instead — re-waking it just for
+		// the notification would be over-eager.
+		this.removeBgShellSubscription = this.bundle.backgroundShells.subscribe((shells) => {
+			for (const s of shells) {
+				const prev = this.bgShellPrevStatus.get(s.id);
+				this.bgShellPrevStatus.set(s.id, s.status);
+				if (prev !== "running" || s.status === "running") continue;
+				const summary =
+					s.status === "killed"
+						? `(killed${s.signal ? ` ${s.signal}` : ""})`
+						: `(exit code ${s.exitCode ?? "?"})`;
+				const note = `Background shell ${s.id} ${summary}: ${s.command}`;
+				this.statusBar.note(`↪ ${note}`);
+				if (this.busy) {
+					try {
+						this.bundle.agent.steer({
+							role: "user",
+							content: `<system-reminder>${note}\nCall shell_output("${s.id}") to read the captured output if you need it.</system-reminder>`,
+							timestamp: Date.now(),
+						});
+					} catch {
+						// Agent isn't actively running — fine, status note covers it.
+					}
+				}
+			}
 		});
 	}
 
@@ -324,9 +363,19 @@ export class App extends Container {
 			promptText = `${buildEnvironmentReminder(this.bundle.toolContext.cwd)}\n\n${augmented}`;
 			this.envInjected = true;
 		}
-		this.bundle.agent.prompt(promptText).catch(() => {
-			// Errors surface via agent_end with errorMessage; rejection here isn't useful.
-		});
+		// Route through the bundle helper so UserPromptSubmit hooks fire and
+		// can veto the submit. A blocked prompt surfaces the hook's stderr
+		// as a status-bar note.
+		this.bundle
+			.submitUserPrompt(promptText)
+			.then((result) => {
+				if (!result.submitted && result.reason) {
+					this.statusBar.note(`Prompt blocked by hook: ${result.reason}`);
+				}
+			})
+			.catch(() => {
+				// Errors surface via agent_end with errorMessage; rejection here isn't useful.
+			});
 	}
 
 	/**
@@ -466,6 +515,23 @@ export class App extends Container {
 				if (q) this.showUserQueryOverlay(q);
 				else this.hideUserQueryOverlay();
 			});
+			// Re-bind the bg-shell exit notifier against the new bundle.
+			// Reset the prev-status tracker so a fresh bundle gets clean
+			// transitions instead of carrying state from the prior agent.
+			this.removeBgShellSubscription?.();
+			this.bgShellPrevStatus = new Map();
+			this.removeBgShellSubscription = this.bundle.backgroundShells.subscribe((shells) => {
+				for (const s of shells) {
+					const prev = this.bgShellPrevStatus.get(s.id);
+					this.bgShellPrevStatus.set(s.id, s.status);
+					if (prev !== "running" || s.status === "running") continue;
+					const summary =
+						s.status === "killed"
+							? `(killed${s.signal ? ` ${s.signal}` : ""})`
+							: `(exit code ${s.exitCode ?? "?"})`;
+					this.statusBar.note(`↪ Background shell ${s.id} ${summary}: ${s.command}`);
+				}
+			});
 		} catch (err) {
 			this.statusBar.note(`model switch failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
@@ -498,6 +564,7 @@ export class App extends Container {
 		const contextWindow = 200_000;
 		const ctxPct = contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
 		this.statusBar.setMetrics(ctxPct, this.usage.cost.total, this.computeTokRate());
+		this.contextWarning.setPercent(ctxPct);
 	}
 
 	private computeTokRate(): number | undefined {
@@ -563,10 +630,13 @@ export class App extends Container {
 				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
 				this.startSpinners();
+				// Any new turn clears any stale error from the prior run.
+				this.errorCard.hide();
 				break;
 			case "turn_start":
 				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
+				this.errorCard.hide();
 				break;
 			case "message_start":
 				if (event.message.role === "assistant") {
@@ -640,6 +710,14 @@ export class App extends Container {
 				this.statusBar.setStatus("idle");
 				this.stopRateSampling();
 				this.stopSpinners();
+				// errorMessage lives on the agent state, not the event payload.
+				// Surface an error card when the turn finished badly; the next
+				// successful turn hides it again.
+				{
+					const errMsg = this.bundle.agent.state.errorMessage;
+					if (errMsg) this.errorCard.show(errMsg);
+					else this.errorCard.hide();
+				}
 				this.maybeDrainQueue();
 				break;
 		}
@@ -650,6 +728,7 @@ export class App extends Container {
 		this.removeInputListener?.();
 		this.removePermSubscription?.();
 		this.removeUserQuerySubscription?.();
+		this.removeBgShellSubscription?.();
 		this.hidePermissionOverlay();
 		this.hideUserQueryOverlay();
 		this.hideModelPicker();

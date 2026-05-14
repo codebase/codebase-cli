@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type Component, Markdown, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import { type Component, Markdown, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ToolExecution } from "../types.js";
 import { type DiffHunk, type DiffInfo, diffSummary } from "../ui/diff-summary.js";
 import { toolActionLabel, toolActionPast, truncate } from "../ui/tool-labels.js";

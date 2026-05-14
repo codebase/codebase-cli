@@ -1,4 +1,4 @@
-import { Container, Input as PiInput, Text } from "@mariozechner/pi-tui";
+import { Container, Input as PiInput, Text } from "@earendil-works/pi-tui";
 import type { UserQuery } from "../user-queries/store.js";
 import { ansi } from "./theme.js";
 

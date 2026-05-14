@@ -1,4 +1,4 @@
-import { ProcessTerminal, TUI } from "@mariozechner/pi-tui";
+import { ProcessTerminal, TUI } from "@earendil-works/pi-tui";
 import { ConfigError } from "../agent/config.js";
 import { App } from "./app.js";
 
