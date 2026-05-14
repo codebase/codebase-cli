@@ -52,6 +52,10 @@ export async function runPiTuiApp(): Promise<void> {
 
 	tui.addChild(app);
 	app.attachToTui(tui);
+	// Force a paint now so the welcome banner appears immediately after
+	// the wizard tears down (or on cold start). Without this kick the TUI
+	// only paints on the next input event.
+	tui.requestRender(true);
 
 	// Resolve when the user signals exit (Ctrl-C twice, /exit). The App
 	// owns the exit promise so it can dispose cleanly first.

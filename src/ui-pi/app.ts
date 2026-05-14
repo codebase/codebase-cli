@@ -100,9 +100,13 @@ export class App extends Container {
 
 		this.transcript = new TranscriptView(this.bundle.resumedMessages, this.tools);
 		this.statusBar = new StatusBar(this.bundle.model.name, this.bundle.toolContext.cwd);
-		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells);
-		this.compactionBanner = new CompactionBanner(this.bundle.compactionMonitor);
-		this.taskPanel = new TaskPanel(this.bundle.toolContext.tasks);
+		// Async store subscribers need to schedule a TUI render after every
+		// state change — pi-tui only paints on input events or explicit
+		// requestRender, never automatically on child invalidate.
+		const requestRender = (): void => this.tui?.requestRender();
+		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells, requestRender);
+		this.compactionBanner = new CompactionBanner(this.bundle.compactionMonitor, requestRender);
+		this.taskPanel = new TaskPanel(this.bundle.toolContext.tasks, requestRender);
 		this.errorCard = new ErrorCard();
 		this.contextWarning = new ContextWarning();
 		this.historyStore = new HistoryStore({ cwd: this.bundle.toolContext.cwd });
@@ -167,13 +171,17 @@ export class App extends Container {
 		this.removeInputListener = tui.addInputListener((data) => this.handleGlobalInput(data));
 		// Permission + UserQuery requests arrive asynchronously from tool
 		// execution. Show the overlay when one lands; dismiss when answered.
+		// Pi-tui needs an explicit requestRender after async state changes
+		// (see handleAgentEvent for the rationale).
 		this.removePermSubscription = this.bundle.permissions.subscribe((req) => {
 			if (req) this.showPermissionOverlay(req);
 			else this.hidePermissionOverlay();
+			this.tui?.requestRender();
 		});
 		this.removeUserQuerySubscription = this.bundle.userQueries.subscribe((q) => {
 			if (q) this.showUserQueryOverlay(q);
 			else this.hideUserQueryOverlay();
+			this.tui?.requestRender();
 		});
 		// Bg-shell exit notifier: when a backgrounded shell stops, steer
 		// a system-reminder into the agent so the model sees the exit
@@ -203,6 +211,7 @@ export class App extends Container {
 					}
 				}
 			}
+			this.tui?.requestRender();
 		});
 	}
 
@@ -510,10 +519,12 @@ export class App extends Container {
 			this.removePermSubscription = this.bundle.permissions.subscribe((req) => {
 				if (req) this.showPermissionOverlay(req);
 				else this.hidePermissionOverlay();
+				this.tui?.requestRender();
 			});
 			this.removeUserQuerySubscription = this.bundle.userQueries.subscribe((q) => {
 				if (q) this.showUserQueryOverlay(q);
 				else this.hideUserQueryOverlay();
+				this.tui?.requestRender();
 			});
 			// Re-bind the bg-shell exit notifier against the new bundle.
 			// Reset the prev-status tracker so a fresh bundle gets clean
@@ -531,6 +542,7 @@ export class App extends Container {
 							: `(exit code ${s.exitCode ?? "?"})`;
 					this.statusBar.note(`↪ Background shell ${s.id} ${summary}: ${s.command}`);
 				}
+				this.tui?.requestRender();
 			});
 		} catch (err) {
 			this.statusBar.note(`model switch failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -590,6 +602,7 @@ export class App extends Container {
 				this.rateSamples.shift();
 			}
 			this.pushMetrics();
+			this.tui?.requestRender();
 		}, 500);
 	}
 
@@ -607,6 +620,7 @@ export class App extends Container {
 		this.spinnerTimer = setInterval(() => {
 			this.statusBar.tickThrobber();
 			this.transcript.tickSpinners();
+			this.tui?.requestRender();
 		}, 90);
 	}
 
@@ -722,6 +736,11 @@ export class App extends Container {
 				break;
 		}
 		this.pushMetrics();
+		// Pi-tui only paints on input events or explicit requestRender calls.
+		// Agent events come from pi-agent-core's stream — without this kick
+		// the UI sits idle until the user presses a key. Match what
+		// pi-mono's reference coding-agent does after every event.
+		this.tui?.requestRender();
 	}
 
 	dispose(): void {

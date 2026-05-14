@@ -13,13 +13,16 @@ export class BackgroundShellPanel extends Container {
 	private unsubscribe: () => void;
 	private shells: readonly BackgroundShellRecord[] = [];
 	private prunedAt = Date.now();
+	private requestRender: () => void;
 
-	constructor(store: BackgroundShellStore) {
+	constructor(store: BackgroundShellStore, requestRender: () => void = () => undefined) {
 		super();
 		this.store = store;
+		this.requestRender = requestRender;
 		this.unsubscribe = store.subscribe((next) => {
 			this.shells = next;
 			this.rebuild();
+			this.requestRender();
 		});
 		this.rebuild();
 	}
@@ -31,6 +34,7 @@ export class BackgroundShellPanel extends Container {
 		this.unsubscribe = store.subscribe((next) => {
 			this.shells = next;
 			this.rebuild();
+			this.requestRender();
 		});
 	}
 

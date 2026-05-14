@@ -14,10 +14,13 @@ export class CompactionBanner extends Container {
 	private unsubscribe: () => void;
 	private timer: NodeJS.Timeout | undefined;
 	private state: CompactionState = { active: false, startedAt: null, messageCount: 0 };
+	/** Called after every state change so the host can schedule a redraw. */
+	private requestRender: () => void;
 
-	constructor(monitor: CompactionMonitor) {
+	constructor(monitor: CompactionMonitor, requestRender: () => void = () => undefined) {
 		super();
 		this.line = new Text("", 1, 0);
+		this.requestRender = requestRender;
 		this.unsubscribe = monitor.subscribe((s) => this.applyState(s));
 	}
 
@@ -34,6 +37,7 @@ export class CompactionBanner extends Container {
 		if (!state.active) {
 			if (Array.isArray(children)) children.length = 0;
 			this.invalidate();
+			this.requestRender();
 			return;
 		}
 		if (Array.isArray(children) && children.length === 0) {
@@ -50,6 +54,7 @@ export class CompactionBanner extends Container {
 		const suffix = elapsed > 0 ? ` · ${elapsed}s` : "";
 		this.line.setText(ansi.yellow(`⟳ Compacting context (${this.state.messageCount} messages${suffix})…`));
 		this.line.invalidate();
+		this.requestRender();
 	}
 
 	private stopTimer(): void {

@@ -47,6 +47,7 @@ const PROVIDER_ITEMS = PROVIDER_CHOICES.map((p) => ({
 type WizardMode =
 	| "menu"
 	| "oauth-running"
+	| "signed-in"
 	| "byok-provider"
 	| { kind: "byok-key"; provider: ProviderChoice }
 	| { kind: "error"; message: string };
@@ -122,6 +123,9 @@ export class FirstRunWizard extends Container {
 			this.addChild(new Text(ansi.dim("↑↓ to move · Enter to select · Esc to quit"), 1, 1));
 		} else if (this.mode === "oauth-running") {
 			this.renderOAuthRunning();
+		} else if (this.mode === "signed-in") {
+			this.addChild(new Text(ansi.bold(ansi.green("✓ Signed in")), 1, 0));
+			this.addChild(new Text(ansi.dim("Starting agent…"), 1, 1));
 		} else if (this.mode === "byok-provider") {
 			this.addChild(new Text(ansi.bold("Pick a provider:"), 1, 0));
 			this.providerList = new SelectList(PROVIDER_ITEMS, Math.min(9, PROVIDER_ITEMS.length), selectListTheme);
@@ -256,6 +260,14 @@ export class FirstRunWizard extends Container {
 				email: creds.email,
 				source: "codebase",
 			});
+			// Flash a success screen so the user gets visible feedback
+			// before the wizard tears down and the App mounts. Without
+			// this, the moment between OAuth-callback and App-mount looks
+			// like a hang — the browser tab says "Signed in" but the CLI
+			// shows nothing until the agent boots and emits its first
+			// event.
+			this.setMode("signed-in");
+			this.tui.requestRender();
 			this.onDone();
 		} catch (err) {
 			if (this.cancelOAuth) return;

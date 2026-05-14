@@ -28,10 +28,12 @@ export class TaskPanel extends Container {
 	private readonly maxVisible: number;
 	private unsubscribe: () => void;
 	private tasks: readonly Task[] = [];
+	private requestRender: () => void;
 
-	constructor(store: TaskStore, maxVisible = 8) {
+	constructor(store: TaskStore, requestRender: () => void = () => undefined, maxVisible = 8) {
 		super();
 		this.maxVisible = maxVisible;
+		this.requestRender = requestRender;
 		this.header = new Text(ansi.bold(ansi.dim("tasks")), 1, 0);
 		this.unsubscribe = store.subscribe((tasks) => this.applyTasks(tasks));
 	}
@@ -45,6 +47,7 @@ export class TaskPanel extends Container {
 	private applyTasks(tasks: readonly Task[]): void {
 		this.tasks = tasks;
 		this.rebuild();
+		this.requestRender();
 	}
 
 	private rebuild(): void {
