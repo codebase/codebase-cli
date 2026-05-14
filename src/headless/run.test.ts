@@ -1,5 +1,5 @@
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildJsonResult, runHeadless } from "./run.js";
 
@@ -148,7 +148,7 @@ describe("runHeadless", () => {
 		// test confirms the headless wiring respects the returned result by
 		// asserting the error pathway plumbing.
 		faux.setResponses([fauxAssistantMessage("never runs")]);
-		const { capture, write } = makeCapture();
+		const { write } = makeCapture();
 		const exitCode = await runHeadless({
 			prompt: "hi",
 			outputFormat: "text",

@@ -1,6 +1,6 @@
 import { PassThrough } from "node:stream";
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAppServer } from "./server.js";
 
@@ -149,10 +149,7 @@ describe("runAppServer", () => {
 		const ack = await h.waitFor((m) => m.type === "response" && m.id === "p1");
 		expect(ack.success).toBe(true);
 		// Wait for agent_end on the event stream.
-		await h.waitFor(
-			(m) => m.type === "event" && (m.event as { type: string }).type === "agent_end",
-			5000,
-		);
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "agent_end", 5000);
 		// Some message_end events should have fired with our faux content.
 		const messageEnds = h.messages.filter(
 			(m) => m.type === "event" && (m.event as { type: string }).type === "message_end",
