@@ -1,7 +1,7 @@
 import { type Component, Container, Input, SelectList, Text, type TUI } from "@earendil-works/pi-tui";
 import { CredentialsStore } from "../auth/credentials.js";
 import { type OAuthConfig, runOAuthLogin } from "../auth/flow.js";
-import { ansi, selectListTheme } from "./theme.js";
+import { ansi, osc8Link, selectListTheme } from "./theme.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
 
@@ -144,8 +144,19 @@ export class FirstRunWizard extends Container {
 		if (this.manualUrl) {
 			this.addChild(new Text(ansi.bold(ansi.yellow("Sign in to continue")), 1, 0));
 			this.addChild(new Text(ansi.dim(this.manualUrl.reason), 1, 1));
-			this.addChild(new Text(ansi.bold(ansi.cyan("Open this URL in your browser:")), 1, 0));
-			this.addChild(new Text(this.manualUrl.url, 1, 0));
+			// Clickable OSC 8 hyperlink — terminals that honor it render this
+			// as a single clickable element regardless of how the URL would
+			// otherwise wrap. The bare URL still prints below as a
+			// copy-paste fallback for terminals that don't.
+			this.addChild(
+				new Text(
+					ansi.bold(ansi.cyan(osc8Link(this.manualUrl.url, "→ Click here to sign in (cmd-click in most terminals)"))),
+					1,
+					0,
+				),
+			);
+			this.addChild(new Text(ansi.dim("If clicking didn't open a browser, copy this URL:"), 1, 0));
+			this.addChild(new Text(ansi.dim(this.manualUrl.url), 1, 0));
 			this.addChild(new Text(ansi.dim("Waiting for the browser to redirect back. (Ctrl-C to cancel.)"), 1, 1));
 		} else {
 			this.addChild(new Text(`Opening ${ansi.cyan(this.authBase)} in your browser…`, 1, 0));

@@ -1,3 +1,4 @@
+import { terminalHyperlink } from "../ui/paths.js";
 import { CredentialsStore } from "./credentials.js";
 import { type OAuthConfig, refreshAccessToken, revokeToken, runOAuthLogin } from "./flow.js";
 
@@ -116,7 +117,16 @@ async function loginCmd(
 	try {
 		const creds = await runOAuthLogin(config, {
 			onManualUrl: (url) => {
-				out("Open this URL to sign in:");
+				// OSC 8 hyperlink wraps the URL so soft-wrap by the terminal
+				// doesn't break click-to-open in iTerm2 / Wezterm / Kitty /
+				// modern Terminal.app. The bare URL is still printed below
+				// as a copy-paste fallback for terminals that don't honor
+				// the escape.
+				out("Click here to sign in (cmd-click in most terminals):");
+				out("");
+				out(`  ${terminalHyperlink(url, "→ codebase login link")}`);
+				out("");
+				out("Or copy this URL into a browser:");
 				out("");
 				out(`  ${url}`);
 				out("");

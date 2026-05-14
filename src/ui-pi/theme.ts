@@ -1,4 +1,5 @@
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
+import { terminalHyperlink } from "../ui/paths.js";
 
 /**
  * ANSI escape helpers. Pi-tui doesn't ship a built-in theme — components
@@ -63,6 +64,9 @@ export const editorTheme: EditorTheme = {
 	borderColor: (text) => ansi.dim(text),
 	selectList: selectListTheme,
 };
+
+/** Re-export the OSC 8 helper so pi-tui modules can reach it from the theme. */
+export const osc8Link = terminalHyperlink;
 
 /** Common role-color mapping for the transcript header labels. */
 export const roleColor = {

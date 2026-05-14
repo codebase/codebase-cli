@@ -35,5 +35,18 @@ export function hyperlinkPath(visible: string, rawPath: string): string {
 	if (process.env.NO_HYPERLINK === "1") return visible;
 	const absolute = isAbsolute(rawPath) ? rawPath : resolveAbsolute(process.cwd(), rawPath);
 	const url = `file://${absolute.split(pathSep).map(encodeURIComponent).join("/")}`;
+	return terminalHyperlink(url, visible);
+}
+
+/**
+ * General-purpose OSC 8 wrap. Renders `visible` as a clickable link to
+ * `url` in terminals that support the hyperlink escape; falls back to
+ * the bare `visible` text otherwise. The escape is zero-width and
+ * survives soft-wrap, which is the whole point: a long https URL the
+ * terminal would otherwise break across two rows still resolves as
+ * one clickable element. Opt-out: NO_HYPERLINK=1.
+ */
+export function terminalHyperlink(url: string, visible: string): string {
+	if (process.env.NO_HYPERLINK === "1") return visible;
 	return `\x1b]8;;${url}\x1b\\${visible}\x1b]8;;\x1b\\`;
 }
