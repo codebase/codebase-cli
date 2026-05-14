@@ -29,8 +29,8 @@ export async function routeUserInput(glue: GlueClient, text: string, options: Ro
 	if (intent === "plan") {
 		return { kind: "plan" };
 	}
-	// agent + clarify both go through the main agent for now; clarify-as-soft-hint
-	// could surface a system reminder when we wire steering messages in Phase 11b.
+	// agent + clarify both go through the main agent. A future "clarify" mode
+	// could surface a system reminder via agent.steer() before running the turn.
 	return { kind: "agent" };
 }
 

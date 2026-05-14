@@ -6,9 +6,11 @@ import type { Asset, AssetSource, PromptAsset, SkillAsset, TemplateAsset } from 
  * call, so loaders can come and go (e.g. PlatformLoader becomes
  * available after the user runs `codebase auth login`).
  *
- * Phase 7 ships LocalLoader (reads ~/.codebase/skills/*.md). Phase 7+
- * ships PlatformLoader (fetches from codebase.foundation/api/cli/...)
- * — see platform-loader.ts for the planned wire format.
+ * Loaders today: BundledLoader (ships with the binary) and
+ * PlatformLoader (fetches from codebase.foundation/api/cli/... when
+ * signed in). LocalLoader (~/.codebase/skills/*.md) is queued.
+ * Resolution order is platform > bundled, matching the "operator
+ * overrides project" precedence the rest of the CLI uses.
  */
 export interface AssetLoader {
 	source: AssetSource;

@@ -20,6 +20,18 @@ export interface BackgroundShellRecord {
 export type BackgroundShellListener = (shells: readonly BackgroundShellRecord[]) => void;
 
 /**
+ * Result returned by `BackgroundShellStore.kill`. The caller needs to know
+ * whether the process actually went down; a previous void return swallowed
+ * the difference between "killed cleanly", "wasn't there", and "tried to
+ * signal but the OS said no" — that hid real bugs in tool callers.
+ */
+export type BackgroundShellKillResult =
+	| { outcome: "killed"; signal: "SIGTERM" | "SIGKILL" }
+	| { outcome: "not-found" }
+	| { outcome: "already-exited" }
+	| { outcome: "signal-failed" };
+
+/**
  * Tracks long-running shell processes that the agent spawned with
  * `shell({ background: true })`. The agent's tool turn returns
  * immediately with a `task_id`; the process keeps running in the
@@ -115,31 +127,50 @@ export class BackgroundShellStore {
 	/**
 	 * Terminate a running shell. SIGTERM first; if the process is still
 	 * around after `gracePeriodMs`, SIGKILL. Resolves once the exit
-	 * handler has fired. No-op if the id is unknown or already exited.
+	 * handler has fired.
+	 *
+	 * Returns a structured result so the caller can act on the outcome:
+	 *   - `"killed"`         — process exited after our signal
+	 *   - `"not-found"`      — unknown id
+	 *   - `"already-exited"` — id known but the process had already left
+	 *   - `"signal-failed"`  — both SIGTERM and SIGKILL threw (rare; e.g.
+	 *                          stale PID reuse). Likely already dead.
 	 */
-	async kill(id: string, gracePeriodMs = 2000): Promise<void> {
-		const child = this.processes.get(id);
-		if (!child) return;
+	async kill(id: string, gracePeriodMs = 2000): Promise<BackgroundShellKillResult> {
+		// Order matters: an exited process is dropped from `processes` but
+		// stays in `records`. Check records first so we report
+		// already-exited rather than not-found for shells we still know
+		// about.
 		const record = this.records.get(id);
-		if (!record || record.status !== "running") return;
-		return new Promise<void>((resolve) => {
+		if (!record) return { outcome: "not-found" };
+		if (record.status !== "running") return { outcome: "already-exited" };
+		const child = this.processes.get(id);
+		if (!child) return { outcome: "already-exited" };
+		return new Promise<BackgroundShellKillResult>((resolve) => {
+			let sigtermThrew = false;
+			let sigkillThrew = false;
 			const onExit = () => {
 				clearTimeout(killTimer);
-				resolve();
+				if (sigtermThrew && sigkillThrew) {
+					// Both threw but the process exited anyway — likely it was
+					// already dying. Surface as signal-failed so the caller
+					// can decide whether to retry differently.
+					resolve({ outcome: "signal-failed" });
+					return;
+				}
+				resolve({ outcome: "killed", signal: sigkillThrew ? "SIGTERM" : sigtermThrew ? "SIGKILL" : "SIGTERM" });
 			};
 			child.once("exit", onExit);
 			try {
 				child.kill("SIGTERM");
 			} catch {
-				// Process already gone; the exit handler may have fired
-				// or be about to. Resolve once child emits or after the
-				// timer trips.
+				sigtermThrew = true;
 			}
 			const killTimer = setTimeout(() => {
 				try {
 					child.kill("SIGKILL");
 				} catch {
-					// Same — best effort.
+					sigkillThrew = true;
 				}
 			}, gracePeriodMs);
 		});

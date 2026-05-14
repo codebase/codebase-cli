@@ -194,8 +194,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			tools: tools.map((t) => ({ name: t.name, description: t.description })),
 		});
 
-	// MEMORY.md gets concatenated onto the system prompt at agent creation.
-	// Reload-after-save is a Phase 11 polish item.
+	// MEMORY.md gets concatenated onto the system prompt at agent creation;
+	// edits during a session don't take effect until next launch.
 	// Project-instruction file (first of AGENTS.md / CLAUDE.md / CODEX.md /
 	// .cursorrules) gets pinned to the prompt so the agent sees the
 	// project's conventions on every turn. Memory addendum is appended
@@ -314,15 +314,15 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 						});
 					})
 					.catch((err) => {
-						// Diagnostics failures are non-fatal — surface only when the
-						// user opted into debug. Silent before; that buried a real
+						// Diagnostics failures are non-fatal — but always-stderr
+						// instead of debug-only, because the previous behavior
+						// (silent under default settings) hid a real production
 						// bug where a checker hung and the user thought the tool
-						// itself was slow.
-						if (process.env.CODEBASE_DEBUG === "1") {
-							process.stderr.write(
-								`[diagnostics] ${absPath}: ${err instanceof Error ? err.message : String(err)}\n`,
-							);
-						}
+						// itself was slow. Visible to anyone watching the terminal;
+						// the agent keeps running.
+						process.stderr.write(
+							`[diagnostics] ${absPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+						);
 					});
 			}
 			return undefined;

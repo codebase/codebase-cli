@@ -58,14 +58,14 @@ describe("BackgroundShellStore", () => {
 		expect(final?.endedAt).toBeGreaterThan(0);
 	});
 
-	it("kill() on an unknown id is a no-op", async () => {
-		await expect(store.kill("does-not-exist")).resolves.toBeUndefined();
+	it("kill() on an unknown id reports not-found", async () => {
+		await expect(store.kill("does-not-exist")).resolves.toEqual({ outcome: "not-found" });
 	});
 
-	it("kill() on an already-exited shell is a no-op", async () => {
+	it("kill() on an already-exited shell reports already-exited", async () => {
 		const record = store.spawn("true", process.cwd());
 		await waitUntil(() => (store.get(record.id)?.status !== "running" ? true : undefined));
-		await expect(store.kill(record.id)).resolves.toBeUndefined();
+		await expect(store.kill(record.id)).resolves.toEqual({ outcome: "already-exited" });
 	});
 
 	it("killAllSync() SIGTERMs every running shell", async () => {

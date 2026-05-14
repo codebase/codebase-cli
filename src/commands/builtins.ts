@@ -1,6 +1,5 @@
 import { execSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { CredentialsStore } from "../auth/credentials.js";
@@ -657,19 +656,6 @@ const projects: Command = {
 	},
 };
 
-const mcp: Command = {
-	name: "mcp",
-	description: "Manage MCP (Model Context Protocol) servers — placeholder until Phase 9 lands.",
-	handler: (_args, ctx) => {
-		const configPath = join(homedir(), ".codebase", "config.json");
-		ctx.emit(
-			"MCP support is on the Phase 9 roadmap; the runtime hasn't shipped it yet.\n" +
-				`When it lands, server config will live at ${configPath} under "mcp_servers".`,
-		);
-		return { handled: true };
-	},
-};
-
 const redo: Command = {
 	name: "redo",
 	aliases: ["retry"],
@@ -729,7 +715,6 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	resume,
 	init,
 	projects,
-	mcp,
 	pwd,
 	redo,
 	debug,
