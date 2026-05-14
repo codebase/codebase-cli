@@ -1,0 +1,277 @@
+import { type Component, Container, Input, SelectList, Text, type TUI } from "@earendil-works/pi-tui";
+import { CredentialsStore } from "../auth/credentials.js";
+import { type OAuthConfig, runOAuthLogin } from "../auth/flow.js";
+import { ansi, selectListTheme } from "./theme.js";
+
+const DEFAULT_AUTH_BASE = "https://codebase.design";
+
+interface ProviderChoice {
+	id: string;
+	label: string;
+	hint: string;
+	keyHint: string;
+}
+
+const PROVIDER_CHOICES: readonly ProviderChoice[] = [
+	{ id: "anthropic", label: "Anthropic (Claude)", hint: "claude-sonnet-4 default", keyHint: "sk-ant-…" },
+	{ id: "openai", label: "OpenAI (GPT-5)", hint: "gpt-5.1 default", keyHint: "sk-…" },
+	{ id: "groq", label: "Groq", hint: "Llama 3.3 70B, free tier", keyHint: "gsk_…" },
+	{ id: "openrouter", label: "OpenRouter", hint: "any model via one key", keyHint: "sk-or-…" },
+	{ id: "google", label: "Google (Gemini)", hint: "gemini-2.5-pro default", keyHint: "AI…" },
+	{ id: "mistral", label: "Mistral", hint: "mistral-large-latest", keyHint: "" },
+	{ id: "deepseek", label: "DeepSeek", hint: "deepseek-chat", keyHint: "" },
+	{ id: "xai", label: "xAI (Grok)", hint: "grok-4", keyHint: "xai-…" },
+	{ id: "cerebras", label: "Cerebras", hint: "fastest inference", keyHint: "" },
+] as const;
+
+const MENU_ITEMS = [
+	{
+		value: "oauth",
+		label: "Login to Codebase",
+		description: "free credits · Codebase Auto model · curated skills",
+	},
+	{
+		value: "byok",
+		label: "Bring your own LLM key",
+		description: "paste an Anthropic / OpenAI / Groq / etc. key",
+	},
+	{ value: "quit", label: "Quit", description: "exit the wizard" },
+];
+
+const PROVIDER_ITEMS = PROVIDER_CHOICES.map((p) => ({
+	value: p.id,
+	label: p.label,
+	description: p.hint,
+}));
+
+type WizardMode =
+	| "menu"
+	| "oauth-running"
+	| "byok-provider"
+	| { kind: "byok-key"; provider: ProviderChoice }
+	| { kind: "error"; message: string };
+
+interface FirstRunWizardOptions {
+	tui: TUI;
+	store?: CredentialsStore;
+	authBase?: string;
+	onDone: () => void;
+	onQuit: () => void;
+}
+
+/**
+ * First-run setup wizard. Ports ink FirstRunSetup.tsx to pi-tui:
+ * three-way menu (OAuth login / BYOK / quit), an OAuth-running screen
+ * that shows the sign-in URL while we wait for the callback, a BYOK
+ * provider picker, a key-entry input, and an error screen that bounces
+ * back to the menu.
+ *
+ * Lifecycle: caller constructs us with a TUI ref, adds us as a child
+ * (or shows us as an overlay), and listens for onDone / onQuit. We
+ * persist the credential ourselves and signal completion so the runtime
+ * can re-attempt createAgent.
+ */
+export class FirstRunWizard extends Container {
+	private readonly tui: TUI;
+	private readonly store: CredentialsStore;
+	private readonly authBase: string;
+	private readonly onDone: () => void;
+	private readonly onQuit: () => void;
+	private mode: WizardMode = "menu";
+	private manualUrl: { url: string; reason: string } | undefined;
+	private cancelOAuth = false;
+	private menuList: SelectList | undefined;
+	private providerList: SelectList | undefined;
+	private keyInput: Input | undefined;
+
+	constructor(opts: FirstRunWizardOptions) {
+		super();
+		this.tui = opts.tui;
+		this.store = opts.store ?? new CredentialsStore();
+		this.authBase = opts.authBase ?? DEFAULT_AUTH_BASE;
+		this.onDone = opts.onDone;
+		this.onQuit = opts.onQuit;
+		this.renderMode();
+	}
+
+	/** Component to focus when the wizard mounts/refreshes. Runtime calls TUI.setFocus(this.getFocusTarget()). */
+	getFocusTarget(): Component | undefined {
+		if (this.mode === "menu") return this.menuList;
+		if (this.mode === "byok-provider") return this.providerList;
+		if (typeof this.mode === "object" && this.mode.kind === "byok-key") return this.keyInput;
+		return undefined;
+	}
+
+	private renderMode(): void {
+		this.clear();
+		this.addChild(new Text(ansi.bold(ansi.cyan("codebase")), 1, 1));
+		this.addChild(new Text(ansi.dim("AI coding agent · CLI"), 1, 0));
+		this.addChild(
+			new Text(
+				ansi.dim("Pick how you want to power the agent. You can change this later via `codebase auth`."),
+				1,
+				1,
+			),
+		);
+
+		if (this.mode === "menu") {
+			this.menuList = new SelectList(MENU_ITEMS, 3, selectListTheme);
+			this.menuList.onSelect = (item) => this.handleMenuPick(item.value);
+			this.menuList.onCancel = () => this.onQuit();
+			this.addChild(this.menuList);
+			this.addChild(new Text(ansi.dim("↑↓ to move · Enter to select · Esc to quit"), 1, 1));
+		} else if (this.mode === "oauth-running") {
+			this.renderOAuthRunning();
+		} else if (this.mode === "byok-provider") {
+			this.addChild(new Text(ansi.bold("Pick a provider:"), 1, 0));
+			this.providerList = new SelectList(PROVIDER_ITEMS, Math.min(9, PROVIDER_ITEMS.length), selectListTheme);
+			this.providerList.onSelect = (item) => this.handleProviderPick(item.value);
+			this.providerList.onCancel = () => this.setMode("menu");
+			this.addChild(this.providerList);
+			this.addChild(new Text(ansi.dim("↑↓ Enter · Esc to go back"), 1, 1));
+		} else if (typeof this.mode === "object" && this.mode.kind === "byok-key") {
+			this.renderKeyEntry(this.mode.provider);
+		} else if (typeof this.mode === "object" && this.mode.kind === "error") {
+			this.renderError(this.mode.message);
+		}
+
+		this.invalidate();
+		const focus = this.getFocusTarget();
+		if (focus) this.tui.setFocus(focus);
+	}
+
+	private renderOAuthRunning(): void {
+		if (this.manualUrl) {
+			this.addChild(new Text(ansi.bold(ansi.yellow("Sign in to continue")), 1, 0));
+			this.addChild(new Text(ansi.dim(this.manualUrl.reason), 1, 1));
+			this.addChild(new Text(ansi.bold(ansi.cyan("Open this URL in your browser:")), 1, 0));
+			this.addChild(new Text(this.manualUrl.url, 1, 0));
+			this.addChild(new Text(ansi.dim("Waiting for the browser to redirect back. (Ctrl-C to cancel.)"), 1, 1));
+		} else {
+			this.addChild(new Text(`Opening ${ansi.cyan(this.authBase)} in your browser…`, 1, 0));
+			this.addChild(
+				new Text(
+					ansi.dim("Complete sign-in in the browser tab. This window will continue automatically."),
+					1,
+					1,
+				),
+			);
+		}
+	}
+
+	private renderKeyEntry(provider: ProviderChoice): void {
+		this.addChild(
+			new Text(
+				`${ansi.bold(`Paste your ${provider.label} API key`)}${provider.keyHint ? ansi.dim(` (${provider.keyHint})`) : ""}`,
+				1,
+				0,
+			),
+		);
+		const input = new Input();
+		// Hide the key as it's typed — Input doesn't have a masked mode, so
+		// we hook setValue/getValue: pi-tui's Input doesn't expose a mask
+		// API today, so we fall back to plain echo. Users will need to
+		// trust their screen for the seconds it takes to paste.
+		input.onSubmit = (value) => {
+			const trimmed = value.trim();
+			if (trimmed.length === 0) return;
+			try {
+				this.store.save({
+					accessToken: trimmed,
+					scopes: [],
+					source: "byok",
+					provider: provider.id,
+				});
+				this.onDone();
+			} catch (err) {
+				this.setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+			}
+		};
+		input.onEscape = () => this.setMode("byok-provider");
+		this.keyInput = input;
+		this.addChild(input);
+		this.addChild(new Text(ansi.dim("Stored at ~/.codebase/credentials.json (mode 0600). Enter to save, Esc to go back."), 1, 1));
+	}
+
+	private renderError(message: string): void {
+		this.addChild(new Text(ansi.bold(ansi.red("That didn't work")), 1, 0));
+		this.addChild(new Text(message, 1, 1));
+		this.addChild(new Text(ansi.dim("Any key returns to the menu."), 1, 1));
+		// Caller's runtime input listener catches the key and switches back.
+		// We attach a one-shot listener via TUI's global input listener
+		// because we want any key, not a focused-component event.
+		const remove = this.tui.addInputListener(() => {
+			remove();
+			this.setMode("menu");
+			return { consume: true };
+		});
+	}
+
+	private handleMenuPick(value: string): void {
+		if (value === "oauth") {
+			this.setMode("oauth-running");
+			void this.runOAuth();
+		} else if (value === "byok") {
+			this.setMode("byok-provider");
+		} else {
+			this.onQuit();
+		}
+	}
+
+	private handleProviderPick(value: string): void {
+		const provider = PROVIDER_CHOICES.find((p) => p.id === value);
+		if (!provider) return;
+		this.setMode({ kind: "byok-key", provider });
+	}
+
+	private async runOAuth(): Promise<void> {
+		this.cancelOAuth = false;
+		try {
+			const config = oauthConfigForBase(this.authBase);
+			const creds = await runOAuthLogin(config, {
+				onManualUrl: (url, reason) => {
+					if (this.cancelOAuth) return;
+					this.manualUrl = { url, reason };
+					this.renderMode();
+				},
+			});
+			if (this.cancelOAuth) return;
+			this.store.save({
+				accessToken: creds.accessToken,
+				refreshToken: creds.refreshToken,
+				expiresAt: creds.expiresAt,
+				scopes: creds.scopes,
+				userId: creds.userId,
+				email: creds.email,
+				source: "codebase",
+			});
+			this.onDone();
+		} catch (err) {
+			if (this.cancelOAuth) return;
+			this.setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+		}
+	}
+
+	private setMode(mode: WizardMode): void {
+		// Cancel any in-flight OAuth attempt when leaving its screen so a
+		// late callback doesn't try to update a torn-down view.
+		if (this.mode === "oauth-running" && mode !== "oauth-running") {
+			this.cancelOAuth = true;
+		}
+		this.mode = mode;
+		this.manualUrl = undefined;
+		this.renderMode();
+	}
+}
+
+function oauthConfigForBase(base: string): OAuthConfig {
+	const trimmed = base.replace(/\/+$/, "");
+	return {
+		authorizationUrl: `${trimmed}/login`,
+		tokenUrl: `${trimmed}/api/oauth/token`,
+		refreshUrl: `${trimmed}/api/oauth/token`,
+		revokeUrl: `${trimmed}/api/oauth/revoke`,
+		clientId: process.env.CODEBASE_CLIENT_ID ?? "codebase-cli",
+		scopes: (process.env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
+	};
+}
