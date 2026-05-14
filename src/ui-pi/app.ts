@@ -1,10 +1,10 @@
+import { basename } from "node:path";
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AutocompleteItem,
 	CombinedAutocompleteProvider,
 	Container,
 	Editor,
-	Markdown,
 	type OverlayHandle,
 	Text,
 	type TUI,
@@ -25,11 +25,13 @@ import { runShellEscape } from "../ui/shell-escape.js";
 import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
 import { CompactionBanner } from "./compaction-banner.js";
+import { buildMessageBlocks, MessageView } from "./message-view.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
 import { PermissionOverlay } from "./permission-overlay.js";
 import { TaskPanel } from "./task-panel.js";
-import { ansi, editorTheme, markdownTheme, roleColor } from "./theme.js";
+import { ansi, editorTheme, roleColor } from "./theme.js";
 import { UserQueryOverlay } from "./user-query-overlay.js";
+import { WelcomeBanner } from "./welcome.js";
 
 /**
  * Root pi-tui component. Mirrors ink/App.tsx in responsibilities — agent
@@ -75,6 +77,8 @@ export class App extends Container {
 	/** Streaming-rate sampler — interval ticker that recalculates tok/s. */
 	private rateTimer: NodeJS.Timeout | undefined;
 	private rateSamples: Array<{ t: number; c: number }> = [];
+	/** Spinner timer — drives the status-bar throbber + per-tool-call spinners while busy. */
+	private spinnerTimer: NodeJS.Timeout | undefined;
 
 	constructor() {
 		super();
@@ -88,8 +92,8 @@ export class App extends Container {
 		if (this.bundle.resumedMessages.length > 0) this.envInjected = true;
 		this.messages.push(...this.bundle.resumedMessages);
 
-		this.transcript = new TranscriptView(this.bundle.resumedMessages);
-		this.statusBar = new StatusBar(this.bundle.model.name);
+		this.transcript = new TranscriptView(this.bundle.resumedMessages, this.tools);
+		this.statusBar = new StatusBar(this.bundle.model.name, this.bundle.toolContext.cwd);
 		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells);
 		this.compactionBanner = new CompactionBanner(this.bundle.compactionMonitor);
 		this.taskPanel = new TaskPanel(this.bundle.toolContext.tasks);
@@ -98,7 +102,14 @@ export class App extends Container {
 		this.registry = new CommandRegistry();
 		this.registry.registerAll(BUILTIN_COMMANDS);
 
-		this.addChild(new WelcomeBanner(this.bundle.model.name));
+		this.addChild(
+			new WelcomeBanner({
+				modelName: this.bundle.model.name,
+				source: this.bundle.source,
+				cwd: this.bundle.toolContext.cwd,
+				resumedFrom: this.bundle.resumedFrom,
+			}),
+		);
 		this.addChild(this.transcript);
 		this.addChild(this.compactionBanner);
 		this.addChild(this.taskPanel);
@@ -523,6 +534,22 @@ export class App extends Container {
 		this.rateSamples = [];
 	}
 
+	/** Start the spinner timer when the agent goes busy. Idempotent. */
+	private startSpinners(): void {
+		if (this.spinnerTimer) return;
+		this.spinnerTimer = setInterval(() => {
+			this.statusBar.tickThrobber();
+			this.transcript.tickSpinners();
+		}, 90);
+	}
+
+	private stopSpinners(): void {
+		if (this.spinnerTimer) {
+			clearInterval(this.spinnerTimer);
+			this.spinnerTimer = undefined;
+		}
+	}
+
 	private maybeDrainQueue(): void {
 		if (this.busy || this.queuedPrompts.length === 0) return;
 		const next = this.queuedPrompts.shift();
@@ -535,6 +562,7 @@ export class App extends Container {
 				this.busy = true;
 				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
+				this.startSpinners();
 				break;
 			case "turn_start":
 				this.status = "thinking";
@@ -611,6 +639,7 @@ export class App extends Container {
 				this.status = "idle";
 				this.statusBar.setStatus("idle");
 				this.stopRateSampling();
+				this.stopSpinners();
 				this.maybeDrainQueue();
 				break;
 		}
@@ -625,6 +654,7 @@ export class App extends Container {
 		this.hideUserQueryOverlay();
 		this.hideModelPicker();
 		this.stopRateSampling();
+		this.stopSpinners();
 		this.compactionBanner.dispose();
 		this.taskPanel.dispose();
 		this.bgShellPanel.dispose();
@@ -654,31 +684,28 @@ async function loadAvailableModels(bundle: AgentBundle): Promise<ModelOption[]> 
 	return json.models ?? [];
 }
 
-/** Static one-line banner — only renders once at the top of the transcript. */
-class WelcomeBanner extends Container {
-	constructor(modelName: string) {
-		super();
-		this.addChild(new Text(`codebase · ${modelName}`, 1, 0));
-		this.addChild(new Text("(pi-tui · phase 1)", 1, 0));
-	}
-}
-
 /**
- * Bottom-of-screen status bar showing the current agent state. Phase 1
- * keeps this simple — just the state label. Tok/s, ctx %, cost, model
- * indicator come in phase 3.
+ * Bottom-of-screen status bar. Throbber + state label on the left, cwd
+ * basename + ctx-bar + tok/s + cost on the right. Mirrors ink-era
+ * Status.tsx — busy state shows an animated pulse-block character; idle
+ * is silent.
  */
+const THROBBER_FRAMES = ["░", "▒", "▓", "█", "█", "▓", "▒", "░"];
+
 class StatusBar extends Container {
 	private readonly line: Text;
 	private readonly notes: Text;
 	private modelName: string;
+	private readonly cwdLabel: string;
 	private currentStatus = "idle";
 	private ctxPercent = 0;
 	private cost = 0;
 	private tokRate: number | undefined;
-	constructor(modelName: string) {
+	private throbberTick = 0;
+	constructor(modelName: string, cwd: string) {
 		super();
 		this.modelName = modelName;
+		this.cwdLabel = basename(cwd) || cwd;
 		this.line = new Text(this.format(), 1, 0);
 		this.notes = new Text("", 1, 0);
 		this.addChild(this.notes);
@@ -694,7 +721,6 @@ class StatusBar extends Container {
 		this.line.setText(this.format());
 		this.line.invalidate();
 	}
-	/** Update the right-hand telemetry — ctx-fill %, total cost, and live tok/s while streaming. */
 	setMetrics(ctxPercent: number, cost: number, tokRate?: number): void {
 		this.ctxPercent = ctxPercent;
 		this.cost = cost;
@@ -702,18 +728,27 @@ class StatusBar extends Container {
 		this.line.setText(this.format());
 		this.line.invalidate();
 	}
-	/** Display a one-shot note above the status row (e.g. "Attached: x.ts", queue events). */
+	/** Advance the throbber to the next frame. Called by App on the spinner timer while busy. */
+	tickThrobber(): void {
+		this.throbberTick = (this.throbberTick + 1) % THROBBER_FRAMES.length;
+		this.line.setText(this.format());
+		this.line.invalidate();
+	}
 	note(line: string): void {
 		this.notes.setText(line);
 		this.notes.invalidate();
 	}
 	private format(): string {
-		const left = `${ansi.dim("[")}${this.currentStatus}${ansi.dim("]")} · ${this.modelName}`;
+		const isBusy = this.currentStatus !== "idle";
+		const throb = isBusy ? `${ansi.cyan(THROBBER_FRAMES[this.throbberTick])} ` : "";
+		const statusLabel = isBusy ? ansi.cyan(this.currentStatus) : ansi.dim(this.currentStatus);
 		const bar = ctxBar(this.ctxPercent);
 		const ctxText = colorByThreshold(`${bar} ${this.ctxPercent}%`, this.ctxPercent);
 		const tokPart = this.tokRate !== undefined ? ` · ${this.tokRate} tok/s` : "";
-		const right = ansi.dim(`ctx ${ctxText}${tokPart} · $${formatCost(this.cost)}`);
-		return `${left}    ${right}`;
+		const right = ansi.dim(
+			`${this.modelName} · ${this.cwdLabel} · ctx ${ctxText}${tokPart} · $${formatCost(this.cost)}`,
+		);
+		return `${throb}${statusLabel}    ${right}`;
 	}
 }
 
@@ -744,66 +779,90 @@ function formatCost(value: number): string {
 
 /**
  * Append-only transcript display + an optional in-flight streaming pane.
- * Each finalized message becomes a fixed child (renders once via pi-tui's
- * line-diff); the streaming message swaps in/out as a separate child
- * that gets invalidated per event.
+ * Each finalized message becomes a MessageView (renders once via pi-tui's
+ * line-diff). The streaming message gets its own MessageView that's
+ * rebuilt per agent event so tool-call blocks stay in sync with the
+ * shared tools Map.
  */
 class TranscriptView extends Container {
 	private readonly history: Container;
-	private streamingChild: Container | undefined;
+	private streamingView: MessageView | undefined;
+	private streamingMessage: AgentMessage | undefined;
+	private readonly tools: ReadonlyMap<string, ToolExecution>;
 
-	constructor(initialMessages: AgentMessage[] = []) {
+	constructor(initialMessages: AgentMessage[], tools: ReadonlyMap<string, ToolExecution>) {
 		super();
+		this.tools = tools;
 		this.history = new Container();
 		this.addChild(this.history);
 		for (const m of initialMessages) {
-			this.history.addChild(renderMessage(m));
+			this.history.addChild(buildMessageView(m, this.tools, false));
 		}
 	}
 
 	appendUserMessage(text: string): void {
-		this.history.addChild(renderMessage({ role: "user", content: text, timestamp: Date.now() } as AgentMessage));
+		const msg = { role: "user" as const, content: text, timestamp: Date.now() } as AgentMessage;
+		this.history.addChild(buildMessageView(msg, this.tools, false));
 		this.history.invalidate();
 	}
 
 	appendMessage(message: AgentMessage): void {
-		this.history.addChild(renderMessage(message));
+		this.history.addChild(buildMessageView(message, this.tools, false));
 		this.history.invalidate();
 	}
 
 	clear(): void {
-		// /clear handler: wipe the visible transcript. Recreate the child
-		// list by mutating the internal array — Container doesn't expose a
-		// removeChild today.
-		const hist = this.history as unknown as { children: unknown[] };
-		hist.children = [];
+		this.history.clear();
 		this.history.invalidate();
 	}
 
 	setStreaming(message: AgentMessage | undefined): void {
-		if (this.streamingChild) {
+		if (message && this.streamingView && this.streamingMessage?.role === message.role) {
+			// Same streaming turn — rebuild content blocks in place so the
+			// pi-tui diff renderer only touches changed lines.
+			this.streamingMessage = message;
+			this.streamingView.setBlocks(buildMessageBlocks(message, this.tools, message.role));
+			this.streamingView.invalidate();
+			this.invalidate();
+			return;
+		}
+		if (this.streamingView) {
 			this.removeStreaming();
 		}
 		if (!message) return;
-		this.streamingChild = renderMessage(message, true);
-		this.addChild(this.streamingChild);
+		this.streamingMessage = message;
+		this.streamingView = buildMessageView(message, this.tools, true);
+		this.addChild(this.streamingView);
 		this.invalidate();
 	}
 
-	private removeStreaming(): void {
-		if (!this.streamingChild) return;
-		// Container's removeChild is via the children array — pi-tui doesn't
-		// expose removeChild publicly on Container, so we recreate by
-		// invalidating after dropping the reference. The next render will
-		// pull the updated child list.
-		const children = (this as unknown as { children: unknown[] }).children;
-		if (Array.isArray(children)) {
-			const idx = children.indexOf(this.streamingChild as unknown);
-			if (idx >= 0) children.splice(idx, 1);
+	/** Called by App on the spinner timer so running tool-call lines re-animate. */
+	tickSpinners(): void {
+		if (this.streamingView) {
+			this.streamingView.invalidate();
+			this.invalidate();
 		}
-		this.streamingChild = undefined;
+	}
+
+	private removeStreaming(): void {
+		if (!this.streamingView) return;
+		this.removeChild(this.streamingView);
+		this.streamingView = undefined;
+		this.streamingMessage = undefined;
 		this.invalidate();
 	}
+}
+
+function buildMessageView(
+	message: AgentMessage,
+	tools: ReadonlyMap<string, ToolExecution>,
+	streaming: boolean,
+): MessageView {
+	const role = (message.role as string) ?? "system";
+	const label = role === "user" ? "you" : role === "assistant" ? "codebase" : role === "toolResult" ? "tool" : role;
+	const accent = roleColor[role as keyof typeof roleColor] ?? ((s: string) => s);
+	const blocks = buildMessageBlocks(message, tools, role);
+	return new MessageView({ accent, label, streaming, blocks });
 }
 
 /**
@@ -841,39 +900,4 @@ function stringifyResult(value: unknown): string {
 	} catch {
 		return String(value);
 	}
-}
-
-function renderMessage(message: AgentMessage, streaming = false): Container {
-	const c = new Container();
-	const role = message.role as string;
-	const labelText =
-		role === "user" ? "you" : role === "assistant" ? "codebase" : role === "toolResult" ? "tool" : role;
-	const colorFn = roleColor[role as keyof typeof roleColor] ?? ((s: string) => s);
-	const header = `${colorFn(ansi.bold(labelText))}${streaming ? ansi.dim(" …") : ""}`;
-	c.addChild(new Text(header, 1, 0));
-
-	if (typeof message.content === "string") {
-		if (message.content) c.addChild(new Text(message.content, 1, 0));
-		return c;
-	}
-	if (!Array.isArray(message.content)) return c;
-	for (const block of message.content) {
-		const b = block as { type: string; text?: string; thinking?: string; name?: string; arguments?: unknown };
-		if (b.type === "text" && typeof b.text === "string") {
-			// Markdown for assistant content (code blocks, lists, links).
-			// For user/toolResult text, plain Text avoids style surprises.
-			if (role === "assistant") {
-				c.addChild(new Markdown(b.text, 1, 0, markdownTheme));
-			} else {
-				c.addChild(new Text(b.text, 1, 0));
-			}
-		} else if (b.type === "thinking" && typeof b.thinking === "string") {
-			c.addChild(new Text(ansi.dim(ansi.italic(`(thinking) ${b.thinking}`)), 1, 0));
-		} else if (b.type === "toolCall" && typeof b.name === "string") {
-			const label = streaming ? toolActionLabel(b.name, b.arguments) : toolActionPast(b.name, b.arguments);
-			const glyph = streaming ? ansi.magenta("…") : ansi.magenta("✓");
-			c.addChild(new Text(`${glyph} ${ansi.magenta(label)}`, 1, 0));
-		}
-	}
-	return c;
 }
