@@ -16,6 +16,8 @@ import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
 import { PlanModeStore } from "../plan/store.js";
 import { SessionStore } from "../sessions/store.js";
+import type { AssetRegistry } from "../skills/loader.js";
+import { buildAssetRegistry } from "../skills/registry-factory.js";
 import { BackgroundShellStore } from "../tools/background-shell-store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
 import { buildTools } from "../tools/registry.js";
@@ -97,6 +99,13 @@ export interface AgentBundle {
 	sessions: SessionStore;
 	hooks: HookManager;
 	diagnostics: DiagnosticsEngine;
+	/**
+	 * Curated assets — skills, templates, prompts — sourced from
+	 * ~/.codebase/{skills,templates,prompts}/ and (when signed in)
+	 * codebase.foundation. Consumers read on demand; no auto-merge into
+	 * the system prompt today.
+	 */
+	assets: AssetRegistry;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
 	/**
 	 * User-initiated prompt — fires UserPromptSubmit hooks; honors exit-code-2
@@ -155,6 +164,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
 	const diagnostics = new DiagnosticsEngine({ cwd });
+	// PlatformLoader is gated on a real auth session — for now we skip
+	// it (LocalLoader still works). A future change wires it once we have
+	// a stable endpoint contract and the user is signed in.
+	const assets = buildAssetRegistry();
 
 	const glueModels = resolveGlueModels({ parentModel: model, parentApiKey: apiKey });
 	const glue = new GlueClient({
@@ -429,6 +442,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		sessions,
 		hooks,
 		diagnostics,
+		assets,
 		subscribe,
 		submitUserPrompt,
 		resumedFrom: resumed ? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length } : undefined,
