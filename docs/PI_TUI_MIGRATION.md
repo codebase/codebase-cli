@@ -225,36 +225,44 @@ all 663 tests pass.
 | `3c5b839` | 4d | CompactionBanner + TaskPanel |
 | `f8e3986` | 4e | Router-aware submit (chat short-circuit, plan flow) |
 
-### Not yet ported (intentionally deferred)
+### Phase 5 — in progress
 
-- **`FirstRunSetup.tsx`** — the no-provider-configured wizard. The
-  pi-tui runtime currently surfaces a `Configuration error:` message to
-  stderr and exits, telling the user to run `codebase auth login`. Fine
-  for an opt-in flag; needed before default-switch.
-- **`Welcome.tsx` rich banner** — the one-line `WelcomeBanner` is
-  serviceable but the ink-era variant has cwd / resumed-from context.
-  Easy port, low priority.
+Visual + feature parity push so we can flip the default. After this
+section the only remaining work is a real-TTY smoke test, the flag
+flip, and the ink-path deletion.
+
+| Commit | Surface |
+|---|---|
+| `0391d48` | Visuals: vertical accent gutter, live tool-call lines + diff summary, throbber, richer welcome |
+| (merge) | Pulled v2 audit work (bash validator, hooks, session hardening, file splits) onto the branch |
+| `7648897` | bg-shell exit notifier, ErrorCard, ContextWarning (≥85% / urgent ≥95%), submitUserPrompt routing |
+| `a6cf288` | **FirstRunWizard** — OAuth / BYOK provider picker / key entry / error recovery |
+
+### Still not ported (small / optional)
+
+- **`ToolPanel.tsx`** — separate sticky panel of in-flight tools. The
+  pi-tui path already renders running tools inline under the streaming
+  message with the same spinner + label, so this is largely
+  redundant. Skipping unless the user calls it out.
+- **`PixelC.tsx`** — ASCII-art logo in welcome. Decorative; the cyan
+  wordmark works.
 - **Suggestion ghost-text** (`usePromptSuggestion`) — pi-tui Editor
-  doesn't expose a ghost-text hook today. Either we add one upstream
-  or accept the regression for one release.
-- **Debug-input logging** — `CODEBASE_DEBUG_INPUT=1` only logs through
-  the ink path's `debug-input.ts` helper.
+  doesn't expose a ghost-text hook. Either upstream contribution or
+  accept the regression.
+- **Debug-input logging** — `CODEBASE_DEBUG_INPUT=1` doesn't currently
+  wire on the pi-tui path. Low priority; pi-tui's own keybinding
+  manager is the right surface to add this to.
 
-### Phase 5 (default-switch + cleanup) — not started
+### Remaining for phase 5 completion
 
-Deliberately stopped here. Phase 5 is destructive: it deletes
-`src/ui/`, drops `react` and `ink` from `package.json`, and flips the
-flag default. The pi-tui path has been smoke-tested via TypeScript
-build + module-import checks but not yet driven in an interactive TTY.
-
-**Suggested next step:** `CODEBASE_PI_TUI=1 codebase` in a real
-terminal, run through the common flows (chat, tools, model picker,
-`@path` attachments, `!cmd`, /resume, Ctrl-C twice to exit). If
-behavior holds, port the deferred items above, then run phase 5 in
-this order:
-
-1. Wire `FirstRunSetup` for the pi-tui path.
-2. Update `cli.tsx` to default to pi-tui; keep `CODEBASE_INK_TUI=1`
-   as the backout for one release.
-3. After a release, delete `src/ui/` and drop `react` + `ink` from
-   `package.json` + `package-lock.json`.
+1. **Real-TTY smoke test.** `CODEBASE_PI_TUI=1 codebase` in iTerm /
+   Terminal.app / GNOME Terminal. Exercise: chat, tool calls, slash
+   commands, model picker, @path, !cmd, history recall, Ctrl-C abort,
+   Ctrl-C twice exit, plan mode.
+2. **Flag flip.** Make pi-tui the default in `src/cli.tsx`; keep
+   `CODEBASE_INK_TUI=1` as the backout for one release cycle.
+3. **Ink deletion.** Once one release ships without rollback reports,
+   delete `src/ui/` (keeping the pure helpers that pi-tui borrows:
+   `attachments.ts`, `history-store.ts`, `paths.ts`, `tool-labels.ts`,
+   `shell-escape.ts`) and drop `react` + `ink` + react-related
+   @types from `package.json`.
