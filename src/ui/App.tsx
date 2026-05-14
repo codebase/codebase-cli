@@ -311,9 +311,20 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		const promptText = shouldInjectEnv(state.messages)
 			? `${buildEnvironmentReminder(bundle.toolContext.cwd)}\n\n${augmentedText}`
 			: augmentedText;
-		bundle.agent.prompt(promptText).catch((err: unknown) => {
-			dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
-		});
+		// Use the bundle's user-prompt helper so a UserPromptSubmit hook
+		// can veto the submit (e.g. project policy blocking secrets in
+		// prompts). A blocked submit surfaces the hook's stderr as a
+		// status line; we never silently swallow it.
+		bundle
+			.submitUserPrompt(promptText)
+			.then((result) => {
+				if (!result.submitted && result.reason) {
+					appendStatus(`Prompt blocked by hook: ${result.reason}`);
+				}
+			})
+			.catch((err: unknown) => {
+				dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) });
+			});
 	};
 
 	handleSubmitRef.current = handleSubmit;

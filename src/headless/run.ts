@@ -97,7 +97,15 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	}
 
 	try {
-		await bundle.agent.prompt(opts.prompt);
+		// Route through the bundle helper so UserPromptSubmit hooks fire on
+		// headless runs too (CI scripts, scheduled jobs). A hook veto exits
+		// with code 1 and the reason printed to stderr.
+		const submitResult = await bundle.submitUserPrompt(opts.prompt);
+		if (!submitResult.submitted) {
+			errored = true;
+			errorMessage = submitResult.reason ?? "Prompt blocked by hook.";
+			err(`prompt blocked: ${errorMessage}\n`);
+		}
 	} catch (e) {
 		errored = true;
 		errorMessage = e instanceof Error ? e.message : String(e);

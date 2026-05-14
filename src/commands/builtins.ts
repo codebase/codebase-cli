@@ -686,7 +686,12 @@ const redo: Command = {
 			return { handled: true };
 		}
 		ctx.emit(`(redo) ${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`);
-		void ctx.bundle.agent.prompt(text).catch(() => undefined);
+		// Route through the bundle helper so UserPromptSubmit hooks fire on
+		// /redo too — a hook that rejects secrets shouldn't be bypassed just
+		// because the same prompt is being re-issued.
+		void ctx.bundle.submitUserPrompt(text).then((result) => {
+			if (!result.submitted && result.reason) ctx.emit(`Prompt blocked by hook: ${result.reason}`);
+		});
 		return { handled: true };
 	},
 };

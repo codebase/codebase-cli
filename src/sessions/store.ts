@@ -71,6 +71,15 @@ export class SessionStore {
 
 		if (parsed.formatVersion !== SESSION_FORMAT_VERSION) return null;
 		if (parsed.workDir !== this.cwd) return null;
+		// If the project directory the session belongs to has been deleted /
+		// renamed since the save, refuse to resume rather than re-anchoring
+		// the session to a now-invalid path. The file stays on disk so a
+		// future fix can migrate it intentionally.
+		try {
+			if (!statSync(parsed.workDir).isDirectory()) return null;
+		} catch {
+			return null;
+		}
 		if (parsed.modelId !== modelId) return null;
 		if (Date.now() - parsed.updatedAt > this.maxAgeMs) {
 			this.clear();

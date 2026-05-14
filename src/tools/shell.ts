@@ -111,7 +111,10 @@ export function createShell(ctx: ToolContext): AgentTool<typeof Params, ShellDet
 			const child: ChildProcess = spawn(params.command, {
 				shell: true,
 				cwd,
-				env: process.env,
+				// Clone instead of passing process.env directly — a shell
+				// command that does `export FOO=bar` would otherwise leak
+				// into the agent's own environment for every subsequent spawn.
+				env: { ...process.env },
 				stdio: ["ignore", "pipe", "pipe"],
 				detached: process.platform !== "win32",
 			});

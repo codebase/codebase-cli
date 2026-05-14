@@ -24,7 +24,10 @@ export function runHook(config: HookConfig, context: HookEventContext, signal?: 
 			child = spawn(config.command, {
 				shell: true,
 				cwd: context.workingDir,
-				env: process.env,
+				// Clone instead of passing process.env directly — a hook that
+				// does `export FOO=bar` would otherwise mutate the agent's
+				// own environment for every subsequent spawn.
+				env: { ...process.env },
 				stdio: ["pipe", "pipe", "pipe"],
 			});
 		} catch (err) {

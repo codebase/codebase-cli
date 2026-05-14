@@ -99,6 +99,12 @@ export interface AgentBundle {
 	diagnostics: DiagnosticsEngine;
 	subscribe: (listener: (event: AgentEvent) => void) => () => void;
 	/**
+	 * User-initiated prompt — fires UserPromptSubmit hooks; honors exit-code-2
+	 * veto. Callers that originate prompts from real user input should use
+	 * this instead of `agent.prompt()` directly.
+	 */
+	submitUserPrompt: (text: string) => Promise<{ submitted: boolean; reason?: string }>;
+	/**
 	 * Set when `--resume` actually loaded a prior session, with its
 	 * timestamp + message count so the welcome banner can say
 	 * "Resumed from 3h ago · 47 messages". Undefined for fresh sessions.
@@ -279,6 +285,18 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 				signal,
 			);
 
+			// PostEdit fires for write-family tools so hooks can run formatters
+			// / linters / commit-on-save scripts targeted specifically at file
+			// mutations (instead of having to filter inside a generic
+			// PostToolUse handler).
+			if (filePath && WRITE_TOOL_NAMES.has(ctx.toolCall.name)) {
+				await hooks.dispatch(
+					"PostEdit",
+					{ event: "PostEdit", toolName: ctx.toolCall.name, toolArgs: ctx.args, filePath, workingDir: cwd },
+					signal,
+				);
+			}
+
 			// After a write/edit tool, run language checkers on the affected file
 			// and steer the result into the next turn. Fire-and-forget so the
 			// tool result return isn't blocked by a 15s checker run.
@@ -340,10 +358,51 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				},
 			});
-		} catch {
-			// Persistence is best-effort — don't crash the agent over a write failure.
+		} catch (err) {
+			// Persistence is best-effort — never crash the agent over a write
+			// failure. But silent failure used to mean the user lost work to
+			// a full disk with no warning, so surface to stderr so support is
+			// possible. Visible to anyone watching the terminal; the agent
+			// keeps running.
+			const msg = err instanceof Error ? err.message : String(err);
+			process.stderr.write(`[session] save failed (${sessions.filePath}): ${msg}\n`);
 		}
+
+		// Stop fires once the agent settles after a turn — useful for "ping
+		// my phone when the long task finishes" style hooks. Fire-and-forget
+		// so a misconfigured hook can't gate the agent_end notification.
+		const finalMessage = lastAssistantText(event.messages);
+		void hooks.dispatch("Stop", { event: "Stop", workingDir: cwd, finalMessage }).catch(() => undefined);
 	});
+
+	// SessionStart fires once per createAgent. Lets hooks pre-seed context
+	// (e.g. "add project status to memory") before any user prompt lands.
+	// Fire-and-forget because nothing else is waiting on it.
+	void hooks.dispatch("SessionStart", { event: "SessionStart", workingDir: cwd }).catch(() => undefined);
+
+	/**
+	 * Submit a user-initiated prompt — fires UserPromptSubmit through the
+	 * hook chain first so audit / lint hooks can veto with exit code 2.
+	 * Subagent prompts (dispatch-agent) skip this and call agent.prompt
+	 * directly because they aren't user-initiated.
+	 *
+	 * Returns `{ submitted: false, reason }` when a sync hook blocked the
+	 * submit, otherwise resolves to `{ submitted: true }` after the agent
+	 * accepted the prompt. The agent's own turn lifecycle still emits
+	 * events on bundle.subscribe.
+	 */
+	const submitUserPrompt = async (text: string): Promise<{ submitted: boolean; reason?: string }> => {
+		const outcome = await hooks.dispatch("UserPromptSubmit", {
+			event: "UserPromptSubmit",
+			workingDir: cwd,
+			userPrompt: text,
+		});
+		if (outcome.blocked) {
+			return { submitted: false, reason: outcome.reason };
+		}
+		void agent.prompt(text).catch(() => undefined);
+		return { submitted: true };
+	};
 
 	void agentRef;
 	return {
@@ -362,8 +421,27 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		hooks,
 		diagnostics,
 		subscribe,
+		submitUserPrompt,
 		resumedFrom: resumed ? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length } : undefined,
 		resumedMessages: opts.initialMessages ?? resumed?.messages ?? [],
 		backgroundShells: toolContext.backgroundShells,
 	};
+}
+
+/** Extract the trailing assistant text content from an array of messages. */
+function lastAssistantText(messages: AgentMessage[]): string | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "assistant") continue;
+		if (typeof m.content === "string") return m.content || undefined;
+		if (Array.isArray(m.content)) {
+			const text = m.content
+				.filter((b): b is { type: "text"; text: string } => (b as { type: string }).type === "text")
+				.map((b) => b.text)
+				.join("");
+			return text || undefined;
+		}
+		return undefined;
+	}
+	return undefined;
 }
