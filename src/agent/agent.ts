@@ -400,7 +400,16 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		if (outcome.blocked) {
 			return { submitted: false, reason: outcome.reason };
 		}
-		void agent.prompt(text).catch(() => undefined);
+		// Await the agent's turn so headless callers can chain on a real
+		// promise that reflects when the conversation has settled. Interactive
+		// callers don't await us — they subscribe to bundle.subscribe for the
+		// streaming events independent of this resolution.
+		try {
+			await agent.prompt(text);
+		} catch {
+			// Agent errors flow out as agent_end events with errorMessage on
+			// the bundle.subscribe stream; callers handle them there.
+		}
 		return { submitted: true };
 	};
 

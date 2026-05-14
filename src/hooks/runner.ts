@@ -45,7 +45,19 @@ export function runHook(config: HookConfig, context: HookEventContext, signal?: 
 			});
 		}, timeoutMs);
 
-		const onAbort = () => child.kill("SIGTERM");
+		const onAbort = () => {
+			// Send SIGTERM, then resolve so callers waiting on us aren't
+			// stuck if the child (or its shell wrapper) doesn't propagate
+			// the signal. With shell:true the signal lands on sh, not
+			// necessarily on the child it spawned, so we can't trust the
+			// `close` event to arrive.
+			try {
+				child.kill("SIGTERM");
+			} catch {
+				// best-effort
+			}
+			finish({ exitCode: 1, stdout: "", stderr: "hook aborted" });
+		};
 		signal?.addEventListener("abort", onAbort);
 
 		try {

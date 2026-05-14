@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
-import { type AgentBundle, createAgent } from "../agent/agent.js";
+import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 
 const EMPTY_USAGE: Usage = {
@@ -27,6 +27,12 @@ export interface HeadlessOptions {
 	autoApprove?: boolean;
 	stdout?: (chunk: string) => void;
 	stderr?: (chunk: string) => void;
+	/**
+	 * Test escape hatch — passed straight through to createAgent so unit
+	 * tests can inject a pi-ai faux provider instead of requiring real
+	 * env-var keys. Production code never sets this.
+	 */
+	configOverride?: CreateAgentOptions["configOverride"];
 }
 
 /**
@@ -56,7 +62,11 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 
 	let bundle: AgentBundle;
 	try {
-		bundle = createAgent({ resume: opts.resume, autoApprove: opts.autoApprove });
+		bundle = createAgent({
+			resume: opts.resume,
+			autoApprove: opts.autoApprove,
+			configOverride: opts.configOverride,
+		});
 	} catch (e) {
 		const msg = e instanceof ConfigError ? e.message : e instanceof Error ? e.message : String(e);
 		err(`error: ${msg}\n`);
@@ -167,7 +177,8 @@ interface JsonResultInput {
 	durationMs: number;
 }
 
-function buildJsonResult(input: JsonResultInput): Record<string, unknown> {
+/** Exported for unit tests — production code reaches it through runHeadless. */
+export function buildJsonResult(input: JsonResultInput): Record<string, unknown> {
 	const lastAssistant = [...input.messages].reverse().find((m) => m.role === "assistant");
 	return {
 		ok: input.ok,
