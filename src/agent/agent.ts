@@ -175,7 +175,11 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		smartModel: glueModels.smart,
 		getApiKey,
 	});
-	const compaction = new CompactionEngine({ glue, modelId: model.id });
+	// Pass model.contextWindow explicitly so proxy-synthesized models
+	// (Codebase Auto, custom in-house IDs) get the real window instead of
+	// the regex-based fallback in tokens.ts, which would otherwise lock
+	// them at 128k and trigger compaction at ~96k on a 200k-context route.
+	const compaction = new CompactionEngine({ glue, modelId: model.id, contextWindow: model.contextWindow });
 	const compactionMonitor = new CompactionMonitor();
 	const sessions = new SessionStore({ cwd });
 	const resumed = opts.resume ? sessions.load(model.id) : null;

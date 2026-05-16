@@ -25,6 +25,15 @@ Be concrete. Reference paths, function names, commit subjects when you have them
 export interface CompactionEngineOptions {
 	glue: GlueClient;
 	modelId: string;
+	/**
+	 * Authoritative context-window size from the resolved model. When set,
+	 * this is used verbatim and the modelId-based regex fallback is
+	 * bypassed entirely. Codebase Auto + proxy-synthesized models need
+	 * this — their IDs (e.g. "MiniMax-M2.7") don't match any built-in
+	 * regex and would otherwise fall back to 128k, triggering compaction
+	 * at ~96k against a model that has 200k of headroom.
+	 */
+	contextWindow?: number;
 	thresholdRatio?: number;
 	keepRecent?: number;
 }
@@ -32,18 +41,21 @@ export interface CompactionEngineOptions {
 export class CompactionEngine {
 	private readonly glue: GlueClient;
 	private readonly modelId: string;
+	private readonly explicitContextWindow: number | undefined;
 	private readonly thresholdRatio: number;
 	private readonly keepRecent: number;
 
 	constructor(options: CompactionEngineOptions) {
 		this.glue = options.glue;
 		this.modelId = options.modelId;
+		this.explicitContextWindow = options.contextWindow;
 		this.thresholdRatio = options.thresholdRatio ?? DEFAULT_THRESHOLD;
 		this.keepRecent = options.keepRecent ?? DEFAULT_KEEP_RECENT;
 	}
 
 	threshold(): number {
-		return Math.floor(contextWindow(this.modelId) * this.thresholdRatio);
+		const window = this.explicitContextWindow ?? contextWindow(this.modelId);
+		return Math.floor(window * this.thresholdRatio);
 	}
 
 	needsCompaction(messages: AgentMessage[]): boolean {

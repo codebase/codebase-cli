@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import {
@@ -140,6 +141,7 @@ export class App extends Container {
 // letting setTimeout-driven renders or interval-driven spinners ever
 // run, and the user sees nothing until they press a key.
 this.unsubscribe = this.bundle.subscribe(async (event) => {
+	debugLog(`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`);
 	this.handleAgentEvent(event);
 });
 	}
@@ -521,6 +523,7 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 // letting setTimeout-driven renders or interval-driven spinners ever
 // run, and the user sees nothing until they press a key.
 this.unsubscribe = this.bundle.subscribe(async (event) => {
+	debugLog(`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`);
 	this.handleAgentEvent(event);
 });
 			this.statusBar.setModelName(next.model.name);
@@ -634,8 +637,13 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 
 	/** Start the spinner timer when the agent goes busy. Idempotent. */
 	private startSpinners(): void {
-		if (this.spinnerTimer) return;
+		if (this.spinnerTimer) {
+			debugLog("startSpinners called but timer already running");
+			return;
+		}
+		debugLog("startSpinners installing timer");
 		this.spinnerTimer = setInterval(() => {
+			debugLog("spinner tick");
 			this.statusBar.tickThrobber();
 			this.transcript.tickSpinners();
 			this.tui?.requestRender();
@@ -1034,6 +1042,23 @@ function mergeUsage(a: typeof EMPTY_USAGE, b: typeof EMPTY_USAGE): typeof EMPTY_
 			total: a.cost.total + b.cost.total,
 		},
 	};
+}
+
+/**
+ * Append a line to `~/.codebase/pi-tui-debug.log` when CODEBASE_PI_TUI_DEBUG=1.
+ * No-op otherwise. Used to verify event delivery / render timing when the UI
+ * looks like it's stuck.
+ */
+function debugLog(msg: string): void {
+	if (process.env.CODEBASE_PI_TUI_DEBUG !== "1") return;
+	try {
+		appendFileSync(
+			`${process.env.HOME ?? "/tmp"}/.codebase/pi-tui-debug.log`,
+			`[${new Date().toISOString()}] ${msg}\n`,
+		);
+	} catch {
+		// Filesystem issues shouldn't crash the agent — best effort.
+	}
 }
 
 function stringifyResult(value: unknown): string {

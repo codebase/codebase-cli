@@ -202,6 +202,13 @@ function buildProxiedConfig(
 			// `model.id` only, so this cast is safe.
 			provider: "codebase" as Model<string>["provider"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			// Codebase Auto routes to large-context models on the backend
+			// (Claude Sonnet 4 default, open-weight alternates also 128k+).
+			// The Groq llama template's 128k contextWindow was leaking
+			// through and triggering compaction at ~96k tokens on routes
+			// that have 200k of headroom. Set explicitly so the compaction
+			// engine reads the right value.
+			contextWindow: 200_000,
 		};
 		return { model, apiKey: accessToken, source: "proxy" };
 	}
@@ -230,8 +237,29 @@ function buildProxiedConfig(
 		baseUrl: proxyBase,
 		provider: explicitProvider as Model<string>["provider"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		// Same reasoning as Codebase Auto: synthesized proxy models point
+		// at large-context backends. Without overriding contextWindow the
+		// Groq llama template's 128k leaks through and the compaction
+		// engine triggers ~30% earlier than it should.
+		contextWindow: guessContextWindow(modelId, 200_000),
 	};
 	return { model: synthesized, apiKey: accessToken, source: "proxy" };
+}
+
+/**
+ * Best-effort context-window guess for synthesized proxy models whose
+ * IDs pi-ai doesn't know natively. Pattern-matches a few common families
+ * so we don't gimp a 1M-context Gemini model to 200k; everything else
+ * defaults to the supplied fallback (200k, matching Claude Sonnet 4 /
+ * GPT-5 / most open-weight large models the proxy routes to).
+ */
+function guessContextWindow(modelId: string, fallback: number): number {
+	const id = modelId.toLowerCase();
+	if (id.startsWith("gemini-")) return 1_000_000;
+	if (id.startsWith("gpt-5")) return 400_000;
+	if (id.startsWith("claude-")) return 200_000;
+	if (id.startsWith("llama-3-3-70b") || id.startsWith("llama-3.3-70b")) return 128_000;
+	return fallback;
 }
 
 /**
