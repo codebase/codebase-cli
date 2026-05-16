@@ -18,6 +18,13 @@ describe("validateShellCommand", () => {
 			"dd if=/dev/zero of=/dev/sda bs=1M",
 			"dd of=/dev/sda1",
 			"dd of=/dev/nvme0n1",
+			// Spaces around `=` should not let it slip past.
+			"dd of = /dev/sda",
+			"dd of= /dev/sda",
+			// Piped-stdin variants: model could try to chain via pipe to
+			// disguise the dd target. The post-pipe `of=` pattern catches it.
+			"cat payload.iso | dd of=/dev/sda",
+			"gzip -d image.gz | of=/dev/sda1",
 			"echo bad > /dev/sda",
 			"cat payload.iso > /dev/nvme0n1",
 			"mkfs.ext4 /dev/sda1",

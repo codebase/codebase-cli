@@ -22,6 +22,15 @@
  * `block` here is final regardless of permission policy. That's the
  * point: a CI run with --auto-approve shouldn't be one bad model output
  * away from wiping the runner.
+ *
+ * NOT a security boundary. The validator is an advisory check designed
+ * to catch the obvious cases ("rm -rf /", "dd of=/dev/sda") that no
+ * model has any business issuing. A determined adversary CAN bypass it
+ * (base64-encoded command, indirect tool invocation, exotic shell
+ * syntax, dynamically-built strings). Real enforcement comes from the
+ * effect-based permission policies in src/permissions/ and from
+ * running the agent under a sandboxed user / container / VM when the
+ * threat model warrants it.
  */
 
 export type ShellVerdict = "allow" | "warn" | "block";
@@ -61,8 +70,12 @@ const BLOCK_PATTERNS: readonly PatternRule[] = [
 	{ regex: /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, reason: "fork bomb" },
 
 	// Writing raw bytes to a block device — almost always a mistake or
-	// malicious. Covers `dd of=/dev/sda`, `> /dev/nvme0n1`, etc.
-	{ regex: /\bdd\b[^\n;]*\bof=\/dev\/(sd|hd|nvme|vd|mmcblk)/, reason: "raw write to a block device" },
+	// malicious. The `dd` pattern tolerates spaces around `=`, and the
+	// `[^\n;]*?` (non-greedy, no pipe character) prevents a pipe from
+	// confusing the scanner — but we also have a sibling rule for the
+	// post-pipe case where `of=` arrives via stdin chaining.
+	{ regex: /\bdd\b[^\n;]*?\bof\s*=\s*\/dev\/(sd|hd|nvme|vd|mmcblk)/, reason: "raw write to a block device" },
+	{ regex: /\bof\s*=\s*\/dev\/(sd|hd|nvme|vd|mmcblk)/, reason: "raw write to a block device (piped)" },
 	{ regex: />\s*\/dev\/(sd|hd|nvme|vd|mmcblk)/, reason: "shell redirect to a block device" },
 
 	// Format-the-disk commands. `mkfs.ext4`, `mkfs.xfs`, ...

@@ -103,17 +103,39 @@ export class CredentialsStore {
 		let raw: string;
 		try {
 			raw = readFileSync(this.path, "utf8");
-		} catch {
+		} catch (err) {
+			// Read failed (permission denied, EIO, etc.) — surface the
+			// actual reason so the user can fix it. Returning null silently
+			// here used to make a broken FS look like "not signed in," which
+			// just hid the real problem.
+			process.stderr.write(
+				`[auth] could not read ${this.path}: ${(err as Error).message}\n` +
+					"        run `codebase auth status` for details or `codebase auth logout` to reset.\n",
+			);
 			return null;
 		}
 		let parsed: Credentials;
 		try {
 			parsed = JSON.parse(raw) as Credentials;
-		} catch {
-			this.clear();
+		} catch (err) {
+			// Don't auto-clear — that silently destroys recoverable state if
+			// the user can hand-fix the file (partial write after a crash,
+			// merge conflict markers, etc.). Tell them what's wrong and how
+			// to recover. They can wipe with `codebase auth logout` if they
+			// don't want to repair by hand.
+			process.stderr.write(
+				`[auth] credentials file ${this.path} is not valid JSON: ${(err as Error).message}\n` +
+					"        run `codebase auth logout` to reset and start over with `codebase auth login`.\n",
+			);
 			return null;
 		}
-		if (parsed.version !== CREDENTIALS_VERSION) return null;
+		if (parsed.version !== CREDENTIALS_VERSION) {
+			process.stderr.write(
+				`[auth] credentials file is version ${parsed.version ?? "?"} but this CLI expects ${CREDENTIALS_VERSION} — ignoring. ` +
+					"Run `codebase auth login` to re-authenticate.\n",
+			);
+			return null;
+		}
 		if (typeof parsed.accessToken !== "string" || !parsed.accessToken) return null;
 		if (!Array.isArray(parsed.scopes)) return null;
 		if (parsed.source !== "codebase" && parsed.source !== "manual" && parsed.source !== "byok") {

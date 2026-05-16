@@ -71,11 +71,15 @@ describe("CredentialsStore", () => {
 		expect(store.load()).toBeNull();
 	});
 
-	it("load returns null and clears the file on malformed JSON", () => {
+	it("load returns null on malformed JSON without clearing the file", () => {
+		// Don't auto-clear: a partially-written credentials file (power
+		// cut mid-save, manual edit conflict) might be hand-recoverable.
+		// We surface the parse error to stderr; the user can choose to
+		// `codebase auth logout` if they want to wipe it.
 		require("node:fs").mkdirSync(dataRoot, { recursive: true });
 		require("node:fs").writeFileSync(store.filePath, "not json");
 		expect(store.load()).toBeNull();
-		expect(existsSync(store.filePath)).toBe(false);
+		expect(existsSync(store.filePath)).toBe(true);
 	});
 
 	it("load rejects unrecognized versions", () => {
