@@ -13,6 +13,8 @@ import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
 import { createMemoryTools } from "./memory-tools.js";
+import { createMonitor } from "./monitor.js";
+import { createMonitorStop } from "./monitor-stop.js";
 import { createMultiEdit } from "./multi-edit.js";
 import { createNotebookEdit } from "./notebook-edit.js";
 import { createPlanModeTools } from "./plan-mode.js";
@@ -41,6 +43,8 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createShell(ctx),
 		createShellOutput(ctx),
 		createShellKill(ctx),
+		createMonitor(ctx),
+		createMonitorStop(ctx),
 		createSshExec(ctx),
 		createListFiles(ctx),
 		createGlob(ctx),

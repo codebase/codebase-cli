@@ -213,6 +213,31 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		});
 	}, [bundle, state.status, appendStatus]);
 
+	// Monitor matches — push-style line notifications from the `monitor`
+	// tool. Same shape as bg-shell exit notify but per-match: steer a
+	// system-reminder into the agent so it sees the line mid-stream
+	// without needing to poll shell_output. Idle agents get a status
+	// line instead — re-waking them per log line would be over-eager;
+	// the next prompt picks it up via transcript.
+	useEffect(() => {
+		return bundle.monitors.onMatch((event) => {
+			const noteSuffix = event.note ? ` (${event.note})` : "";
+			const summary = `monitor ${event.monitorId} on ${event.taskId}${noteSuffix}: ${event.line}`;
+			appendStatus(`◉ ${summary}`);
+			if (state.status !== "idle") {
+				try {
+					bundle.agent.steer({
+						role: "user",
+						content: `<system-reminder>Monitor matched a line on background shell ${event.taskId}${noteSuffix}:\n${event.line}</system-reminder>`,
+						timestamp: Date.now(),
+					});
+				} catch {
+					// Agent settling — fine, status line covers it.
+				}
+			}
+		});
+	}, [bundle, state.status, appendStatus]);
+
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
 
 	const { suggestion, dismiss: dismissSuggestion } = usePromptSuggestion(bundle, state.status, state.messages.length);

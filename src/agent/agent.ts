@@ -20,6 +20,7 @@ import type { AssetRegistry } from "../skills/loader.js";
 import { buildAssetRegistry } from "../skills/registry-factory.js";
 import { BackgroundShellStore } from "../tools/background-shell-store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
+import { MonitorStore } from "../tools/monitor-store.js";
 import { buildTools } from "../tools/registry.js";
 import { TaskStore } from "../tools/task-store.js";
 import type { ToolContext } from "../tools/types.js";
@@ -128,6 +129,9 @@ export interface AgentBundle {
 	resumedMessages: AgentMessage[];
 	/** Tracks long-running shells the agent spawned via background mode. */
 	backgroundShells: BackgroundShellStore;
+	/** Push-style line monitors over background shells. App subscribes
+	 * here and steers matched lines into the agent as system-reminders. */
+	monitors: MonitorStore;
 }
 
 export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
@@ -184,6 +188,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const sessions = new SessionStore({ cwd });
 	const resumed = opts.resume ? sessions.load(model.id) : null;
 
+	const backgroundShells = new BackgroundShellStore();
+	const monitors = new MonitorStore(backgroundShells);
 	const toolContext: ToolContext = {
 		cwd,
 		fileStateCache: new FileStateCache(),
@@ -192,7 +198,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		planMode,
 		memory,
 		hooks,
-		backgroundShells: new BackgroundShellStore(),
+		backgroundShells,
+		monitors,
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
@@ -452,6 +459,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		resumedFrom: resumed ? { updatedAt: resumed.updatedAt, messageCount: resumed.messages.length } : undefined,
 		resumedMessages: opts.initialMessages ?? resumed?.messages ?? [],
 		backgroundShells: toolContext.backgroundShells,
+		monitors: toolContext.monitors,
 	};
 }
 

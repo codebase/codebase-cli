@@ -353,6 +353,50 @@ boundaries on the remote.
 `name` must match `[a-z0-9][a-z0-9_-]*`. `host` rejects anything
 that looks like `user@host:port` syntax — use separate fields.
 
+## Background shells + monitors
+
+Long-running commands (dev servers, log tails, build watchers) go in
+the background so the agent doesn't block on them. Two flavors:
+
+### Background shell
+
+```ts
+shell({ background: true, command: "npm run dev" })
+// → returns task_id "bg-3" immediately
+shell_output({ task_id: "bg-3" })   // poll buffered output
+shell_kill({ task_id: "bg-3" })     // terminate
+```
+
+The agent gets notified automatically when a background shell exits —
+no need to poll for completion.
+
+### Monitor (push-style line notifications)
+
+The agent can ATTACH a monitor to a running background shell to be
+notified as matching lines arrive, instead of polling. Use this for
+"watch the log for ERROR" or "tell me the first time the server
+prints 'Listening on'."
+
+```ts
+shell({ background: true, command: "tail -f logs/app.log" })
+// → "bg-1"
+monitor({
+  task_id: "bg-1",
+  match: "ERROR|FATAL",       // regex; default = match every line
+  flags: "i",                  // default; "" for case-sensitive
+  max_matches: 5,              // auto-stop after N (optional)
+  note: "watching app errors"  // free-form hint
+})
+// → "mon-1". Now any matching line steers a system-reminder
+//   into the agent mid-conversation.
+
+monitor_stop({ monitor_id: "mon-1" })   // unregister early
+```
+
+Monitors auto-clean when the watched shell exits or when `max_matches`
+is reached. The background shell itself keeps running until
+`shell_kill` — `monitor_stop` only unsubscribes from notifications.
+
 ## In-flight features
 
 - **MCP**: real MCP client support hasn't shipped (the `/mcp`

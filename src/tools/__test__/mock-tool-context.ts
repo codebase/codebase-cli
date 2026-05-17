@@ -12,10 +12,12 @@ import { PlanModeStore } from "../../plan/store.js";
 import { UserQueryStore } from "../../user-queries/store.js";
 import { BackgroundShellStore } from "../background-shell-store.js";
 import { FileStateCache } from "../file-state-cache.js";
+import { MonitorStore } from "../monitor-store.js";
 import { TaskStore } from "../task-store.js";
 import type { ToolContext } from "../types.js";
 
 export function makeMockToolContext(cwd: string): ToolContext {
+	const backgroundShells = new BackgroundShellStore();
 	return {
 		cwd,
 		fileStateCache: new FileStateCache(),
@@ -23,7 +25,8 @@ export function makeMockToolContext(cwd: string): ToolContext {
 		userQueries: new UserQueryStore(),
 		planMode: new PlanModeStore(),
 		memory: new MemoryStore({ cwd }),
-		backgroundShells: new BackgroundShellStore(),
+		backgroundShells,
+		monitors: new MonitorStore(backgroundShells),
 		// spawnSubagent is the only field a test can't supply a real
 		// implementation for (it depends on the live agent factory).
 		// We throw to make the boundary explicit: any test that calls a
