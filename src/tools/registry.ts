@@ -20,6 +20,7 @@ import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
 import { createShellKill } from "./shell-kill.js";
 import { createShellOutput } from "./shell-output.js";
+import { createSshExec } from "./ssh-exec.js";
 import { createTaskTools } from "./tasks.js";
 import type { ToolContext } from "./types.js";
 import { createWebFetch } from "./web-fetch.js";
@@ -40,6 +41,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createShell(ctx),
 		createShellOutput(ctx),
 		createShellKill(ctx),
+		createSshExec(ctx),
 		createListFiles(ctx),
 		createGlob(ctx),
 		createGrep(ctx),

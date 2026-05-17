@@ -271,6 +271,88 @@ default — only an actual exit-2 blocks.
 }
 ```
 
+## SSH (remote machine access)
+
+The agent can run shell commands on remote machines via the `ssh_exec`
+tool. The host list is an allowlist managed by the user — the agent
+picks a name from the enrolled set, not arbitrary `user@host` strings.
+
+### Enrollment
+
+```sh
+# Generate a key (default Ed25519, --rsa for RSA-4096 if your
+# compliance / legacy infra requires it). Passphrase-less by default
+# because the agent runs non-interactively.
+codebase ssh keygen staging
+
+# Print the pubkey + a one-liner to install it on the remote.
+
+# Register the host:
+codebase ssh add staging staging.example.com --user deploy --key ~/.codebase/ssh/staging
+
+# Verify connectivity:
+codebase ssh test staging
+
+# Inspect / remove:
+codebase ssh list
+codebase ssh rm staging
+```
+
+### How the agent uses it
+
+When asked to "deploy the build to staging", the model issues:
+
+```ts
+ssh_exec({ host: "staging", command: "cd /app && systemctl restart codebase" })
+```
+
+The host argument is the registered NAME, not a hostname. The tool
+resolves it against `~/.codebase/ssh.json` and (optionally) project
+overrides at `<cwd>/.codebase/ssh.json`. Project entries override
+user entries with the same name.
+
+### Security model
+
+- **Allowlist by name, not free-form.** The agent can target `staging`
+  only if the user enrolled `staging`. Even with prompt injection,
+  the model can't pick a destination the user didn't pre-approve.
+- **Same shell-validator as the local `shell` tool.** `rm -rf /`,
+  fork bombs, raw writes to `/dev/sda` etc. are blocked before the
+  ssh spawn, regardless of which host they target.
+- **BatchMode=yes.** Never prompts for a password. If the key isn't
+  accepted, the call fails fast instead of stalling.
+- **StrictHostKeyChecking=accept-new.** First connection pins the
+  host key (TOFU); a later host-key mismatch refuses to connect.
+- **ConnectTimeout=10s + ServerAliveInterval=30s.** Unreachable
+  hosts fail in seconds, dead network paths are detected during
+  long-running commands.
+- **IdentitiesOnly=yes when --key given.** Predictable auth path —
+  ssh doesn't fall back to other keys in the agent.
+
+The validator is advisory, not a security boundary. Real isolation
+for hostile workloads still belongs in container / sandbox
+boundaries on the remote.
+
+### Config schema (`~/.codebase/ssh.json` and `<cwd>/.codebase/ssh.json`)
+
+```json
+{
+  "hosts": [
+    {
+      "name": "staging",
+      "host": "staging.example.com",
+      "user": "deploy",
+      "port": 22,
+      "identityFile": "~/.codebase/ssh/staging",
+      "description": "staging app server (us-east-1)"
+    }
+  ]
+}
+```
+
+`name` must match `[a-z0-9][a-z0-9_-]*`. `host` rejects anything
+that looks like `user@host:port` syntax — use separate fields.
+
 ## In-flight features
 
 - **MCP**: real MCP client support hasn't shipped (the `/mcp`

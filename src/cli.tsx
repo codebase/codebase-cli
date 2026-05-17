@@ -6,6 +6,7 @@ import { runAuthSubcommand } from "./auth/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
+import { runSshSubcommand } from "./ssh/cli.js";
 import { App } from "./ui/App.js";
 import { installTerminalRestoreHandlers } from "./ui/terminal-restore.js";
 import { setTerminalTitle } from "./ui/terminal-title.js";
@@ -56,6 +57,8 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	process.exit(0);
 } else if (argv[0] === "auth") {
 	runAuthSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "ssh") {
+	runSshSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "project" || argv[0] === "projects") {
 	runProjectSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "app-server") {
@@ -157,6 +160,9 @@ function printHelp(): void {
 			"  codebase auth status         show current sign-in",
 			"  codebase auth refresh        force-refresh the access token",
 			"  codebase auth <cbk_xxx>      save a manual API key (for SSH / headless)",
+			"  codebase ssh add <name> <host>    enroll a remote machine the agent can target",
+			"  codebase ssh list / rm / test     manage enrolled SSH hosts",
+			"  codebase ssh keygen <name>        generate an Ed25519 (or --rsa) keypair",
 			"  codebase project list        list your projects on codebase.design",
 			"  codebase project pull <id>   download a project as a ZIP",
 			"  codebase app-server          JSON-RPC server on stdio (for IDE extensions)",
