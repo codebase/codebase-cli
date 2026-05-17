@@ -116,6 +116,11 @@ const WARN_PATTERNS: readonly PatternRule[] = [
 export function validateShellCommand(command: string): ShellValidationResult {
 	const normalized = command.trim();
 	if (!normalized) return { verdict: "allow" };
+	// Opt-out for power users: CODEBASE_NO_VALIDATOR=1 (set explicitly
+	// or via --unrestricted) bypasses every hard-block AND warn pattern.
+	// You're telling us the agent can run whatever — we trust the user.
+	// Banner at session start makes sure they didn't set it accidentally.
+	if (process.env.CODEBASE_NO_VALIDATOR === "1") return { verdict: "allow" };
 	for (const rule of BLOCK_PATTERNS) {
 		if (rule.regex.test(normalized)) return { verdict: "block", reason: rule.reason };
 	}

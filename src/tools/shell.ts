@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { AgentTool, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
 import { TimeoutError } from "./errors.js";
@@ -231,9 +231,15 @@ export function createShell(ctx: ToolContext): AgentTool<typeof Params, ShellDet
 
 function resolveSubCwd(projectCwd: string, requested: string | undefined): string {
 	if (!requested) return resolve(projectCwd);
-	const abs = resolve(projectCwd, requested);
+	// Allow absolute paths when present, otherwise resolve against the
+	// project root. `CODEBASE_NO_PROJECT_ROOT=1` skips the clamp — see
+	// resolveInsideCwd in file-ops.ts for the rationale.
+	const abs = isAbsolute(requested) ? resolve(requested) : resolve(projectCwd, requested);
+	if (process.env.CODEBASE_NO_PROJECT_ROOT === "1") return abs;
 	if (abs !== resolve(projectCwd) && !abs.startsWith(`${resolve(projectCwd)}/`)) {
-		throw new Error(`cwd ${requested} is outside the project root.`);
+		throw new Error(
+			`cwd ${requested} is outside the project root. Set CODEBASE_NO_PROJECT_ROOT=1 or use --unrestricted to allow this.`,
+		);
 	}
 	return abs;
 }

@@ -95,12 +95,33 @@ SEARXNG_URL             self-hosted SearXNG instance
 
 ### Behavior toggles
 ```
-CODEBASE_FRESH=1        skip auto-resume of prior session (same as --new)
-CODEBASE_NO_SUGGESTIONS=1   disable ghost-text prompt suggestions
-CODEBASE_DEBUG=1        verbose stderr logging
-CODEBASE_DEBUG_INPUT=1  log every keystroke to ~/.codebase/logs/input.log
-NO_HYPERLINK=1          disable OSC 8 clickable file paths
+CODEBASE_FRESH=1              skip auto-resume of prior session (same as --new)
+CODEBASE_NO_SUGGESTIONS=1     disable ghost-text prompt suggestions
+CODEBASE_DEBUG=1              verbose stderr logging
+CODEBASE_DEBUG_INPUT=1        log every keystroke to ~/.codebase/logs/input.log
+NO_HYPERLINK=1                disable OSC 8 clickable file paths
 ```
+
+### Unrestricted mode (trust-the-developer escape hatches)
+
+By default the agent has three soft guards. Each one has an opt-out
+env var, and `--unrestricted` (alias `--yolo`) sets all three:
+
+```
+CODEBASE_NO_PROJECT_ROOT=1      file/shell tools can read/write/cd anywhere
+                                the running user can. Default: clamped to cwd.
+CODEBASE_NO_VALIDATOR=1         shell tool skips the rm -rf / dd / fork-bomb
+                                hard blocks. Default: those patterns refuse.
+CODEBASE_NO_READ_BEFORE_WRITE=1 write_file / edit_file proceed even when the
+                                model never read the file in this turn.
+                                Default: refused with FileNotReadFirstError.
+```
+
+When ANY of these are set, the CLI prints a yellow banner at session
+start enumerating which restrictions are off — so you don't run
+unrestricted by accident. Philosophy: defaults are conservative so
+new users can't accidentally trash their machine; opt-outs let power
+users tell us "I trust this agent on this box, get out of the way."
 
 ### OAuth (only override if you know why)
 ```

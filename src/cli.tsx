@@ -46,6 +46,19 @@ for (const a of rawArgv) {
 		process.env.CODEBASE_FRESH = "1";
 		continue;
 	}
+	if (a === "--unrestricted" || a === "--yolo") {
+		// Power-user mode: drops every soft-guard restriction. Equivalent
+		// to setting CODEBASE_NO_PROJECT_ROOT=1 + CODEBASE_NO_VALIDATOR=1
+		// + CODEBASE_NO_READ_BEFORE_WRITE=1. The agent can then read/write
+		// anywhere, run any shell command, and overwrite files without
+		// reading them first. Use when you trust the model + the prompt
+		// (e.g. your own machine, your own project). The warning banner
+		// at session start enumerates what's off so it's never accidental.
+		process.env.CODEBASE_NO_PROJECT_ROOT = "1";
+		process.env.CODEBASE_NO_VALIDATOR = "1";
+		process.env.CODEBASE_NO_READ_BEFORE_WRITE = "1";
+		continue;
+	}
 	argv.push(a);
 }
 
@@ -83,6 +96,11 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runHeadless({ prompt, outputFormat, autoApprove }).then((code) => process.exit(code));
 } else {
 	setTerminalTitle("codebase");
+	// Print a one-line warning if any restriction is off so the user can't
+	// accidentally launch a session in unrestricted mode without realizing.
+	// Written before ink takes over the screen so it appears once at the
+	// top, then scrolls away as normal output replaces it.
+	printUnrestrictedBanner();
 	// Enable bracketed paste mode so the terminal wraps pasted content in
 	// CSI 200~ / 201~ markers. The Input component listens for them and
 	// collapses the content into a placeholder. terminal-restore.ts emits
@@ -145,6 +163,18 @@ function readPackageVersion(): string {
 	}
 }
 
+function printUnrestrictedBanner(): void {
+	const off: string[] = [];
+	if (process.env.CODEBASE_NO_PROJECT_ROOT === "1") off.push("project-root clamp");
+	if (process.env.CODEBASE_NO_VALIDATOR === "1") off.push("shell validator");
+	if (process.env.CODEBASE_NO_READ_BEFORE_WRITE === "1") off.push("read-before-write");
+	if (off.length === 0) return;
+	if (!process.stdout.isTTY) return;
+	// Yellow background, black text — visible without being scary-red.
+	const banner = `\x1b[43;30m⚠ UNRESTRICTED MODE — ${off.join(" + ")} disabled\x1b[0m`;
+	process.stdout.write(`${banner}\n`);
+}
+
 function printHelp(): void {
 	process.stdout.write(
 		[
@@ -172,6 +202,8 @@ function printHelp(): void {
 			"Session:",
 			"  codebase                     resume the prior session for this directory if recent (≤7d)",
 			"  codebase --new               start a fresh session, ignoring saved history",
+			"  codebase --unrestricted      drop the project-root clamp, shell validator, and",
+			"                               read-before-write check. Trust mode for your own machine.",
 			"",
 			"Diagnostics:",
 			"  --debug-input                log every keystroke to ~/.codebase/logs/input.log",
