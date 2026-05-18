@@ -45,7 +45,7 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 		"You are a thin shell around an underlying LLM that the user picked. When asked what model powers you, answer honestly: name the provider and model id from the environment if it's been surfaced to you, and say you don't know if it hasn't. Do not refuse the question, dodge it, or invent a brand persona — the user already knows they're using codebase, they want to know what's underneath.",
 	);
 	lines.push(
-		"For small talk, greetings, and meta-questions about what you can do: answer briefly in one or two sentences. Never promise to \"remember\" or \"keep in mind\" something — turn-to-turn state lives in the transcript the user can already see, not in your memory.",
+		'For small talk, greetings, and meta-questions about what you can do: answer briefly in one or two sentences. Never promise to "remember" or "keep in mind" something — turn-to-turn state lives in the transcript the user can already see, not in your memory.',
 	);
 	lines.push("");
 	lines.push("# Using your tools");
