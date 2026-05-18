@@ -193,7 +193,11 @@ function buildProxiedConfig(
 		const isDefault = !explicitModel;
 		const model: Model<string> = {
 			...template,
-			id: explicitModel ?? "MiniMax-M2.7",
+			// "Codebase Auto" — backend renamed this slot from MiniMax-M2.7
+			// to d4f (DeepSeek V4 Flash) when the underlying SGLang server
+			// was repointed. Keep this in sync with web/backend/providers/
+			// registry.js DEFAULT_MODEL.
+			id: explicitModel ?? "d4f",
 			name: isDefault ? "Codebase Auto" : (explicitModel ?? "Codebase Auto"),
 			baseUrl: proxyBase,
 			// Override provider so the status bar and /model don't lie about
