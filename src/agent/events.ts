@@ -40,9 +40,11 @@ export function reducer(state: ChatState, action: Action): ChatState {
 		}
 
 		case "chat-reply": {
-			// Glue replied to a small-talk turn; we render it as a synthetic
-			// assistant message but never feed it to pi-agent-core, so the
-			// agent's actual context stays clean of meta-banter.
+			// Synthetic assistant turn rendered into the transcript without
+			// going through pi-agent-core — used by plan-mode for the Q&A
+			// and the proposed-plan display. The chat-intercept that
+			// originally drove this action is gone; the name stuck because
+			// renaming would churn the reducer + every dispatcher.
 			const message: AgentMessage = {
 				role: "assistant",
 				content: [{ type: "text", text: action.text }],
