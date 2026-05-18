@@ -4,7 +4,9 @@ import { routeUserInput } from "./router.js";
 
 function mockGlue(replies: { intent?: string }): GlueClient {
 	const fast = vi.fn(async (_prompt: string, system?: string) => {
-		if (system?.includes("classify")) return replies.intent ?? "agent";
+		// Match the intent-classifier system prompt case-insensitively so
+		// this mock keeps working if the prompt's capitalisation drifts.
+		if (system && /classif/i.test(system)) return replies.intent ?? "agent";
 		return "agent";
 	});
 	return { fast, smart: fast } as unknown as GlueClient;

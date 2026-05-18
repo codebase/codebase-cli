@@ -1,29 +1,21 @@
 import type { GlueClient } from "./client.js";
 
-export type Intent = "agent" | "plan" | "chat" | "clarify";
+/**
+ * Intent classifications the router actually acts on. "chat" used to
+ * be in this set but was removed when we ripped out the
+ * cheap-model chat intercept — small talk now goes to the main agent.
+ * "clarify" remains so we can wire an ask-back path later, but for
+ * now it routes the same as "agent".
+ */
+export type Intent = "agent" | "plan" | "clarify";
 
-const INTENT_SYSTEM_PROMPT = `You classify the user's message into ONE of these intents:
+const INTENT_SYSTEM_PROMPT = `Classify the user's message into ONE of these intents. Output exactly one word, no prose.
 
-- agent: a coding/automation/build/fix request. Run-the-tools work. (Default for anything actionable.)
-- plan: a complex multi-step ask that benefits from upfront planning before code is written ("add auth to my Next app", "rewrite the worker as a state machine").
-- chat: small talk, gratitude, greetings, meta-questions about the agent itself.
-- clarify: ambiguous request where the agent couldn't act productively without more info.
+- agent: a coding, automation, build, fix, or run-the-tools request. Default for anything actionable, including small talk, greetings, gratitude, and meta-questions about the agent itself — the main agent handles those directly now.
+- plan: a complex multi-step ask that benefits from upfront planning before any code is written (e.g. "add auth to my Next app", "rewrite the worker as a state machine"). Reserve this for genuinely multi-file architectural work.
+- clarify: ambiguous or contradictory request where acting without more information would be a mistake.
 
-Output exactly one word: agent | plan | chat | clarify. No prose.`;
-
-const GREETING_PATTERNS = [
-	/^h(i|ello|ey)\b/i,
-	/^howdy\b/i,
-	/^thanks?\b/i,
-	/^thank you\b/i,
-	/^ty\b/i,
-	/^ok\b/i,
-	/^okay\b/i,
-	/^nice\b/i,
-	/^cool\b/i,
-	/^great\b/i,
-	/^good (morning|afternoon|evening|night)\b/i,
-];
+Reply with exactly one of: agent | plan | clarify.`;
 
 export interface ClassifyOptions {
 	hasHistory: boolean;
@@ -31,26 +23,19 @@ export interface ClassifyOptions {
 }
 
 /**
- * Decide whether the user's message should run the main agent (tool
- * work), enter plan mode (Q&A → reviewable plan), be answered as chat
- * (no agent run), or trigger a clarifying question.
+ * Decide whether the user's message should auto-trigger plan mode
+ * (Q&A → reviewable plan → agent execution) or just fall through to
+ * the main agent. Greetings and meta-questions used to get a
+ * "chat" short-circuit; that's gone — the main agent answers those
+ * itself now.
  *
- * Fast-tracks:
- *   - First message in a session: default to "agent" for anything
- *     non-trivial (history-less context biases toward action).
- *   - Continuations starting with greetings/thanks: short-circuit to
- *     "chat" without an LLM call.
- *
- * On LLM error or unparseable output, defaults to "agent" — failing
- * open is preferable to silently dropping a real request.
+ * On LLM error or unparseable output, defaults to "agent". Failing
+ * open is preferable to silently swallowing a real request because a
+ * cheap classifier model hiccuped.
  */
 export async function classifyIntent(glue: GlueClient, message: string, opts: ClassifyOptions): Promise<Intent> {
 	const trimmed = message.trim();
 	if (!trimmed) return "clarify";
-
-	if (opts.hasHistory && isGreeting(trimmed)) {
-		return "chat";
-	}
 
 	let raw: string;
 	try {
@@ -62,11 +47,6 @@ export async function classifyIntent(glue: GlueClient, message: string, opts: Cl
 	return parseIntent(raw) ?? "agent";
 }
 
-export function isGreeting(message: string): boolean {
-	if (message.split(/\s+/).length > 4) return false;
-	return GREETING_PATTERNS.some((re) => re.test(message));
-}
-
 export function parseIntent(raw: string): Intent | null {
 	const word = raw
 		.trim()
@@ -74,12 +54,13 @@ export function parseIntent(raw: string): Intent | null {
 		.replace(/[^a-z]/g, "");
 	if (word === "agent") return "agent";
 	if (word === "plan") return "plan";
-	if (word === "chat") return "chat";
 	if (word === "clarify") return "clarify";
-	// Be lenient: take the first matching token from a longer reply.
+	// Lenient pass: pick the first matching token from a longer reply so a
+	// chatty cheap model that ignores the "one word" instruction doesn't
+	// silently fall through to the "agent" default.
 	for (const candidate of raw.toLowerCase().split(/[^a-z]+/)) {
-		if (candidate === "agent" || candidate === "plan" || candidate === "chat" || candidate === "clarify") {
-			return candidate as Intent;
+		if (candidate === "agent" || candidate === "plan" || candidate === "clarify") {
+			return candidate;
 		}
 	}
 	return null;
