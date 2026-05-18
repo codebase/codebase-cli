@@ -309,10 +309,6 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 
 		try {
 			const route = await routeUserInput(bundle.glue, text, { hasHistory: hadHistory });
-			if (route.kind === "chat") {
-				dispatch({ type: "chat-reply", text: route.reply });
-				return;
-			}
 			if (route.kind === "plan") {
 				await runPlanFlow(bundle, text, {
 					onReply: (replyText) => dispatch({ type: "chat-reply", text: replyText }),
