@@ -2,6 +2,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
+import type { Director } from "../directors/types.js";
 
 const EMPTY_USAGE: Usage = {
 	input: 0,
@@ -33,6 +34,8 @@ export interface HeadlessOptions {
 	 * env-var keys. Production code never sets this.
 	 */
 	configOverride?: CreateAgentOptions["configOverride"];
+	/** Run the task as this director (handbook + autonomy gate). */
+	director?: Director;
 }
 
 /**
@@ -66,6 +69,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 			resume: opts.resume,
 			autoApprove: opts.autoApprove,
 			configOverride: opts.configOverride,
+			director: opts.director,
 		});
 	} catch (e) {
 		const msg = e instanceof ConfigError ? e.message : e instanceof Error ? e.message : String(e);

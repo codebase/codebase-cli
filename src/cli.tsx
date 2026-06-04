@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
+import { DirectorStore } from "./directors/store.js";
+import type { Director } from "./directors/types.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
@@ -21,6 +23,8 @@ interface ParsedRunArgs {
 	prompt?: string;
 	outputFormat?: HeadlessOutputFormat;
 	autoApprove?: boolean;
+	/** Slug of the director to run this task as, from `--director <slug>`. */
+	director?: string;
 	error?: string;
 }
 
@@ -68,16 +72,26 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	const resume = argv.includes("--resume");
 	runAppServer({ autoApprove: !noAutoApprove, resume }).then((code) => process.exit(code));
 } else if (argv[0] === "run") {
-	const { prompt, outputFormat, autoApprove, error } = parseRunArgs(argv.slice(1));
+	const { prompt, outputFormat, autoApprove, director: directorSlug, error } = parseRunArgs(argv.slice(1));
 	if (error) {
 		process.stderr.write(`${error}\n`);
 		process.exit(2);
 	}
 	if (!prompt) {
-		process.stderr.write("usage: codebase run [--output text|json|stream-json] [--auto-approve] <prompt>\n");
+		process.stderr.write(
+			"usage: codebase run [--output text|json|stream-json] [--auto-approve] [--director <slug>] <prompt>\n",
+		);
 		process.exit(2);
 	}
-	runHeadless({ prompt, outputFormat, autoApprove }).then((code) => process.exit(code));
+	let director: Director | undefined;
+	if (directorSlug) {
+		director = new DirectorStore().load(directorSlug) ?? undefined;
+		if (!director) {
+			process.stderr.write(`error: no director "${directorSlug}" — run \`codebase directors\` to list them\n`);
+			process.exit(2);
+		}
+	}
+	runHeadless({ prompt, outputFormat, autoApprove, director }).then((code) => process.exit(code));
 } else {
 	setTerminalTitle("codebase");
 	// Enable bracketed paste mode so the terminal wraps pasted content in
@@ -107,6 +121,7 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 	const remaining: string[] = [];
 	let outputFormat: HeadlessOutputFormat | undefined;
 	let autoApprove = false;
+	let director: string | undefined;
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		if (a === "--output" || a === "-o") {
@@ -130,10 +145,20 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 			autoApprove = true;
 			continue;
 		}
+		if (a === "--director") {
+			director = args[i + 1];
+			if (!director) return { error: "--director requires a director slug" };
+			i++;
+			continue;
+		}
+		if (a.startsWith("--director=")) {
+			director = a.slice("--director=".length);
+			continue;
+		}
 		remaining.push(a);
 	}
 	const prompt = remaining.join(" ").trim();
-	return { prompt: prompt || undefined, outputFormat, autoApprove };
+	return { prompt: prompt || undefined, outputFormat, autoApprove, director };
 }
 
 function readPackageVersion(): string {

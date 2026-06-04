@@ -9,6 +9,8 @@ import { CompactionEngine } from "../compaction/engine.js";
 import { CompactionMonitor } from "../compaction/monitor.js";
 import { ConfigStore } from "../config/store.js";
 import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
+import { buildDirectorAddendum, permissionConfigFor } from "../directors/store.js";
+import type { Director } from "../directors/types.js";
 import { GlueClient, resolveGlueModels } from "../glue/client.js";
 import { HookManager } from "../hooks/manager.js";
 import { buildMemoryAddendum } from "../memory/inject.js";
@@ -82,6 +84,12 @@ export interface CreateAgentOptions {
 	 * doesn't lose context, but we don't want to disk-roundtrip.
 	 */
 	initialMessages?: AgentMessage[];
+	/**
+	 * Run the session AS this director: its handbook is appended to the
+	 * system prompt and its autonomy level configures the permission gate
+	 * (see permissionConfigFor). Undefined = the plain coding agent.
+	 */
+	director?: Director;
 }
 
 export interface AgentBundle {
@@ -153,10 +161,15 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const getApiKey = tokenManager ? () => tokenManager.getAccessToken() : () => apiKey;
 
 	const config = persistedConfig;
+	// A director's autonomy level feeds the permission gate: its trusted
+	// ops join the allow-list and its autonomy decides autoApprove (unless
+	// an explicit opts.autoApprove overrides). The gate still blocks
+	// un-trusted irreversible ops, so "autonomous" is never "reckless".
+	const directorPerms = opts.director ? permissionConfigFor(opts.director) : undefined;
 	const permissions = new PermissionStore({
-		allowPatterns: config.allowPatterns(),
+		allowPatterns: [...config.allowPatterns(), ...(directorPerms?.allowPatterns ?? [])],
 		denyPatterns: config.denyPatterns(),
-		autoApprove: opts.autoApprove,
+		autoApprove: opts.autoApprove ?? directorPerms?.autoApprove,
 	});
 	const userQueries = new UserQueryStore();
 	const planMode = new PlanModeStore();
@@ -213,7 +226,11 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// .cursorrules) gets pinned to the prompt so the agent sees the
 	// project's conventions on every turn. Memory addendum is appended
 	// after — it's the user's accumulated long-term notes.
-	const fullSystemPrompt = systemPrompt + buildProjectFilesAddendum(cwd) + buildMemoryAddendum(memory);
+	const fullSystemPrompt =
+		systemPrompt +
+		buildProjectFilesAddendum(cwd) +
+		buildMemoryAddendum(memory) +
+		(opts.director ? buildDirectorAddendum(opts.director) : "");
 
 	const agent = new Agent({
 		initialState: {
