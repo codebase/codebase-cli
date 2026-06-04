@@ -184,7 +184,11 @@ export class PermissionStore {
 		if (this.matchDeny(toolName, args)) return "block";
 		if (this.shouldAutoAllow(toolName, args)) return "allow";
 		if (this.matchAllow(toolName, args)) return "allow";
-		if (this.autoApprove) return "allow";
+		// Autonomous mode (no human at the prompt) runs routine work, but
+		// NEVER silently fires an irreversible op. Explicit allow-patterns
+		// above are the pre-authorization escape hatch; anything else
+		// destructive blocks instead of running unattended.
+		if (this.autoApprove) return isDestructive(toolName, args) ? "block" : "allow";
 
 		return new Promise((resolve) => {
 			const request: PermissionRequest = {
@@ -291,13 +295,30 @@ function detailFor(tool: string, args: unknown): string | undefined {
 	return undefined;
 }
 
+/**
+ * The autonomy safety boundary: operations too irreversible to run
+ * unattended (in autoApprove mode) without an explicit allow-list entry.
+ * Single source of truth — `riskFor` reuses it to color the prompt.
+ *
+ * Intentionally conservative: when unsure, flag. The cost of a false
+ * positive is one allow-list entry; the cost of a false negative is an
+ * unattended `rm -rf`. Today only `shell` carries irreversible risk;
+ * extend per-tool (ideally off each tool's declared Effects) over time.
+ */
+export function isDestructive(tool: string, args: unknown): boolean {
+	if (tool !== "shell") return false;
+	const cmd = stringOf((args as { command?: unknown } | undefined)?.command);
+	return (
+		/\brm\s+-[a-z]*r/i.test(cmd) || // rm -r / -rf / -fr ...
+		/\bgit\s+push\b/.test(cmd) ||
+		/>\s*\/dev\/(?!null|stderr|stdout)/.test(cmd) ||
+		/\b(?:dd|mkfs|shutdown|reboot)\b/.test(cmd) ||
+		/\b(?:kubectl\s+delete|terraform\s+(?:apply|destroy)|helm\s+(?:delete|uninstall))\b/.test(cmd)
+	);
+}
+
 function riskFor(tool: string, args: unknown): "low" | "medium" | "high" {
-	const a = (args ?? {}) as Record<string, unknown>;
-	if (tool === "shell") {
-		const cmd = stringOf(a.command);
-		if (/\brm\s+-r/.test(cmd) || /\bgit\s+push/.test(cmd) || />\s*\/dev\//.test(cmd)) return "high";
-		return "medium";
-	}
+	if (tool === "shell") return isDestructive(tool, args) ? "high" : "medium";
 	if (tool === "git_commit" || tool === "git_branch") return "medium";
 	return "medium";
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PermissionStore } from "./store.js";
+import { isDestructive, PermissionStore } from "./store.js";
 
 describe("PermissionStore.shouldAutoAllow", () => {
 	it("auto-allows read-only tools", async () => {
@@ -203,5 +203,49 @@ describe("PermissionStore config patterns", () => {
 		await expect(store.evaluate("web_fetch", { url: "https://docs.codebase.design/getting-started" })).resolves.toBe(
 			"allow",
 		);
+	});
+});
+
+describe("PermissionStore autonomous safety gate (autoApprove)", () => {
+	it("runs routine read/build work unattended", async () => {
+		const store = new PermissionStore({ autoApprove: true });
+		await expect(store.evaluate("shell", { command: "ls -la" })).resolves.toBe("allow");
+		await expect(store.evaluate("write_file", { path: "src/x.ts", content: "" })).resolves.toBe("allow");
+		await expect(store.evaluate("git_commit", { message: "wip" })).resolves.toBe("allow");
+	});
+
+	it("BLOCKS irreversible ops unattended instead of firing them", async () => {
+		const store = new PermissionStore({ autoApprove: true });
+		await expect(store.evaluate("shell", { command: "rm -rf build" })).resolves.toBe("block");
+		await expect(store.evaluate("shell", { command: "git push --force" })).resolves.toBe("block");
+		await expect(store.evaluate("shell", { command: "terraform destroy -auto-approve" })).resolves.toBe("block");
+	});
+
+	it("allows a destructive op that was explicitly pre-authorized", async () => {
+		const store = new PermissionStore({ autoApprove: true, allowPatterns: ["shell:git push*"] });
+		await expect(store.evaluate("shell", { command: "git push origin main" })).resolves.toBe("allow");
+	});
+
+	it("deny patterns still win over autoApprove", async () => {
+		const store = new PermissionStore({ autoApprove: true, denyPatterns: ["shell:rm*"] });
+		await expect(store.evaluate("shell", { command: "rm -rf node_modules" })).resolves.toBe("block");
+	});
+
+	it("leaves interactive mode unchanged — destructive ops still prompt the human", () => {
+		const store = new PermissionStore(); // no autoApprove
+		const p = store.evaluate("shell", { command: "rm -rf dist" });
+		expect(store.current()?.tool).toBe("shell"); // queued for a human, not auto-blocked
+		store.respond(store.current()!.id, "allow-once");
+		return expect(p).resolves.toBe("allow");
+	});
+});
+
+describe("isDestructive", () => {
+	it("flags irreversible shell commands and spares benign ones", () => {
+		expect(isDestructive("shell", { command: "rm -rf /tmp/x" })).toBe(true);
+		expect(isDestructive("shell", { command: "git push" })).toBe(true);
+		expect(isDestructive("shell", { command: "ls -la" })).toBe(false);
+		expect(isDestructive("shell", { command: "echo hi > /dev/null" })).toBe(false);
+		expect(isDestructive("write_file", { path: "x.ts" })).toBe(false);
 	});
 });
