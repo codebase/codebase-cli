@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
+import { runDirectorsSubcommand, runFireSubcommand, runHireSubcommand } from "./directors/cli.js";
 import { DirectorStore } from "./directors/store.js";
 import type { Director } from "./directors/types.js";
 import { loadDotEnv } from "./dotenv/loader.js";
@@ -92,6 +93,12 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 		}
 	}
 	runHeadless({ prompt, outputFormat, autoApprove, director }).then((code) => process.exit(code));
+} else if (argv[0] === "hire") {
+	runHireSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "directors") {
+	runDirectorsSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "fire") {
+	runFireSubcommand(argv).then((code) => process.exit(code));
 } else {
 	setTerminalTitle("codebase");
 	// Enable bracketed paste mode so the terminal wraps pasted content in
@@ -184,6 +191,11 @@ function printHelp(): void {
 			"  codebase run <prompt>        one-shot headless run, prints to stdout",
 			"  codebase run --output json|stream-json <prompt>",
 			"                               one-shot run with structured output",
+			"  codebase run --director <slug> <prompt>",
+			"                               run the task as a hired director (gated by its autonomy)",
+			"  codebase hire                hire a director (interactive interview)",
+			"  codebase directors           list hired directors",
+			"  codebase fire <slug>         remove a director",
 			"  codebase auth login          sign in via codebase.foundation OAuth",
 			"  codebase auth logout         revoke the current session",
 			"  codebase auth status         show current sign-in",
