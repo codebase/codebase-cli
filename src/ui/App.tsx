@@ -8,6 +8,7 @@ import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { ConfigStore } from "../config/store.js";
+import { DirectorStore } from "../directors/store.js";
 import type { Director } from "../directors/types.js";
 import type { PermissionRequest } from "../permissions/store.js";
 import { runPlanFlow } from "../plan/run-flow.js";
@@ -74,15 +75,17 @@ export function App({ director }: { director?: Director } = {}) {
 		);
 	}
 
-	return <ChatApp initialBundle={bundle} onExit={exit} />;
+	return <ChatApp initialBundle={bundle} onExit={exit} director={director} />;
 }
 
 interface ChatAppProps {
 	initialBundle: AgentBundle;
 	onExit: () => void;
+	/** When set, this session is running AS this director (for the capture step). */
+	director?: Director;
 }
 
-function ChatApp({ initialBundle, onExit }: ChatAppProps) {
+function ChatApp({ initialBundle, onExit, director }: ChatAppProps) {
 	// Bundle is state, not a memo: /model rebuilds the agent in place and
 	// swaps the bundle so the active conversation continues against a new
 	// model. Subscription effects below depend on `bundle`, so they
@@ -489,7 +492,19 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			{permRequest ? (
 				<Permission
 					request={permRequest}
-					onRespond={(choice) => bundle.permissions.respond(permRequest.id, choice)}
+					onRespond={(choice) => {
+						// Capture step: trusting an op while shadowing a director
+						// persists it to that director, so the trust is earned and
+						// kept across sessions (honing).
+						if (choice === "trust-tool" && director) {
+							try {
+								new DirectorStore().trust(director.slug, permRequest.tool);
+							} catch {
+								// non-fatal — a failed persist must not block the response
+							}
+						}
+						bundle.permissions.respond(permRequest.id, choice);
+					}}
 				/>
 			) : userQuery ? (
 				<UserQueryView
