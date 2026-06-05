@@ -1,7 +1,7 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDispatchAgent } from "./dispatch-agent.js";
+import { buildSubagentTools, createDispatchAgent } from "./dispatch-agent.js";
 import { FileStateCache } from "./file-state-cache.js";
 import { TaskStore } from "./task-store.js";
 import type { ToolContext } from "./types.js";
@@ -19,6 +19,43 @@ function makeCtx(faux: ReturnType<typeof registerFauxProvider>): ToolContext {
 			}),
 	};
 }
+
+describe("buildSubagentTools modes", () => {
+	let faux: ReturnType<typeof registerFauxProvider>;
+	let ctx: ToolContext;
+
+	beforeEach(() => {
+		faux = registerFauxProvider({
+			models: [
+				{
+					id: "tools-test",
+					name: "Tools Test",
+					reasoning: false,
+					input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 100_000,
+					maxTokens: 4096,
+				},
+			],
+			tokenSize: { min: 1, max: 2 },
+		});
+		ctx = makeCtx(faux);
+	});
+	afterEach(() => faux.unregister());
+
+	it("research mode (default) is read-only", () => {
+		const names = buildSubagentTools(ctx, "research").map((t) => t.name);
+		expect(names).toContain("read_file");
+		expect(names).not.toContain("write_file");
+		expect(names).not.toContain("shell");
+	});
+
+	it("build mode adds action tools but never dispatch_agent (no recursion)", () => {
+		const names = buildSubagentTools(ctx, "build").map((t) => t.name);
+		expect(names).toEqual(expect.arrayContaining(["write_file", "edit_file", "multi_edit", "shell"]));
+		expect(names).not.toContain("dispatch_agent");
+	});
+});
 
 describe("dispatch_agent", () => {
 	let faux: ReturnType<typeof registerFauxProvider>;

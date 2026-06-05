@@ -1,17 +1,21 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { type Static, type TSchema, Type } from "typebox";
+import { createEditFile } from "./edit-file.js";
 import { createGitDiff } from "./git/diff.js";
 import { createGitLog } from "./git/log.js";
 import { createGitStatus } from "./git/status.js";
 import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
+import { createMultiEdit } from "./multi-edit.js";
 import { createReadFile } from "./read-file.js";
+import { createShell } from "./shell.js";
 import { createGetTask, createListTasks } from "./tasks.js";
 import type { ToolContext } from "./types.js";
 import { createWebFetch } from "./web-fetch.js";
 import { createWebSearch } from "./web-search.js";
+import { createWriteFile } from "./write-file.js";
 
 const Params = Type.Object({
 	task: Type.String({
@@ -25,6 +29,12 @@ const Params = Type.Object({
 			minimum: 1,
 			maximum: 50,
 			description: "Cap on subagent turns. Default 25.",
+		}),
+	),
+	mode: Type.Optional(
+		Type.Union([Type.Literal("research"), Type.Literal("build")], {
+			description:
+				"research (default): read-only investigation. build: the worker can also write files and run shell commands — every action still passes the same permission gate as you, so it can't exceed your autonomy.",
 		}),
 	),
 });
@@ -41,20 +51,20 @@ export interface DispatchAgentDetails {
 
 const DEFAULT_MAX_TURNS = 25;
 
-const DESCRIPTION = `Spawn a read-only subagent to investigate a specific question without polluting the main conversation.
+const DESCRIPTION = `Spawn a subagent (worker) to handle a scoped task without polluting the main conversation.
 
 When to use:
-- "Find every place we call X and summarize the call patterns."
-- "Read these 8 files and tell me which one matches my mental model best."
-- Long tail searches where the noise of intermediate tool output isn't useful in the main transcript.
+- Research: "Find every place we call X and summarize the call patterns."
+- Delegated work (mode "build"): "Implement the email-validation helper and its tests."
+- Long-tail work where intermediate tool output isn't useful in the main transcript.
 
 Behavior:
-- Subagent has only read tools: read_file, list_files, glob, grep, web_search, web_fetch, git_status/diff/log, list_tasks, get_task. No writes, no shell, no recursion.
-- Default budget is 25 turns; raise via max_turns up to 50.
-- Returns the subagent's final text answer; tool calls happen invisibly.
-- Aborts cleanly if the parent agent is aborted.
+- mode "research" (default): read-only tools (read_file, list_files, glob, grep, web_search, web_fetch, git_status/diff/log, list_tasks, get_task).
+- mode "build": adds write_file, edit_file, multi_edit, shell — the worker can change files and run commands. Every action passes the SAME permission gate as you, so a build worker can never do anything you couldn't.
+- No recursion: a subagent can't spawn further subagents.
+- Default budget is 25 turns; raise via max_turns up to 50. Returns the subagent's final text answer; tool calls happen invisibly. Aborts cleanly with the parent.
 
-Don't use for tasks that need to write files or run commands — call those tools directly. Don't use for trivial single-shot reads — call read_file directly.`;
+Don't use for a trivial single read or single edit — call that tool directly.`;
 
 const EMPTY_USAGE: Usage = {
 	input: 0,
@@ -74,6 +84,7 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 		executionMode: "sequential",
 		execute: async (_toolCallId, params, parentSignal, onUpdate) => {
 			const maxTurns = params.max_turns ?? DEFAULT_MAX_TURNS;
+			const mode = params.mode ?? "research";
 			let turns = 0;
 			let maxTurnsReached = false;
 			const toolsUsed: string[] = [];
@@ -95,8 +106,8 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 			);
 
 			const subagent = ctx.spawnSubagent({
-				systemPrompt: subagentSystemPrompt(params.task, ctx.cwd),
-				tools: buildSubagentTools(ctx),
+				systemPrompt: subagentSystemPrompt(params.task, ctx.cwd, mode),
+				tools: buildSubagentTools(ctx, mode),
 			});
 
 			const onParentAbort = () => subagent.abort();
@@ -161,8 +172,8 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 	};
 }
 
-function buildSubagentTools(ctx: ToolContext): AgentTool<TSchema>[] {
-	return [
+export function buildSubagentTools(ctx: ToolContext, mode: "research" | "build" = "research"): AgentTool<TSchema>[] {
+	const tools: AgentTool<TSchema>[] = [
 		createReadFile(ctx),
 		createListFiles(ctx),
 		createGlob(ctx),
@@ -175,18 +186,26 @@ function buildSubagentTools(ctx: ToolContext): AgentTool<TSchema>[] {
 		createListTasks(ctx),
 		createGetTask(ctx),
 	];
+	// build workers can act — but never spawn further subagents (no recursion).
+	if (mode === "build") {
+		tools.push(createWriteFile(ctx), createEditFile(ctx), createMultiEdit(ctx), createShell(ctx));
+	}
+	return tools;
 }
 
-function subagentSystemPrompt(task: string, cwd: string): string {
+function subagentSystemPrompt(task: string, cwd: string, mode: "research" | "build"): string {
+	const capability =
+		mode === "build"
+			? "Tools: the read-only set PLUS write_file, edit_file, multi_edit, shell. You CAN change files and run commands — every action passes the same permission gate as your director, which blocks any irreversible op it hasn't authorized. You cannot spawn further subagents."
+			: "Tools: read_file, list_files, glob, grep, web_search, web_fetch, git_status, git_diff, git_log, list_tasks, get_task. Read-only. You CANNOT write files, run shell commands, or spawn further subagents.";
 	return [
-		"You are a focused research subagent for codebase, a CLI coding agent. You investigate one specific question and report back.",
+		"You are a focused subagent for codebase, a CLI coding agent. You do one specific task and report back.",
 		"",
-		"Tools: read_file, list_files, glob, grep, web_search, web_fetch, git_status, git_diff, git_log, list_tasks, get_task. Read-only.",
-		"You CANNOT write files, run shell commands, or spawn further subagents. Don't try.",
+		capability,
 		"",
 		"Approach:",
-		"- Investigate efficiently. Cite file:line when answering questions about code.",
-		"- Stop when you've answered the task. Don't keep exploring tangents.",
+		"- Work efficiently. Cite file:line when answering questions about code.",
+		"- Stop when the task is done. Don't chase tangents.",
 		"- Your final assistant message is what gets returned. Make it self-contained.",
 		"",
 		`Working directory: ${cwd}`,
