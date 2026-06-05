@@ -8,6 +8,7 @@ import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { ConfigStore } from "../config/store.js";
+import type { Director } from "../directors/types.js";
 import type { PermissionRequest } from "../permissions/store.js";
 import { runPlanFlow } from "../plan/run-flow.js";
 import type { Task } from "../tools/task-store.js";
@@ -31,7 +32,7 @@ import { useCoalescedAgentEvents } from "./use-coalesced-agent-events.js";
 import { usePromptSuggestion } from "./use-prompt-suggestion.js";
 import { Welcome } from "./Welcome.js";
 
-export function App() {
+export function App({ director }: { director?: Director } = {}) {
 	const { exit } = useApp();
 	const [setupAttempt, setSetupAttempt] = useState(0);
 
@@ -44,14 +45,14 @@ export function App() {
 			// users who explicitly want a clean slate can opt out without
 			// having to wipe ~/.codebase/sessions manually.
 			const resume = process.env.CODEBASE_FRESH !== "1";
-			return { bundle: createAgent({ resume }), configError: undefined as string | undefined };
+			return { bundle: createAgent({ resume, director }), configError: undefined as string | undefined };
 		} catch (err) {
 			return {
 				bundle: undefined,
 				configError: err instanceof ConfigError ? err.message : String(err),
 			};
 		}
-	}, [setupAttempt]);
+	}, [setupAttempt, director]);
 
 	if (!bundle) {
 		// ConfigError is the "no provider configured" path — show the
@@ -430,6 +431,9 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 				modelOverride: spec ?? undefined,
 				initialMessages: state.messages,
 				resume: false,
+				// NOTE: a mid-session /model switch currently drops the director
+				// persona (switchModel doesn't close over the prop). Acceptable
+				// for now; thread it through if it bites.
 			});
 			setBundle(next);
 			dispatch({

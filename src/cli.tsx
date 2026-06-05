@@ -121,7 +121,21 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	// CSI 200~ / 201~ markers. terminal-restore.ts emits the matching
 	// disable sequence on every exit path.
 	if (process.stdout.isTTY) process.stdout.write("\x1b[?2004h");
-	if (process.env.CODEBASE_PI_TUI === "1") {
+	// `codebase --director <slug>` runs the TUI AS that director — its
+	// handbook + autonomy. A trainee (cautious) here means the permission
+	// gate prompts on every action: that's the shadowing.
+	const directorSlug = directorFlag(argv);
+	let director: Director | undefined;
+	if (directorSlug) {
+		director = new DirectorStore().load(directorSlug) ?? undefined;
+		if (!director) {
+			process.stderr.write(`error: no director "${directorSlug}" — run \`codebase directors\` to list them\n`);
+			process.exit(2);
+		}
+	}
+	// Director sessions use the Ink path where the permission gate (the
+	// shadowing UI) is wired; pi-tui director support lands later.
+	if (!director && process.env.CODEBASE_PI_TUI === "1") {
 		// Opt-in pi-tui render path — differential renderer, no React.
 		// During the migration this is feature-gated; the ink path stays
 		// default until parity is verified.
@@ -133,11 +147,20 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	// Default ink/React path. Disable ink's default ctrl-c handling — ink
 	// unmounts on ctrl-c but doesn't exit the process — leaves the user
 	// staring at a frozen terminal. We handle ctrl-c ourselves.
-	const instance = render(<App />, { exitOnCtrlC: false });
+	const instance = render(<App director={director} />, { exitOnCtrlC: false });
 	installTerminalRestoreHandlers(instance);
 	instance.waitUntilExit().catch(() => {
 		process.exit(1);
 	});
+}
+
+/** Pull `--director <slug>` (or `--director=slug`) out of argv. */
+function directorFlag(args: string[]): string | undefined {
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--director") return args[i + 1];
+		if (args[i].startsWith("--director=")) return args[i].slice("--director=".length);
+	}
+	return undefined;
 }
 
 function parseRunArgs(args: string[]): ParsedRunArgs {
