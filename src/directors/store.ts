@@ -94,6 +94,17 @@ function serialize(director: Director): string {
 }
 
 /**
+ * Add a trusted op pattern to a director (deduped). Pure. This is how a
+ * director "earns" an op during a shadow session — you trust it once, it
+ * stops asking. Patterns are permission allow-patterns (e.g. "shell",
+ * "write_file", or "shell:git push origin marketing*").
+ */
+export function trustOp(director: Director, pattern: string): Director {
+	if (director.trusts.includes(pattern)) return director;
+	return { ...director, trusts: [...director.trusts, pattern] };
+}
+
+/**
  * Persists directors as markdown files under ~/.codebase/directors/.
  * Markdown so the "employee handbook" stays human-readable and editable.
  */
@@ -136,5 +147,19 @@ export class DirectorStore {
 		if (!existsSync(path)) return false;
 		rmSync(path);
 		return true;
+	}
+
+	/**
+	 * Load → add a trusted op → save. Trusting an op during a shadow session
+	 * persists here so the director keeps the trust across sessions (the
+	 * capture step of honing). Returns the updated director, or null if it no
+	 * longer exists.
+	 */
+	trust(slug: string, pattern: string): Director | null {
+		const director = this.load(slug);
+		if (!director) return null;
+		const updated = trustOp(director, pattern);
+		this.save(updated);
+		return updated;
 	}
 }

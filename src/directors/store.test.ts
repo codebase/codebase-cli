@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildDirectorAddendum, DirectorStore, permissionConfigFor, slugify } from "./store.js";
+import { buildDirectorAddendum, DirectorStore, permissionConfigFor, slugify, trustOp } from "./store.js";
 import type { Director } from "./types.js";
 
 const sample: Director = {
@@ -85,5 +85,25 @@ describe("buildDirectorAddendum", () => {
 		expect(out).toContain("Your mandate: Own Codebase's launch");
 		expect(out).toContain("Punchy, no hype.");
 		expect(out).toMatch(/irreversible operations .*are gated/);
+	});
+});
+
+describe("trustOp + DirectorStore.trust (the capture step)", () => {
+	it("trustOp adds a pattern, deduped, without mutating the input", () => {
+		const d: Director = { ...sample, trusts: ["shell:git push*"] };
+		expect(trustOp(d, "write_file").trusts).toEqual(["shell:git push*", "write_file"]);
+		expect(trustOp(d, "shell:git push*").trusts).toEqual(["shell:git push*"]); // dedup → unchanged
+		expect(d.trusts).toEqual(["shell:git push*"]); // original untouched
+	});
+
+	it("trust() persists across loads and accumulates", () => {
+		const dir = mkdtempSync(join(tmpdir(), "directors-trust-"));
+		const store = new DirectorStore({ baseDir: dir });
+		store.save({ ...sample, trusts: [] });
+		store.trust("marketing", "write_file");
+		store.trust("marketing", "shell:git push origin marketing*");
+		expect(store.load("marketing")?.trusts).toEqual(["write_file", "shell:git push origin marketing*"]);
+		expect(store.trust("ghost", "x")).toBeNull();
+		rmSync(dir, { recursive: true, force: true });
 	});
 });
