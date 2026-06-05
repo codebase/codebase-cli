@@ -7,32 +7,45 @@ const AUTONOMY: readonly Autonomy[] = ["cautious", "balanced", "autonomous"];
 export interface HireAnswers {
 	title: string;
 	mandate: string;
-	autonomy: Autonomy;
 }
 
-/** Build a fresh Director from interview answers. Pure — no disk, no I/O. */
+/**
+ * Build a fresh director from interview answers. Pure — no disk, no I/O.
+ * Every new hire starts in training ("cautious"); autonomy is EARNED by
+ * shadowing it and then `codebase graduate`-ing it, never picked at hire.
+ */
 export function directorFromAnswers(a: HireAnswers): Director {
 	return {
 		slug: slugify(a.title),
 		name: a.title.trim(),
 		mandate: a.mandate.trim(),
-		autonomy: a.autonomy,
+		autonomy: "cautious",
 		trusts: [],
 		handbook: starterHandbook(),
 	};
 }
 
-/** The one-line "what it will/won't do on its own" — the confidence line. */
+/** Move a director one rung UP the ladder: training → trusted → autonomous. */
+export function promote(a: Autonomy): Autonomy {
+	return AUTONOMY[Math.min(AUTONOMY.indexOf(a) + 1, AUTONOMY.length - 1)];
+}
+
+/** Move one rung DOWN — e.g. pull a director back into training. */
+export function demote(a: Autonomy): Autonomy {
+	return AUTONOMY[Math.max(AUTONOMY.indexOf(a) - 1, 0)];
+}
+
+/** The one-line "where it is in its lifecycle + what it'll do on its own". */
 export function autonomyLine(d: Director): string {
 	switch (d.autonomy) {
 		case "cautious":
-			return "Asks you before any change — maximum oversight.";
+			return "In training — you approve every action while you shadow it. Graduate it when you trust it.";
 		case "autonomous":
 			return d.trusts.length > 0
-				? `Runs freely; still asks before irreversible ops outside its ${d.trusts.length} trusted one(s).`
-				: "Runs freely; still asks before push · deploy · delete · spend.";
+				? `Unleashed; still asks before irreversible ops outside its ${d.trusts.length} trusted one(s).`
+				: "Unleashed; still asks before push · deploy · delete · spend.";
 		default:
-			return "Runs routine work on its own. Always asks before: push · deploy · delete · spend.";
+			return "Graduated — runs routine work on its own. Always asks before: push · deploy · delete · spend.";
 	}
 }
 
@@ -49,7 +62,6 @@ function starterHandbook(): string {
 interface HireFlags {
 	title?: string;
 	mandate?: string;
-	autonomy?: Autonomy;
 	error?: string;
 }
 
@@ -65,12 +77,6 @@ function parseHireFlags(args: string[]): HireFlags {
 			case "--owns":
 			case "--mandate":
 				out.mandate = value;
-				break;
-			case "--autonomy":
-				if (!AUTONOMY.includes(value as Autonomy)) {
-					return { error: `--autonomy must be one of: ${AUTONOMY.join(", ")}` };
-				}
-				out.autonomy = value as Autonomy;
 				break;
 			default:
 				return { error: `unknown flag: ${flag}` };
@@ -89,18 +95,13 @@ async function interview(have: HireFlags): Promise<HireAnswers> {
 	try {
 		const title = have.title ?? (await rl.question("Title (e.g. Director of Marketing): ")).trim();
 		const mandate = have.mandate ?? (await rl.question("What do they own? ")).trim();
-		let autonomy = have.autonomy;
-		if (!autonomy) {
-			const raw = (await rl.question("Rope — cautious / balanced / autonomous [balanced]: ")).trim().toLowerCase();
-			autonomy = AUTONOMY.includes(raw as Autonomy) ? (raw as Autonomy) : "balanced";
-		}
-		return { title, mandate, autonomy };
+		return { title, mandate };
 	} finally {
 		rl.close();
 	}
 }
 
-/** `codebase hire [--title .. --owns .. --autonomy ..]` — create a director. */
+/** `codebase hire [--title .. --owns ..]` — create a director (starts in training). */
 export async function runHireSubcommand(argv: string[]): Promise<number> {
 	const flags = parseHireFlags(argv.slice(1));
 	if (flags.error) {
@@ -109,12 +110,12 @@ export async function runHireSubcommand(argv: string[]): Promise<number> {
 	}
 
 	let answers: HireAnswers;
-	if (flags.title && flags.mandate && flags.autonomy) {
-		answers = { title: flags.title, mandate: flags.mandate, autonomy: flags.autonomy };
+	if (flags.title && flags.mandate) {
+		answers = { title: flags.title, mandate: flags.mandate };
 	} else if (process.stdin.isTTY) {
 		answers = await interview(flags);
 	} else {
-		process.stderr.write("hire needs a terminal for the interview, or pass --title, --owns, and --autonomy\n");
+		process.stderr.write("hire needs a terminal for the interview, or pass --title and --owns\n");
 		return 2;
 	}
 
@@ -131,9 +132,9 @@ export async function runHireSubcommand(argv: string[]): Promise<number> {
 	}
 	store.save(director);
 	process.stdout.write(
-		`✅ Hired ${director.name} (@${director.slug}).\n` +
-			`   ${autonomyLine(director)}\n` +
-			`   Put them to work:  codebase run --director ${director.slug} "<task>"\n`,
+		`✅ Hired ${director.name} (@${director.slug}) — in training.\n` +
+			`   Shadow it:           codebase --director ${director.slug}\n` +
+			`   When you trust it:   codebase graduate ${director.slug}\n`,
 	);
 	return 0;
 }
@@ -163,5 +164,42 @@ export async function runFireSubcommand(argv: string[]): Promise<number> {
 		return 1;
 	}
 	process.stdout.write(`Fired @${slug}.\n`);
+	return 0;
+}
+
+/** `codebase graduate <slug>` — move a director one rung up (unleash it). */
+export async function runGraduateSubcommand(argv: string[]): Promise<number> {
+	return moveStage(argv[1], "graduate", promote);
+}
+
+/** `codebase demote <slug>` — pull a director one rung down (toward training). */
+export async function runDemoteSubcommand(argv: string[]): Promise<number> {
+	return moveStage(argv[1], "demote", demote);
+}
+
+async function moveStage(
+	slug: string | undefined,
+	cmd: "graduate" | "demote",
+	move: (a: Autonomy) => Autonomy,
+): Promise<number> {
+	if (!slug) {
+		process.stderr.write(`usage: codebase ${cmd} <slug>\n`);
+		return 2;
+	}
+	const store = new DirectorStore();
+	const director = store.load(slug);
+	if (!director) {
+		process.stderr.write(`no director "@${slug}"\n`);
+		return 1;
+	}
+	const next = move(director.autonomy);
+	if (next === director.autonomy) {
+		process.stderr.write(`@${slug} is already "${director.autonomy}" — can't ${cmd} further\n`);
+		return 1;
+	}
+	store.save({ ...director, autonomy: next });
+	process.stdout.write(
+		`@${slug}: ${director.autonomy} → ${next}\n   ${autonomyLine({ ...director, autonomy: next })}\n`,
+	);
 	return 0;
 }
