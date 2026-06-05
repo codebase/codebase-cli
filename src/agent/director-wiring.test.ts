@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { type FauxProviderRegistration, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Director } from "../directors/types.js";
-import { createAgent } from "./agent.js";
+import { PermissionStore } from "../permissions/store.js";
+import { createAgent, permissionGate } from "./agent.js";
 
 /**
  * Proves the run-as-director wiring end-to-end: a Director passed to
@@ -76,5 +77,14 @@ describe("createAgent — running as a director", () => {
 		expect(permissions.current()?.tool).toBe("write_file"); // queued for a human, not auto-allowed
 		permissions.respond(permissions.current()?.id ?? "", "deny");
 		return expect(p).resolves.toBe("block");
+	});
+});
+
+describe("permissionGate (shared by the main agent + every spawned worker)", () => {
+	it("passes through what the store allows and blocks what it gates", async () => {
+		const gate = permissionGate(new PermissionStore({ autoApprove: true }));
+		expect(await gate("shell", { command: "ls -la" })).toBeUndefined(); // routine → no block
+		expect(await gate("write_file", { path: "x.ts" })).toBeUndefined(); // building → no block
+		expect(await gate("shell", { command: "rm -rf /" })).toMatchObject({ block: true }); // irreversible → blocked
 	});
 });

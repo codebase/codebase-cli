@@ -92,6 +92,23 @@ export interface CreateAgentOptions {
 	director?: Director;
 }
 
+/**
+ * The permission step of the gate, as a standalone hook. Both the main
+ * agent AND every spawned subagent run their tool calls through this, so a
+ * worker's actions pass the exact same PermissionStore — and thus the same
+ * director autonomy + trusted allow-list — as whoever spawned it. This is
+ * what makes "spawn workers that act" safe: a worker can never do something
+ * its director couldn't.
+ */
+export function permissionGate(
+	permissions: PermissionStore,
+): (toolName: string, args: unknown) => Promise<{ block: true; reason: string } | undefined> {
+	return async (toolName, args) => {
+		const decision = await permissions.evaluate(toolName, args);
+		return decision === "block" ? { block: true, reason: "Blocked by the permission gate." } : undefined;
+	};
+}
+
 export interface AgentBundle {
 	agent: Agent;
 	model: Model<string>;
@@ -193,6 +210,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const sessions = new SessionStore({ cwd });
 	const resumed = opts.resume ? sessions.load(model.id) : null;
 
+	const subagentGate = permissionGate(permissions);
 	const toolContext: ToolContext = {
 		cwd,
 		fileStateCache: new FileStateCache(),
@@ -206,6 +224,9 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
 				getApiKey,
+				// Workers are gated by the SAME store as the director that
+				// spawned them — acting subagents can't exceed its autonomy.
+				beforeToolCall: async (subCtx) => subagentGate(subCtx.toolCall.name, subCtx.args),
 			}),
 	};
 
