@@ -76,6 +76,8 @@ export class App extends Container {
 	private usage = EMPTY_USAGE;
 	/** Prompts typed while busy; drained one-at-a-time when the agent goes idle. */
 	private queuedPrompts: string[] = [];
+	/** Count of assistant messages emitted during the current agent turn. Reset on agent_start. */
+	private assistantMessagesThisTurn = 0;
 	/** Has the env reminder been prepended to a turn this session yet? */
 	private envInjected = false;
 	/** Last reported turn usage from pi-ai — feeds the ctx-bar via estimateContextTokens. */
@@ -691,12 +693,19 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 	}
 
 	private handleAgentEvent(event: AgentEvent): void {
+		alwaysLog(`event=${event.type}`);
 		switch (event.type) {
 			case "agent_start":
 				this.busy = true;
 				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
 				this.startSpinners();
+				// Track whether any assistant content actually lands during
+				// this turn. If agent_end fires with zero messages and no
+				// errorMessage, we surface that as a status note — otherwise
+				// the user sees their prompt land, status flip to idle, and
+				// nothing else.
+				this.assistantMessagesThisTurn = 0;
 				// Any new turn clears any stale error from the prior run.
 				this.errorCard.hide();
 				// Immediate paint on turn start so the user sees "thinking"
@@ -737,6 +746,9 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 					if ("usage" in event.message && event.message.usage) {
 						this.usage = mergeUsage(this.usage, event.message.usage);
 						this.turnUsage = event.message.usage;
+					}
+					if (event.message.role === "assistant") {
+						this.assistantMessagesThisTurn += 1;
 					}
 				}
 				break;
@@ -789,8 +801,24 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 				// successful turn hides it again.
 				{
 					const errMsg = this.bundle.agent.state.errorMessage;
-					if (errMsg) this.errorCard.show(errMsg);
-					else this.errorCard.hide();
+					if (errMsg) {
+						this.errorCard.show(errMsg);
+					} else {
+						this.errorCard.hide();
+						// Diagnostic: agent_end without errorMessage AND without
+						// any assistant message means the turn produced no
+						// visible output — usually a model that returned empty,
+						// a misconfigured proxy route, or a tool turn that
+						// settled before content streamed. Surface this so the
+						// user knows the silence is intentional from the model
+						// side, not a UI hang.
+						if (this.assistantMessagesThisTurn === 0) {
+							alwaysLog(`agent_end with 0 assistant messages this turn`);
+							this.statusBar.note(
+								"(agent completed with no response — check ~/.codebase/pi-tui-events.log)",
+							);
+						}
+					}
 				}
 				this.maybeDrainQueue();
 				break;
@@ -1114,6 +1142,23 @@ function debugLog(msg: string): void {
 	try {
 		appendFileSync(
 			`${process.env.HOME ?? "/tmp"}/.codebase/pi-tui-debug.log`,
+			`[${new Date().toISOString()}] ${msg}\n`,
+		);
+	} catch {
+		// Filesystem issues shouldn't crash the agent — best effort.
+	}
+}
+
+/**
+ * Diagnostic logger that ALWAYS writes — used for capturing the agent
+ * event stream during the "no response after submit" investigation.
+ * Cheap (one append per event), bounded by the rotating turn count, and
+ * lives next to the on-demand debug log so users can grep for context.
+ */
+function alwaysLog(msg: string): void {
+	try {
+		appendFileSync(
+			`${process.env.HOME ?? "/tmp"}/.codebase/pi-tui-events.log`,
 			`[${new Date().toISOString()}] ${msg}\n`,
 		);
 	} catch {
