@@ -2,6 +2,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type Component, Markdown, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ToolExecution } from "../types.js";
 import { type DiffHunk, type DiffInfo, diffSummary } from "../ui/diff-summary.js";
+import { truncateOutput } from "../ui/output-truncate.js";
 import { displayPath } from "../ui/paths.js";
 import {
 	COLLAPSIBLE_READ_TOOLS,
@@ -233,6 +234,32 @@ export function buildMessageBlocks(
 		return out;
 	}
 	if (!Array.isArray(message.content)) return out;
+	// ToolResult messages: collapse long output into head + (N hidden) +
+	// tail using the per-tool cap from output-truncate. Errors render
+	// in full red since the user needs the whole failure to debug.
+	if (role === "toolResult") {
+		const m = message as { toolName?: string; isError?: boolean; content: unknown[] };
+		const text = message.content
+			.map((block) => {
+				if (typeof block === "object" && block !== null) {
+					const b = block as { type?: string; text?: string; mimeType?: string };
+					if (b.type === "text" && typeof b.text === "string") return b.text;
+					if (b.type === "image") return `[image:${b.mimeType ?? "?"}]`;
+				}
+				return "";
+			})
+			.join("");
+		const view = truncateOutput(text, m.toolName, m.isError === true);
+		const colorize = (s: string) => (m.isError ? ansi.red(s) : s);
+		if (!view.truncated) {
+			if (view.full) out.push(new PlainText(colorize(view.full)));
+		} else {
+			out.push(new PlainText(colorize(view.head)));
+			out.push(new PlainText(ansi.dim(`… ${view.hidden} line${view.hidden === 1 ? "" : "s"} hidden …`)));
+			out.push(new PlainText(colorize(view.tail)));
+		}
+		return out;
+	}
 	const blocks = message.content;
 	let i = 0;
 	while (i < blocks.length) {
