@@ -389,18 +389,40 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 			promptText = `${buildEnvironmentReminder(this.bundle.toolContext.cwd)}\n\n${augmented}`;
 			this.envInjected = true;
 		}
-		// Route through the bundle helper so UserPromptSubmit hooks fire and
-		// can veto the submit. A blocked prompt surfaces the hook's stderr
-		// as a status-bar note.
+		// Route through the bundle helper so UserPromptSubmit hooks fire
+		// and can veto the submit. A blocked prompt surfaces the hook's
+		// stderr as a status-bar note. A real error (agent throws before
+		// reaching agent_start) surfaces as an ErrorCard — otherwise the
+		// user just sees their prompt land with no response.
 		this.bundle
 			.submitUserPrompt(promptText)
 			.then((result) => {
 				if (!result.submitted && result.reason) {
 					this.statusBar.note(`Prompt blocked by hook: ${result.reason}`);
+					return;
+				}
+				if (result.error) {
+					this.errorCard.show(result.error);
+					this.busy = false;
+					this.status = "idle";
+					this.statusBar.setStatus("idle");
+					this.stopRateSampling();
+					this.stopSpinners();
+					this.tui?.requestRender();
 				}
 			})
-			.catch(() => {
-				// Errors surface via agent_end with errorMessage; rejection here isn't useful.
+			.catch((e) => {
+				// submitUserPrompt shouldn't reject anymore, but if it does
+				// (hook subsystem throwing, etc.) we still want the user to
+				// see something instead of a frozen prompt.
+				const msg = e instanceof Error ? e.message : String(e);
+				this.errorCard.show(msg);
+				this.busy = false;
+				this.status = "idle";
+				this.statusBar.setStatus("idle");
+				this.stopRateSampling();
+				this.stopSpinners();
+				this.tui?.requestRender();
 			});
 	}
 

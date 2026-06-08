@@ -113,7 +113,9 @@ export interface AgentBundle {
 	 * veto. Callers that originate prompts from real user input should use
 	 * this instead of `agent.prompt()` directly.
 	 */
-	submitUserPrompt: (text: string) => Promise<{ submitted: boolean; reason?: string }>;
+	submitUserPrompt: (
+		text: string,
+	) => Promise<{ submitted: boolean; reason?: string; error?: string }>;
 	/**
 	 * Set when `--resume` actually loaded a prior session, with its
 	 * timestamp + message count so the welcome banner can say
@@ -415,7 +417,9 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	 * accepted the prompt. The agent's own turn lifecycle still emits
 	 * events on bundle.subscribe.
 	 */
-	const submitUserPrompt = async (text: string): Promise<{ submitted: boolean; reason?: string }> => {
+	const submitUserPrompt = async (
+		text: string,
+	): Promise<{ submitted: boolean; reason?: string; error?: string }> => {
 		const outcome = await hooks.dispatch("UserPromptSubmit", {
 			event: "UserPromptSubmit",
 			workingDir: cwd,
@@ -430,9 +434,13 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		// streaming events independent of this resolution.
 		try {
 			await agent.prompt(text);
-		} catch {
-			// Agent errors flow out as agent_end events with errorMessage on
-			// the bundle.subscribe stream; callers handle them there.
+		} catch (e) {
+			// Throws that fire BEFORE agent_start (auth misconfigured, model
+			// rejected, network refused at the SDK boundary) never produce an
+			// agent_end event, so the bundle.subscribe stream sees nothing and
+			// the UI hangs silently. Surface them on the result so the caller
+			// can render an error card / status note.
+			return { submitted: true, error: e instanceof Error ? e.message : String(e) };
 		}
 		return { submitted: true };
 	};

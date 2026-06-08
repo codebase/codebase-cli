@@ -143,6 +143,17 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 				err(`prompt blocked: ${errorMessage}\n`);
 			}
 			// json mode picks this up in buildJsonResult below via errorMessage.
+		} else if (submitResult.error) {
+			// Agent threw before the event stream emitted agent_end. Surface
+			// the error explicitly so CI scripts see a non-zero exit + a real
+			// error message instead of a "succeeded with empty output" run.
+			errored = true;
+			errorMessage = submitResult.error;
+			if (format === "stream-json") {
+				out(`${JSON.stringify({ type: "error", code: "agent_error", error: errorMessage, ts: Date.now() })}\n`);
+			} else if (format !== "json") {
+				err(`agent error: ${errorMessage}\n`);
+			}
 		}
 	} catch (e) {
 		errored = true;

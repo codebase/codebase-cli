@@ -341,6 +341,13 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			.then((result) => {
 				if (!result.submitted && result.reason) {
 					appendStatus(`Prompt blocked by hook: ${result.reason}`);
+					return;
+				}
+				if (result.error) {
+					// Agent threw before agent_start fired — the event stream
+					// never sees it, so surface it ourselves as an error card
+					// instead of leaving the user staring at a quiet prompt.
+					dispatch({ type: "error", message: result.error });
 				}
 			})
 			.catch((err: unknown) => {
