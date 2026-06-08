@@ -57,13 +57,21 @@ export async function runPiTuiApp(): Promise<void> {
 	// only paints on the next input event.
 	tui.requestRender(true);
 
-	// Resolve when the user signals exit (Ctrl-C twice, /exit). The App
-	// owns the exit promise so it can dispose cleanly first.
-	await app.waitForExit();
-
-	app.dispose();
-	tui.stop();
-	await terminal.drainInput().catch(() => undefined);
+	// Even if waitForExit throws (an unhandled subscriber error, a
+	// terminal disconnect, anything), the TUI must be torn down and the
+	// terminal restored — otherwise the user is left in raw mode with a
+	// dead UI. Try/finally guarantees app.dispose() + tui.stop() run.
+	try {
+		await app.waitForExit();
+	} finally {
+		try {
+			app.dispose();
+		} catch {
+			// dispose throwing shouldn't block tui.stop(); fall through.
+		}
+		tui.stop();
+		await terminal.drainInput().catch(() => undefined);
+	}
 }
 
 /**
@@ -80,11 +88,11 @@ function mountWizard(tui: TUI): Promise<boolean> {
 				// Tear down the wizard's children from the TUI tree before
 				// resolving so the next attempt's App.addChild doesn't
 				// stack on top of leftover wizard widgets.
-				removeFromTui(tui, wizard);
+				tui.removeChild(wizard);
 				resolve(true);
 			},
 			onQuit: () => {
-				removeFromTui(tui, wizard);
+				tui.removeChild(wizard);
 				resolve(false);
 			},
 		});
@@ -92,18 +100,4 @@ function mountWizard(tui: TUI): Promise<boolean> {
 		const focus = wizard.getFocusTarget();
 		if (focus) tui.setFocus(focus);
 	});
-}
-
-function removeFromTui(tui: TUI, child: unknown): void {
-	// pi-tui Container exposes removeChild; types may vary across versions
-	// so we narrow defensively.
-	const t = tui as unknown as { removeChild?: (c: unknown) => void; children?: unknown[] };
-	if (typeof t.removeChild === "function") {
-		t.removeChild(child);
-		return;
-	}
-	if (Array.isArray(t.children)) {
-		const idx = t.children.indexOf(child);
-		if (idx >= 0) t.children.splice(idx, 1);
-	}
 }
