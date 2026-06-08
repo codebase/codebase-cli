@@ -10,6 +10,30 @@ describe("buildSystemPrompt", () => {
 		expect(out.startsWith("You are codebase")).toBe(true);
 	});
 
+	it("tells the model to answer the underlying-model question honestly", () => {
+		// Regression: a previous chat-intercept path made the CLI claim
+		// to be an opaque "Codebase" persona that wouldn't name its
+		// underlying LLM. Now the agent owns this turn and must answer
+		// honestly — and must not promise to "remember" things across
+		// turns since transcript state is the user-visible source of truth.
+		const out = buildSystemPrompt();
+		expect(out).toContain("# Answering questions about yourself");
+		expect(out).toMatch(/answer honestly/i);
+		expect(out).toMatch(/never promise to "remember"/i);
+	});
+
+	it("tells the model to issue independent tool calls in parallel", () => {
+		const out = buildSystemPrompt();
+		expect(out).toContain("# Using your tools");
+		expect(out).toMatch(/Issue independent tool calls together/);
+	});
+
+	it("teaches subagent dispatch for fan-out work", () => {
+		const out = buildSystemPrompt();
+		expect(out).toMatch(/dispatch_agent/);
+		expect(out).toMatch(/parallel/i);
+	});
+
 	it("includes a 'What NOT to do' anti-pattern section", () => {
 		const out = buildSystemPrompt();
 		expect(out).toContain("# What NOT to do");

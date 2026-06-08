@@ -346,18 +346,15 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 		this.transcript.appendUserMessage(trimmed);
 		this.persistHistory(trimmed);
 
-		// Glue-router classification: small-talk gets a quick reply with no
-		// agent turn (saves tokens + latency); plan-style requests run through
-		// the plan flow (Q&A → reviewable plan → agent). Anything else falls
-		// through to the regular agent.prompt path. Router failures degrade
+		// Glue-router classification: plan-style requests run through the
+		// plan flow (Q&A → reviewable plan → agent); everything else
+		// falls through to the regular agent.prompt path. The chat
+		// intercept was removed — small talk and meta-questions now go
+		// to the main agent like any other turn. Router failures degrade
 		// to the agent so a flaky cheap model never silently eats real work.
 		const hadHistory = this.messages.length > 1;
 		try {
 			const route = await routeUserInput(this.bundle.glue, trimmed, { hasHistory: hadHistory });
-			if (route.kind === "chat") {
-				this.appendSyntheticAssistant(route.reply);
-				return;
-			}
 			if (route.kind === "plan") {
 				this.busy = true;
 				this.status = "thinking";

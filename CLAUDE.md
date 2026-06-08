@@ -95,12 +95,33 @@ SEARXNG_URL             self-hosted SearXNG instance
 
 ### Behavior toggles
 ```
-CODEBASE_FRESH=1        skip auto-resume of prior session (same as --new)
-CODEBASE_NO_SUGGESTIONS=1   disable ghost-text prompt suggestions
-CODEBASE_DEBUG=1        verbose stderr logging
-CODEBASE_DEBUG_INPUT=1  log every keystroke to ~/.codebase/logs/input.log
-NO_HYPERLINK=1          disable OSC 8 clickable file paths
+CODEBASE_FRESH=1              skip auto-resume of prior session (same as --new)
+CODEBASE_NO_SUGGESTIONS=1     disable ghost-text prompt suggestions
+CODEBASE_DEBUG=1              verbose stderr logging
+CODEBASE_DEBUG_INPUT=1        log every keystroke to ~/.codebase/logs/input.log
+NO_HYPERLINK=1                disable OSC 8 clickable file paths
 ```
+
+### Unrestricted mode (trust-the-developer escape hatches)
+
+By default the agent has three soft guards. Each one has an opt-out
+env var, and `--unrestricted` (alias `--yolo`) sets all three:
+
+```
+CODEBASE_NO_PROJECT_ROOT=1      file/shell tools can read/write/cd anywhere
+                                the running user can. Default: clamped to cwd.
+CODEBASE_NO_VALIDATOR=1         shell tool skips the rm -rf / dd / fork-bomb
+                                hard blocks. Default: those patterns refuse.
+CODEBASE_NO_READ_BEFORE_WRITE=1 write_file / edit_file proceed even when the
+                                model never read the file in this turn.
+                                Default: refused with FileNotReadFirstError.
+```
+
+When ANY of these are set, the CLI prints a yellow banner at session
+start enumerating which restrictions are off — so you don't run
+unrestricted by accident. Philosophy: defaults are conservative so
+new users can't accidentally trash their machine; opt-outs let power
+users tell us "I trust this agent on this box, get out of the way."
 
 ### OAuth (only override if you know why)
 ```
@@ -270,6 +291,132 @@ default — only an actual exit-2 blocks.
   subagentSuccess?: boolean      // SubagentStop
 }
 ```
+
+## SSH (remote machine access)
+
+The agent can run shell commands on remote machines via the `ssh_exec`
+tool. The host list is an allowlist managed by the user — the agent
+picks a name from the enrolled set, not arbitrary `user@host` strings.
+
+### Enrollment
+
+```sh
+# Generate a key (default Ed25519, --rsa for RSA-4096 if your
+# compliance / legacy infra requires it). Passphrase-less by default
+# because the agent runs non-interactively.
+codebase ssh keygen staging
+
+# Print the pubkey + a one-liner to install it on the remote.
+
+# Register the host:
+codebase ssh add staging staging.example.com --user deploy --key ~/.codebase/ssh/staging
+
+# Verify connectivity:
+codebase ssh test staging
+
+# Inspect / remove:
+codebase ssh list
+codebase ssh rm staging
+```
+
+### How the agent uses it
+
+When asked to "deploy the build to staging", the model issues:
+
+```ts
+ssh_exec({ host: "staging", command: "cd /app && systemctl restart codebase" })
+```
+
+The host argument is the registered NAME, not a hostname. The tool
+resolves it against `~/.codebase/ssh.json` and (optionally) project
+overrides at `<cwd>/.codebase/ssh.json`. Project entries override
+user entries with the same name.
+
+### Security model
+
+- **Allowlist by name, not free-form.** The agent can target `staging`
+  only if the user enrolled `staging`. Even with prompt injection,
+  the model can't pick a destination the user didn't pre-approve.
+- **Same shell-validator as the local `shell` tool.** `rm -rf /`,
+  fork bombs, raw writes to `/dev/sda` etc. are blocked before the
+  ssh spawn, regardless of which host they target.
+- **BatchMode=yes.** Never prompts for a password. If the key isn't
+  accepted, the call fails fast instead of stalling.
+- **StrictHostKeyChecking=accept-new.** First connection pins the
+  host key (TOFU); a later host-key mismatch refuses to connect.
+- **ConnectTimeout=10s + ServerAliveInterval=30s.** Unreachable
+  hosts fail in seconds, dead network paths are detected during
+  long-running commands.
+- **IdentitiesOnly=yes when --key given.** Predictable auth path —
+  ssh doesn't fall back to other keys in the agent.
+
+The validator is advisory, not a security boundary. Real isolation
+for hostile workloads still belongs in container / sandbox
+boundaries on the remote.
+
+### Config schema (`~/.codebase/ssh.json` and `<cwd>/.codebase/ssh.json`)
+
+```json
+{
+  "hosts": [
+    {
+      "name": "staging",
+      "host": "staging.example.com",
+      "user": "deploy",
+      "port": 22,
+      "identityFile": "~/.codebase/ssh/staging",
+      "description": "staging app server (us-east-1)"
+    }
+  ]
+}
+```
+
+`name` must match `[a-z0-9][a-z0-9_-]*`. `host` rejects anything
+that looks like `user@host:port` syntax — use separate fields.
+
+## Background shells + monitors
+
+Long-running commands (dev servers, log tails, build watchers) go in
+the background so the agent doesn't block on them. Two flavors:
+
+### Background shell
+
+```ts
+shell({ background: true, command: "npm run dev" })
+// → returns task_id "bg-3" immediately
+shell_output({ task_id: "bg-3" })   // poll buffered output
+shell_kill({ task_id: "bg-3" })     // terminate
+```
+
+The agent gets notified automatically when a background shell exits —
+no need to poll for completion.
+
+### Monitor (push-style line notifications)
+
+The agent can ATTACH a monitor to a running background shell to be
+notified as matching lines arrive, instead of polling. Use this for
+"watch the log for ERROR" or "tell me the first time the server
+prints 'Listening on'."
+
+```ts
+shell({ background: true, command: "tail -f logs/app.log" })
+// → "bg-1"
+monitor({
+  task_id: "bg-1",
+  match: "ERROR|FATAL",       // regex; default = match every line
+  flags: "i",                  // default; "" for case-sensitive
+  max_matches: 5,              // auto-stop after N (optional)
+  note: "watching app errors"  // free-form hint
+})
+// → "mon-1". Now any matching line steers a system-reminder
+//   into the agent mid-conversation.
+
+monitor_stop({ monitor_id: "mon-1" })   // unregister early
+```
+
+Monitors auto-clean when the watched shell exits or when `max_matches`
+is reached. The background shell itself keeps running until
+`shell_kill` — `monitor_stop` only unsubscribes from notifications.
 
 ## In-flight features
 

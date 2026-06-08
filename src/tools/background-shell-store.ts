@@ -18,6 +18,7 @@ export interface BackgroundShellRecord {
 }
 
 export type BackgroundShellListener = (shells: readonly BackgroundShellRecord[]) => void;
+export type BackgroundShellOutputListener = (text: string) => void;
 
 /**
  * Result returned by `BackgroundShellStore.kill`. The caller needs to know
@@ -45,6 +46,9 @@ export class BackgroundShellStore {
 	private records = new Map<string, BackgroundShellRecord>();
 	private processes = new Map<string, ChildProcess>();
 	private readonly listeners = new Set<BackgroundShellListener>();
+	/** Per-shell-id output subscribers. Used by the monitor tool so the
+	 * agent can react to incoming lines without polling shell_output. */
+	private readonly outputListeners = new Map<string, Set<BackgroundShellOutputListener>>();
 	private nextId = 1;
 
 	/**
@@ -83,6 +87,7 @@ export class BackgroundShellStore {
 				record.output = record.output.slice(record.output.length - MAX_BUFFER_BYTES);
 			}
 			this.notify();
+			this.notifyOutput(id, text);
 		};
 		child.stdout?.on("data", onChunk);
 		child.stderr?.on("data", onChunk);
@@ -92,6 +97,8 @@ export class BackgroundShellStore {
 			record.exitCode = code ?? undefined;
 			record.signal = signal ?? undefined;
 			this.processes.delete(id);
+			// Drop output subscribers now that there'll be no more output.
+			this.outputListeners.delete(id);
 			this.notify();
 		});
 		child.on("error", (err) => {
@@ -200,8 +207,45 @@ export class BackgroundShellStore {
 		};
 	}
 
+	/**
+	 * Subscribe to raw output chunks from a specific shell. The text
+	 * passed to the listener is exactly what was just appended to the
+	 * record's output buffer — caller does its own line-splitting +
+	 * matching (the monitor tool does regex matching on top).
+	 *
+	 * Returns a no-op unsubscribe if `id` is unknown or already exited;
+	 * the subscription is auto-removed when the shell exits.
+	 */
+	subscribeOutput(id: string, listener: BackgroundShellOutputListener): () => void {
+		let set = this.outputListeners.get(id);
+		if (!set) {
+			set = new Set();
+			this.outputListeners.set(id, set);
+		}
+		set.add(listener);
+		return () => {
+			const current = this.outputListeners.get(id);
+			if (!current) return;
+			current.delete(listener);
+			if (current.size === 0) this.outputListeners.delete(id);
+		};
+	}
+
 	private notify(): void {
 		const snapshot = this.list();
 		for (const fn of this.listeners) fn(snapshot);
+	}
+
+	private notifyOutput(id: string, text: string): void {
+		const set = this.outputListeners.get(id);
+		if (!set) return;
+		for (const fn of set) {
+			try {
+				fn(text);
+			} catch {
+				// A misbehaving subscriber shouldn't take down the whole
+				// stream of other subscribers — best-effort.
+			}
+		}
 	}
 }

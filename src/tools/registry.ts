@@ -13,6 +13,8 @@ import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
 import { createMemoryTools } from "./memory-tools.js";
+import { createMonitor } from "./monitor.js";
+import { createMonitorStop } from "./monitor-stop.js";
 import { createMultiEdit } from "./multi-edit.js";
 import { createNotebookEdit } from "./notebook-edit.js";
 import { createPlanModeTools } from "./plan-mode.js";
@@ -20,6 +22,7 @@ import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
 import { createShellKill } from "./shell-kill.js";
 import { createShellOutput } from "./shell-output.js";
+import { createSshExec } from "./ssh-exec.js";
 import { createTaskTools } from "./tasks.js";
 import type { ToolContext } from "./types.js";
 import { createWebFetch } from "./web-fetch.js";
@@ -40,6 +43,9 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createShell(ctx),
 		createShellOutput(ctx),
 		createShellKill(ctx),
+		createMonitor(ctx),
+		createMonitorStop(ctx),
+		createSshExec(ctx),
 		createListFiles(ctx),
 		createGlob(ctx),
 		createGrep(ctx),

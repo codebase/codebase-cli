@@ -139,6 +139,82 @@ describe("runHeadless", () => {
 		}
 	});
 
+	it("json mode emits a structured envelope on ConfigError instead of empty stdout", async () => {
+		// Same setup as the text-mode test above: omit configOverride so
+		// resolveConfig actually tries env vars. If the env happens to have
+		// a key set, we skip the assertion — only the failure path is the
+		// regression guard.
+		const savedAnthropic = process.env.ANTHROPIC_API_KEY;
+		const savedOpenai = process.env.OPENAI_API_KEY;
+		const savedGroq = process.env.GROQ_API_KEY;
+		const savedOpenrouter = process.env.OPENROUTER_API_KEY;
+		const savedMistral = process.env.MISTRAL_API_KEY;
+		delete process.env.ANTHROPIC_API_KEY;
+		delete process.env.OPENAI_API_KEY;
+		delete process.env.GROQ_API_KEY;
+		delete process.env.OPENROUTER_API_KEY;
+		delete process.env.MISTRAL_API_KEY;
+		try {
+			const { capture, write } = makeCapture();
+			const exitCode = await runHeadless({
+				prompt: "hi",
+				autoApprove: true,
+				outputFormat: "json",
+				...write,
+			});
+			expect(exitCode).toBe(1);
+			// stdout must contain a JSON object with ok:false + a code,
+			// not the empty string the pre-fix version emitted.
+			const trimmed = capture.stdout.trim();
+			expect(trimmed.length).toBeGreaterThan(0);
+			const parsed = JSON.parse(trimmed) as { ok: boolean; exitCode: number; code: string };
+			expect(parsed.ok).toBe(false);
+			expect(parsed.exitCode).toBe(1);
+			expect(parsed.code).toBe("config_error");
+		} finally {
+			if (savedAnthropic !== undefined) process.env.ANTHROPIC_API_KEY = savedAnthropic;
+			if (savedOpenai !== undefined) process.env.OPENAI_API_KEY = savedOpenai;
+			if (savedGroq !== undefined) process.env.GROQ_API_KEY = savedGroq;
+			if (savedOpenrouter !== undefined) process.env.OPENROUTER_API_KEY = savedOpenrouter;
+			if (savedMistral !== undefined) process.env.MISTRAL_API_KEY = savedMistral;
+		}
+	});
+
+	it("stream-json mode emits a structured error line on ConfigError", async () => {
+		const savedKeys = [
+			"ANTHROPIC_API_KEY",
+			"OPENAI_API_KEY",
+			"GROQ_API_KEY",
+			"OPENROUTER_API_KEY",
+			"MISTRAL_API_KEY",
+		].map((k) => [k, process.env[k]] as const);
+		for (const [k] of savedKeys) delete process.env[k];
+		try {
+			const { capture, write } = makeCapture();
+			const exitCode = await runHeadless({
+				prompt: "hi",
+				autoApprove: true,
+				outputFormat: "stream-json",
+				...write,
+			});
+			expect(exitCode).toBe(1);
+			const lines = capture.stdout
+				.trim()
+				.split("\n")
+				.filter((l) => l.length > 0);
+			expect(lines.length).toBeGreaterThan(0);
+			const errLine = lines.find((l) => l.includes('"type":"error"'));
+			expect(errLine).toBeDefined();
+			const parsed = JSON.parse(errLine ?? "{}") as { type: string; code: string };
+			expect(parsed.type).toBe("error");
+			expect(parsed.code).toBe("config_error");
+		} finally {
+			for (const [k, v] of savedKeys) {
+				if (v !== undefined) process.env[k] = v;
+			}
+		}
+	});
+
 	it("respects a UserPromptSubmit hook veto (exit 2)", async () => {
 		// We can't easily inject a hook without writing to ~/.codebase, but
 		// we can wire the submit path by setting a hook config via

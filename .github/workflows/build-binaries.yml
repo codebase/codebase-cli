@@ -106,3 +106,48 @@ jobs:
               ${PRERELEASE_FLAG}
           fi
           gh release upload "${TAG}" "${{ matrix.asset }}" --clobber
+
+  # Native Windows smoke test. The build matrix above cross-compiles the
+  # Windows .exe on ubuntu, but a binary built that way can still die at
+  # runtime on real Windows (missing DLL, path resolution quirk, console-
+  # vs-console-host differences). This job builds + invokes the .exe on
+  # an actual windows-latest runner so obvious breakage gates the release.
+  windows-smoke:
+    name: Smoke-test Windows binary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Stub ink devtools
+        shell: bash
+        run: |
+          cat > node_modules/ink/build/devtools.js <<'EOF'
+          export default { connectToDevTools() {} };
+          EOF
+
+      - name: Compile native Windows binary
+        run: bun build --compile --target=bun-windows-x64 src/cli.tsx --outfile=codebase.exe
+
+      - name: Invoke --version and --help
+        # Both should exit 0 on a healthy binary. Asking for --help also
+        # exercises argv parsing + the early return path so we catch
+        # crashes in startup code (config loading, dotenv, etc.) without
+        # needing real credentials.
+        shell: pwsh
+        run: |
+          ./codebase.exe --version
+          ./codebase.exe --help

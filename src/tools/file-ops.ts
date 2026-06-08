@@ -16,10 +16,18 @@ import type { FileSnapshot, FileStateCache } from "./file-state-cache.js";
  * Symlinks are followed at read/stat time, so this is a best-effort guard
  * against absolute paths and `..` traversal — combine with realpath checks
  * before sensitive operations if you don't trust the working tree.
+ *
+ * Opt-out: `CODEBASE_NO_PROJECT_ROOT=1` (set explicitly or via the
+ * `--unrestricted` CLI flag) skips the clamp entirely. The agent can
+ * then reach anywhere the running user can — useful for system-admin
+ * sessions, debugging across multiple projects, comparing against
+ * ~/.config, etc. Default stays clamped to keep new-user blast radius
+ * small.
  */
 export function resolveInsideCwd(cwd: string, requested: string): string {
 	const absCwd = resolve(cwd);
 	const candidate = isAbsolute(requested) ? resolve(requested) : resolve(absCwd, requested);
+	if (process.env.CODEBASE_NO_PROJECT_ROOT === "1") return candidate;
 	if (candidate !== absCwd && !candidate.startsWith(absCwd + sep)) {
 		throw new PathOutsideCwdError(requested);
 	}
@@ -56,14 +64,52 @@ export function isLikelyBinary(buf: Buffer): boolean {
  *   - missing snapshot → FileNotReadFirstError ("read it first")
  *   - mtime/size drift → FileUnexpectedlyModifiedError ("read it again")
  *   - partial-view read → PartialViewEditError ("read the full file")
+ *
+ * Opt-out: `CODEBASE_NO_READ_BEFORE_WRITE=1` (or `--unrestricted`)
+ * returns a synthetic snapshot so write_file / edit_file / multi_edit
+ * proceed even if the model never read the file in this turn. Useful
+ * for "generate this file from scratch" workflows where the read-first
+ * check is friction. Drift detection still fires when the snapshot
+ * is present and stale.
  */
 export function validateForOverwrite(absPath: string, cache: FileStateCache): FileSnapshot {
 	const status = cache.check(absPath);
-	if (status === "missing") throw new FileNotReadFirstError(absPath);
+	if (status === "missing") {
+		if (process.env.CODEBASE_NO_READ_BEFORE_WRITE === "1") {
+			// Synthesize a "we never looked" snapshot so the caller proceeds.
+			// Drift detection only matters when we DO have a prior snapshot;
+			// without one, the user has explicitly told us to skip the check.
+			return {
+				path: absPath,
+				content: "",
+				mtimeMs: 0,
+				size: 0,
+				hasBOM: false,
+				eol: "\n",
+				isPartialView: false,
+				storedAt: Date.now(),
+			};
+		}
+		throw new FileNotReadFirstError(absPath);
+	}
 	if (status === "modified") throw new FileUnexpectedlyModifiedError(absPath);
 
 	const snap = cache.get(absPath);
-	if (!snap) throw new FileNotReadFirstError(absPath);
+	if (!snap) {
+		if (process.env.CODEBASE_NO_READ_BEFORE_WRITE === "1") {
+			return {
+				path: absPath,
+				content: "",
+				mtimeMs: 0,
+				size: 0,
+				hasBOM: false,
+				eol: "\n",
+				isPartialView: false,
+				storedAt: Date.now(),
+			};
+		}
+		throw new FileNotReadFirstError(absPath);
+	}
 	if (snap.isPartialView) throw new PartialViewEditError(absPath);
 	return snap;
 }

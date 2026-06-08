@@ -69,7 +69,30 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		});
 	} catch (e) {
 		const msg = e instanceof ConfigError ? e.message : e instanceof Error ? e.message : String(e);
-		err(`error: ${msg}\n`);
+		const code = e instanceof ConfigError ? "config_error" : "setup_error";
+		// stream-json / json consumers shouldn't have to merge stdout +
+		// stderr to detect setup failures — emit a structured error in
+		// the same envelope they expect for runtime errors. Text mode
+		// still goes to stderr where ops consumers expect to see it.
+		if (format === "stream-json") {
+			out(`${JSON.stringify({ type: "error", code, error: msg, ts: Date.now() })}\n`);
+		} else if (format === "json") {
+			out(
+				`${JSON.stringify({
+					ok: false,
+					exitCode: 1,
+					error: msg,
+					code,
+					messages: [],
+					usage: EMPTY_USAGE,
+					model: null,
+					source: null,
+					durationMs: 0,
+				})}\n`,
+			);
+		} else {
+			err(`error: ${msg}\n`);
+		}
 		return 1;
 	}
 
@@ -114,7 +137,12 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		if (!submitResult.submitted) {
 			errored = true;
 			errorMessage = submitResult.reason ?? "Prompt blocked by hook.";
-			err(`prompt blocked: ${errorMessage}\n`);
+			if (format === "stream-json") {
+				out(`${JSON.stringify({ type: "error", code: "prompt_blocked", error: errorMessage, ts: Date.now() })}\n`);
+			} else if (format !== "json") {
+				err(`prompt blocked: ${errorMessage}\n`);
+			}
+			// json mode picks this up in buildJsonResult below via errorMessage.
 		}
 	} catch (e) {
 		errored = true;

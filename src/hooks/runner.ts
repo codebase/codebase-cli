@@ -60,6 +60,11 @@ export function runHook(config: HookConfig, context: HookEventContext, signal?: 
 		};
 		signal?.addEventListener("abort", onAbort);
 
+		// EPIPE is async (emitted on stdin's 'error' event) when the child
+		// exits before consuming our payload — a sync try/catch misses it
+		// and node treats unhandled-stream-error as a process exception.
+		// Swallow the stream error explicitly; close-on-fast-exit is fine.
+		child.stdin?.on("error", () => {});
 		try {
 			child.stdin?.write(JSON.stringify(context));
 			child.stdin?.end();

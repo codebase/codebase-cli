@@ -1,10 +1,16 @@
 import type { GlueClient } from "../glue/client.js";
 import { classifyIntent } from "../glue/intent.js";
 
-const CHAT_SYSTEM_PROMPT =
-	"You're chatting casually with the user — small talk, gratitude, greetings, meta-questions. Reply briefly (one or two sentences), warm tone, no code unless explicitly asked.";
-
-export type RouteOutcome = { kind: "agent" } | { kind: "chat"; reply: string } | { kind: "plan" };
+/**
+ * Routing decision returned to App.tsx. We only ever return two real
+ * destinations now — the main agent or the plan flow. The chat path
+ * (intercepting small-talk/meta-questions with a cheap glue model) was
+ * removed because it made the CLI confidently hallucinate identity and
+ * capability when the user asked the obvious meta questions. All
+ * conversation now goes through the agent, which has tools and the
+ * actual system prompt.
+ */
+export type RouteOutcome = { kind: "agent" } | { kind: "plan" };
 
 export interface RouteOptions {
 	hasHistory: boolean;
@@ -12,34 +18,17 @@ export interface RouteOptions {
 }
 
 /**
- * Decide what to do with a user input before involving the main agent:
- *   - "chat" → glue reply, no agent run (greetings, thanks, meta)
- *   - "plan" → caller enters the plan flow (Q&A → reviewable plan → agent)
- *   - "agent" → fall through to agent.prompt as before
- *
- * Glue failures degrade to "agent" so a flaky cheap model never silently
- * eats a real request — same fallback policy classifyIntent already uses.
+ * Decide whether the user's input should auto-trigger plan mode (the
+ * Q&A → reviewable-plan → agent-execution flow) or just hit the main
+ * agent. Glue is consulted only for the plan/agent split — if it
+ * returns any other intent, or the call fails, we default to the
+ * agent. Failing-open keeps a flaky cheap model from silently eating
+ * real requests.
  */
 export async function routeUserInput(glue: GlueClient, text: string, options: RouteOptions): Promise<RouteOutcome> {
 	const intent = await classifyIntent(glue, text, options);
-	if (intent === "chat") {
-		const reply = await chatReply(glue, text, options.signal);
-		return { kind: "chat", reply };
-	}
 	if (intent === "plan") {
 		return { kind: "plan" };
 	}
-	// agent + clarify both go through the main agent. A future "clarify" mode
-	// could surface a system reminder via agent.steer() before running the turn.
 	return { kind: "agent" };
-}
-
-async function chatReply(glue: GlueClient, text: string, signal?: AbortSignal): Promise<string> {
-	try {
-		const out = await glue.fast(text, CHAT_SYSTEM_PROMPT, signal);
-		return out.trim() || "👍";
-	} catch {
-		// Glue down — at least acknowledge so the input row isn't dead silent.
-		return "👍";
-	}
 }
