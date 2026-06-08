@@ -301,6 +301,13 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 			// there's text). The exit window stays armed for the next press.
 			return undefined;
 		}
+		// Ctrl-D on an empty editor is readline EOF — treat it as the same
+		// exit signal as Ctrl-C double-tap. Non-empty editor falls through
+		// to Editor's own handling (forward-delete).
+		if (data === "\x04" && !this.busy && this.inputBar && this.inputBar.getText().length === 0) {
+			this.exitResolve?.();
+			return { consume: true };
+		}
 		return undefined;
 	}
 
