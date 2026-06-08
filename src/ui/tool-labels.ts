@@ -148,6 +148,17 @@ export function toolActionPast(name: string, args: unknown): string {
 	}
 }
 
+/**
+ * Tool calls that are pure reads — runs of these collapse into a single
+ * "Read N files" line. Keep the set tight: anything that mutates state,
+ * runs shell, or has a meaningful argument shape (grep query, fetch
+ * URL) reads weird when collapsed and stays per-row.
+ *
+ * Shared by both render paths (ui/ and ui-pi/) so the collapse rule is
+ * a single source of truth.
+ */
+export const COLLAPSIBLE_READ_TOOLS: ReadonlySet<string> = new Set(["read_file"]);
+
 /** Verb used when describing a *running* read-style tool in collapse rows. */
 export function presentVerbForReadTool(name: string): string {
 	if (name === "read_file") return "Reading";

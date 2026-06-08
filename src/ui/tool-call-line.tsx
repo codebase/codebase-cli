@@ -5,6 +5,7 @@ import type { ToolExecution } from "../types.js";
 import { DiffSummary, diffSummary } from "./diff-summary.js";
 import { displayPath } from "./paths.js";
 import {
+	COLLAPSIBLE_READ_TOOLS as SHARED_COLLAPSIBLE_READ_TOOLS,
 	nounForReadTool,
 	pastVerbForReadTool,
 	presentVerbForReadTool,
@@ -28,12 +29,10 @@ export function useSpinner(active: boolean, intervalMs = 90): string {
 
 /**
  * Tool calls that are pure reads — runs of these collapse into a single
- * "Read N files" / "Searched 3 patterns" line. Keep the set tight:
- * anything that mutates state, runs shell, or has a meaningful argument
- * shape (grep query, fetch URL) reads weird when collapsed and stays
- * per-row.
+ * "Read N files" line. Re-exported here for callers (Message.tsx) that
+ * already import from this module; the source of truth is tool-labels.
  */
-export const COLLAPSIBLE_READ_TOOLS: ReadonlySet<string> = new Set(["read_file"]);
+export const COLLAPSIBLE_READ_TOOLS = SHARED_COLLAPSIBLE_READ_TOOLS;
 
 export type AssistantContent = (AgentMessage & { role: "assistant" })["content"];
 export type AssistantToolCall = Extract<AssistantContent[number], { type: "toolCall" }>;

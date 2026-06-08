@@ -2,7 +2,16 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type Component, Markdown, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ToolExecution } from "../types.js";
 import { type DiffHunk, type DiffInfo, diffSummary } from "../ui/diff-summary.js";
-import { toolActionLabel, toolActionPast, truncate } from "../ui/tool-labels.js";
+import { displayPath } from "../ui/paths.js";
+import {
+	COLLAPSIBLE_READ_TOOLS,
+	nounForReadTool,
+	pastVerbForReadTool,
+	presentVerbForReadTool,
+	toolActionLabel,
+	toolActionPast,
+	truncate,
+} from "../ui/tool-labels.js";
 import { ansi, markdownTheme } from "./theme.js";
 
 const wrap = (text: string, width: number) => wrapTextWithAnsi(text, width);
@@ -101,6 +110,68 @@ export class ToolCallLine implements Component {
 	invalidate(): void {}
 }
 
+interface CollapsedCall {
+	id: string;
+	args: unknown;
+}
+
+/**
+ * Collapsed row for a run of pure-read tool calls — "✓ Read 3 files"
+ * with the per-file paths in a dim indented list beneath. Mirrors the
+ * ink-era CollapsedReadGroup so the pi-tui transcript reads the same
+ * way when the agent does N consecutive read_file calls.
+ */
+export class CollapsedReadGroup implements Component {
+	constructor(
+		private readonly toolName: string,
+		private readonly calls: readonly CollapsedCall[],
+		private readonly tools: ReadonlyMap<string, ToolExecution>,
+	) {}
+
+	render(width: number): string[] {
+		const statuses = this.calls.map((c) => this.tools.get(c.id)?.status);
+		const anyRunning = statuses.some((s) => s === "running");
+		const anyError = statuses.some((s) => s === "error");
+		const doneCount = statuses.filter((s) => s !== "running").length;
+
+		const glyph = anyRunning
+			? SPINNER_FRAMES[Math.floor(Date.now() / 90) % SPINNER_FRAMES.length]
+			: anyError
+				? "✗"
+				: "✓";
+		const color = anyError ? ansi.red : ansi.magenta;
+		const verb = anyRunning ? presentVerbForReadTool(this.toolName) : pastVerbForReadTool(this.toolName);
+		const noun = nounForReadTool(this.toolName, this.calls.length);
+		const header = anyRunning
+			? `${glyph} ${verb} ${doneCount} of ${this.calls.length} ${noun}…`
+			: `${glyph} ${verb} ${this.calls.length} ${noun}`;
+
+		const lines = wrap(header, width).map((l) => color(l));
+		const pathWidth = Math.max(20, width - 6);
+		for (const c of this.calls) {
+			const a = (c.args ?? {}) as Record<string, unknown>;
+			const rawPath =
+				typeof a.path === "string"
+					? a.path
+					: typeof a.file_path === "string"
+						? a.file_path
+						: "";
+			const path = displayPath(rawPath);
+			const status = this.tools.get(c.id)?.status;
+			const failed = status === "error";
+			const running = status === "running";
+			const marker = failed ? "  ✗ " : running ? "  → " : "  · ";
+			const row = `${marker}${truncate(path, pathWidth)}`;
+			if (failed) lines.push(ansi.red(row));
+			else if (running) lines.push(ansi.magenta(row));
+			else lines.push(ansi.dim(row));
+		}
+		return lines;
+	}
+
+	invalidate(): void {}
+}
+
 /**
  * Render a DiffInfo block as ANSI-colored lines. Word-level highlighting
  * mirrors the ink path: changed spans get a brighter background so the
@@ -162,7 +233,31 @@ export function buildMessageBlocks(
 		return out;
 	}
 	if (!Array.isArray(message.content)) return out;
-	for (const block of message.content) {
+	const blocks = message.content;
+	let i = 0;
+	while (i < blocks.length) {
+		const block = blocks[i];
+		// Collapse runs of consecutive read-only tool calls of the same
+		// kind ("✓ Read 3 files"). Mirrors the ink path's CollapsedReadGroup;
+		// the user gets one summary row instead of N near-identical lines.
+		if (block.type === "toolCall" && COLLAPSIBLE_READ_TOOLS.has(block.name)) {
+			let runEnd = i + 1;
+			while (runEnd < blocks.length) {
+				const next = blocks[runEnd];
+				if (next.type !== "toolCall" || next.name !== block.name) break;
+				runEnd++;
+			}
+			if (runEnd - i >= 2) {
+				const calls: CollapsedCall[] = [];
+				for (let j = i; j < runEnd; j++) {
+					const b = blocks[j];
+					if (b.type === "toolCall") calls.push({ id: b.id, args: b.arguments });
+				}
+				out.push(new CollapsedReadGroup(block.name, calls, tools));
+				i = runEnd;
+				continue;
+			}
+		}
 		switch (block.type) {
 			case "text": {
 				if (typeof block.text !== "string") break;
@@ -190,6 +285,7 @@ export function buildMessageBlocks(
 			// Unknown content kinds (server gateways could add new ones; pi-ai's
 			// union may grow). Skip silently rather than crash the render.
 		}
+		i++;
 	}
 	return out;
 }
