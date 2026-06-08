@@ -24,7 +24,6 @@ import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js"
 import { HistoryStore } from "../ui/history-store.js";
 import { runShellEscape } from "../ui/shell-escape.js";
 import { pickNextVerb, THINKING_VERBS } from "../ui/thinking-verbs.js";
-import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
 import { ContextWarning, ErrorCard } from "./banners.js";
 import { CompactionBanner } from "./compaction-banner.js";

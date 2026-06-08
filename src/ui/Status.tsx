@@ -3,8 +3,8 @@ import { Box, Text } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
 import type { ChatState } from "../types.js";
-import { pickNextVerb, THINKING_VERBS } from "./thinking-verbs.js";
 import { Throbber } from "./Throbber.js";
+import { pickNextVerb, THINKING_VERBS } from "./thinking-verbs.js";
 
 export { estimateContextTokens };
 

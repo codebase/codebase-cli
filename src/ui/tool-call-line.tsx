@@ -5,10 +5,10 @@ import type { ToolExecution } from "../types.js";
 import { DiffSummary, diffSummary } from "./diff-summary.js";
 import { displayPath } from "./paths.js";
 import {
-	COLLAPSIBLE_READ_TOOLS as SHARED_COLLAPSIBLE_READ_TOOLS,
 	nounForReadTool,
 	pastVerbForReadTool,
 	presentVerbForReadTool,
+	COLLAPSIBLE_READ_TOOLS as SHARED_COLLAPSIBLE_READ_TOOLS,
 	toolActionLabel,
 	toolActionPast,
 	truncate,
