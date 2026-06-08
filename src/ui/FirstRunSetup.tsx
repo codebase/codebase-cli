@@ -251,16 +251,10 @@ function renderBody(mode: Mode, authBase: string, manualUrl: ManualUrlInfo | und
 						Sign in to continue
 					</Text>
 					<Box marginTop={1}>
-						<Text dimColor>{manualUrl.reason}</Text>
+						<Text dimColor>Opening browser automatically. If it didn't open, copy the URL below:</Text>
 					</Box>
 					<Box marginTop={1}>
-						<Text bold color="cyan">
-							{osc8Link(manualUrl.url, "→ Click here to sign in (cmd-click in most terminals)")}
-						</Text>
-					</Box>
-					<Box marginTop={1} flexDirection="column">
-						<Text dimColor>If clicking didn't open a browser, copy this URL:</Text>
-						<Text dimColor>{manualUrl.url}</Text>
+						<Text color="cyan">{manualUrl.url}</Text>
 					</Box>
 					<Box marginTop={1}>
 						<Text dimColor>Waiting for the browser to redirect back. (Ctrl-C to cancel.)</Text>
@@ -342,20 +336,6 @@ function renderBody(mode: Mode, authBase: string, manualUrl: ManualUrlInfo | und
 	);
 }
 
-// Mirrors src/auth/cli.ts's defaultOAuthConfig — see that file for the
-// canonical shape and the OAuth alignment audit.
-/**
- * Wrap text in an OSC 8 hyperlink escape so it renders as a single
- * clickable element regardless of how the terminal wraps the visible
- * text. Modern terminals (iTerm2, recent Terminal.app, Kitty,
- * Wezterm, Alacritty, VSCode terminal) honor this; older terminals
- * just see the display text. We always render the bare URL on a
- * separate line below as a copy-paste fallback.
- */
-function osc8Link(url: string, displayText: string): string {
-	const ESC = "";
-	return `${ESC}]8;;${url}${ESC}\\${displayText}${ESC}]8;;${ESC}\\`;
-}
 
 function oauthConfigForBase(base: string): OAuthConfig {
 	const trimmed = base.replace(/\/+$/, "");

@@ -1,4 +1,3 @@
-import { terminalHyperlink } from "../ui/paths.js";
 import { CredentialsStore } from "./credentials.js";
 import { type OAuthConfig, refreshAccessToken, revokeToken, runOAuthLogin } from "./flow.js";
 
@@ -117,18 +116,17 @@ async function loginCmd(
 	try {
 		const creds = await runOAuthLogin(config, {
 			onManualUrl: (url) => {
-				// OSC 8 hyperlink wraps the URL so soft-wrap by the terminal
-				// doesn't break click-to-open in iTerm2 / Wezterm / Kitty /
-				// modern Terminal.app. The bare URL is still printed below
-				// as a copy-paste fallback for terminals that don't honor
-				// the escape.
-				out("Click here to sign in (cmd-click in most terminals):");
+				// Auto-open the browser is the primary path (fired by
+				// runOAuthLogin); the URL print below is the fallback for
+				// when the browser can't open — headless / SSH / no
+				// $DISPLAY. The click-here OSC 8 hyperlink was removed
+				// because terminals that don't honor it (or that intercept
+				// clicks for selection) made it actively confusing. The
+				// URL prints with NO leading indent so terminal
+				// select-copy doesn't pick up padding spaces.
+				out("Opening your browser. If it didn't open, copy this URL:");
 				out("");
-				out(`  ${terminalHyperlink(url, "→ codebase login link")}`);
-				out("");
-				out("Or copy this URL into a browser:");
-				out("");
-				out(`  ${url}`);
+				out(url);
 				out("");
 				// SSH callers need to reach the localhost callback on this box.
 				// Print the port-forward command preemptively so a remote login
