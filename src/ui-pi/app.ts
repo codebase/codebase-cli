@@ -514,15 +514,16 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 				resume: false,
 			});
 			this.bundle = next;
-			// Async handler so the event loop can yield between events — pi-tui's
-// timer + render scheduler need microtask gaps to fire. Without `async`
-// here, a burst of agent events drains the microtask queue without
-// letting setTimeout-driven renders or interval-driven spinners ever
-// run, and the user sees nothing until they press a key.
-this.unsubscribe = this.bundle.subscribe(async (event) => {
-	debugLog(`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`);
-	this.handleAgentEvent(event);
-});
+			// Same async handler pattern as the constructor — needed so the
+			// event loop can yield between events, otherwise a burst of
+			// agent events drains the microtask queue and renders/spinners
+			// stall until the user presses a key.
+			this.unsubscribe = this.bundle.subscribe(async (event) => {
+				debugLog(
+					`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`,
+				);
+				this.handleAgentEvent(event);
+			});
 			this.statusBar.setModelName(next.model.name);
 			this.statusBar.note(`Switched to ${next.model.name} (${next.model.provider}/${next.model.id}).`);
 			// Re-bind every bundle-scoped store: compaction monitor, tasks,
