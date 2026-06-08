@@ -23,6 +23,7 @@ import { EMPTY_USAGE } from "../types.js";
 import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js";
 import { HistoryStore } from "../ui/history-store.js";
 import { runShellEscape } from "../ui/shell-escape.js";
+import { pickNextVerb, THINKING_VERBS } from "../ui/thinking-verbs.js";
 import { toolActionLabel, toolActionPast } from "../ui/tool-labels.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
 import { ContextWarning, ErrorCard } from "./banners.js";
@@ -102,11 +103,11 @@ export class App extends Container {
 		this.messages.push(...this.bundle.resumedMessages);
 
 		this.transcript = new TranscriptView(this.bundle.resumedMessages, this.tools);
-		this.statusBar = new StatusBar(this.bundle.model.name, this.bundle.toolContext.cwd);
 		// Async store subscribers need to schedule a TUI render after every
 		// state change — pi-tui only paints on input events or explicit
 		// requestRender, never automatically on child invalidate.
 		const requestRender = (): void => this.tui?.requestRender();
+		this.statusBar = new StatusBar(this.bundle.model.name, this.bundle.toolContext.cwd, requestRender);
 		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells, requestRender);
 		this.compactionBanner = new CompactionBanner(this.bundle.compactionMonitor, requestRender);
 		this.taskPanel = new TaskPanel(this.bundle.toolContext.tasks, requestRender);
@@ -784,6 +785,7 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 		this.hideModelPicker();
 		this.stopRateSampling();
 		this.stopSpinners();
+		this.statusBar.dispose();
 		this.compactionBanner.dispose();
 		this.taskPanel.dispose();
 		this.bgShellPanel.dispose();
@@ -835,10 +837,15 @@ class StatusBar extends Container {
 	private cost = 0;
 	private tokRate: number | undefined;
 	private throbberTick = 0;
-	constructor(modelName: string, cwd: string) {
+	/** Active cycling verb shown while currentStatus is "thinking". */
+	private verb = THINKING_VERBS[0];
+	private verbTimer: NodeJS.Timeout | undefined;
+	private readonly onTick: () => void;
+	constructor(modelName: string, cwd: string, onTick: () => void = () => undefined) {
 		super();
 		this.modelName = modelName;
 		this.cwdLabel = basename(cwd) || cwd;
+		this.onTick = onTick;
 		this.line = new Text(this.format(), 1, 0);
 		this.notesContainer = new Container();
 		this.addChild(this.notesContainer);
@@ -846,8 +853,34 @@ class StatusBar extends Container {
 	}
 	setStatus(status: string): void {
 		this.currentStatus = status;
+		if (status === "thinking") {
+			this.startVerbCycle();
+		} else {
+			this.stopVerbCycle();
+		}
 		this.line.setText(this.format());
 		this.line.invalidate();
+	}
+	private startVerbCycle(): void {
+		if (this.verbTimer) return;
+		// Reset to "Thinking" so consecutive turns start the cycle fresh
+		// rather than picking up wherever the previous turn left off.
+		this.verb = THINKING_VERBS[0];
+		this.verbTimer = setInterval(() => {
+			this.verb = pickNextVerb(this.verb);
+			this.line.setText(this.format());
+			this.line.invalidate();
+			this.onTick();
+		}, 3000);
+	}
+	private stopVerbCycle(): void {
+		if (this.verbTimer) {
+			clearInterval(this.verbTimer);
+			this.verbTimer = undefined;
+		}
+	}
+	dispose(): void {
+		this.stopVerbCycle();
 	}
 	setModelName(name: string): void {
 		this.modelName = name;
@@ -891,7 +924,8 @@ class StatusBar extends Container {
 	private format(): string {
 		const isBusy = this.currentStatus !== "idle";
 		const throb = isBusy ? `${ansi.cyan(THROBBER_FRAMES[this.throbberTick])} ` : "";
-		const statusLabel = isBusy ? ansi.cyan(this.currentStatus) : ansi.dim(this.currentStatus);
+		const label = this.currentStatus === "thinking" ? this.verb : this.currentStatus;
+		const statusLabel = isBusy ? ansi.cyan(label) : ansi.dim(label);
 		const bar = ctxBar(this.ctxPercent);
 		const ctxText = colorByThreshold(`${bar} ${this.ctxPercent}%`, this.ctxPercent);
 		const tokPart = this.tokRate !== undefined ? ` · ${this.tokRate} tok/s` : "";

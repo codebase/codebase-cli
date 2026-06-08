@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
 import type { ChatState } from "../types.js";
+import { pickNextVerb, THINKING_VERBS } from "./thinking-verbs.js";
 import { Throbber } from "./Throbber.js";
 
 export { estimateContextTokens };
@@ -13,51 +14,6 @@ interface StatusProps {
 	/** Context window in tokens; used to render the % used. */
 	contextWindow?: number;
 }
-
-/**
- * Engineering-themed verbs cycled while the agent is busy. The aesthetic
- * is "your computer is working on this," not "your assistant is gently
- * pondering" — verbs map to actual machine work (compiling, indexing,
- * tracing) rather than human-cognition metaphors. ASCII-clean so they
- * line up in any terminal font.
- */
-const THINKING_VERBS = [
-	"Thinking",
-	"Compiling",
-	"Indexing",
-	"Resolving",
-	"Parsing",
-	"Tracing",
-	"Diffing",
-	"Profiling",
-	"Computing",
-	"Linking",
-	"Optimizing",
-	"Stashing",
-	"Bisecting",
-	"Memoizing",
-	"Tokenizing",
-	"Hoisting",
-	"Reticulating",
-	"Refactoring",
-	"Bundling",
-	"Pruning",
-	"Spawning",
-	"Crunching",
-	"Marshaling",
-	"Currying",
-	"Folding",
-	"Reducing",
-	"Lexing",
-	"Yak-shaving",
-	"Caching",
-	"Threading",
-	"Vendoring",
-	"Inlining",
-	"Hashing",
-	"Allocating",
-	"Branching",
-];
 
 const STATUS_LABEL: Record<ChatState["status"], string> = {
 	idle: "ready",
@@ -236,15 +192,7 @@ function useThinkingVerb(active: boolean): string {
 			setVerb(THINKING_VERBS[0]);
 			return;
 		}
-		const id = setInterval(() => {
-			setVerb((current) => {
-				let next = current;
-				while (next === current) {
-					next = THINKING_VERBS[Math.floor(Math.random() * THINKING_VERBS.length)];
-				}
-				return next;
-			});
-		}, 3000);
+		const id = setInterval(() => setVerb((current) => pickNextVerb(current)), 3000);
 		return () => clearInterval(id);
 	}, [active]);
 	return verb;
