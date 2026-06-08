@@ -4,7 +4,8 @@ import { buildAuthorizationUrl } from "./authorization-url.js";
 import { isHeadlessSession, openBrowser } from "./browser-open.js";
 import { awaitCallback } from "./callback-server.js";
 import type { Credentials } from "./credentials.js";
-import { generateCodeChallenge, generateCodeVerifier, generateState } from "./pkce.js";
+import { parseCallbackPaste } from "./parse-callback.js";
+import { constantTimeEquals, generateCodeChallenge, generateCodeVerifier, generateState } from "./pkce.js";
 import { exchangeCode } from "./token-exchange.js";
 
 export { buildAuthorizationUrl } from "./authorization-url.js";
@@ -41,6 +42,14 @@ export interface OAuthConfig {
  *
  * Returns ready-to-save Credentials.
  */
+/**
+ * Result of validating a pasted callback URL. The wizard renders the
+ * error inline next to the input so the user knows what to fix.
+ */
+export type PasteResult =
+	| { ok: true }
+	| { ok: false; error: string };
+
 export interface RunOAuthLoginOptions {
 	/** Override the browser-open path (tests). */
 	openBrowserFn?: (url: string) => Promise<void>;
@@ -53,6 +62,18 @@ export interface RunOAuthLoginOptions {
 	 * callback hits 127.0.0.1.
 	 */
 	onManualUrl?: (url: string, reason: string) => void;
+	/**
+	 * Optional paste-fallback channel. Called once after the auth URL is
+	 * built; the wizard wires `submit` to its paste-input box. When the
+	 * user pastes the redirect URL they got in their browser (e.g. after
+	 * the localhost redirect failed), the wizard calls submit(input) and
+	 * either lands the flow (`{ok: true}`) or shows the error
+	 * (`{ok: false, error}`) and waits for another paste.
+	 *
+	 * The local callback server runs in parallel — whichever path finishes
+	 * first wins, the other is cancelled.
+	 */
+	onPasteFallback?: (submit: (input: string) => PasteResult) => void;
 }
 
 export async function runOAuthLogin(
@@ -78,6 +99,27 @@ export async function runOAuthLogin(
 
 	const callbackPromise = awaitCallback(server, state, config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
+	// Paste-fallback channel. The wizard provides a resolver via
+	// onPasteFallback; we hand it a `submit` it can call with whatever
+	// the user pastes. The pastePromise resolves when a paste validates,
+	// races against callbackPromise below — whichever finishes first wins.
+	let pasteResolve: ((value: { code: string }) => void) | undefined;
+	const pastePromise = new Promise<{ code: string }>((resolve) => {
+		pasteResolve = resolve;
+	});
+	const submitPaste = (input: string): PasteResult => {
+		const parsed = parseCallbackPaste(input);
+		if (!parsed) {
+			return { ok: false, error: "Couldn't find code+state in that. Paste the full callback URL." };
+		}
+		if (!constantTimeEquals(parsed.state, state)) {
+			return { ok: false, error: "State mismatch — that URL is from a different sign-in attempt." };
+		}
+		pasteResolve?.({ code: parsed.code });
+		return { ok: true };
+	};
+	opts.onPasteFallback?.(submitPaste);
+
 	// Always surface the URL to the caller so it's visible even when
 	// auto-open succeeds. Browser-open auto-detection is unreliable
 	// (xdg-open hangs on some boxes, `open` on macOS silently no-ops in
@@ -93,6 +135,21 @@ export async function runOAuthLogin(
 		openBrowserFn(authUrl).catch(() => undefined);
 	}
 
-	const { code } = await callbackPromise;
-	return exchangeCode(config, { code, codeVerifier: verifier, redirectUri });
+	// Race the two channels. callbackPromise resolves on a real localhost
+	// hit; pastePromise resolves when the user manually pastes the
+	// redirected URL. Whichever wins, we still close the server cleanly
+	// to free the port + stop the timeout timer.
+	const winner = await Promise.race([
+		callbackPromise.then((r) => ({ kind: "callback" as const, code: r.code })),
+		pastePromise.then((r) => ({ kind: "paste" as const, code: r.code })),
+	]);
+	if (winner.kind === "paste") {
+		// Close the now-unused listener so its timeout doesn't fire later.
+		try {
+			server.close();
+		} catch {
+			// Already closing — fine.
+		}
+	}
+	return exchangeCode(config, { code: winner.code, codeVerifier: verifier, redirectUri });
 }

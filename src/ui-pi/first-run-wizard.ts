@@ -1,6 +1,6 @@
 import { type Component, Container, Input, SelectList, Text, type TUI } from "@earendil-works/pi-tui";
 import { CredentialsStore } from "../auth/credentials.js";
-import { type OAuthConfig, runOAuthLogin } from "../auth/flow.js";
+import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
 import { ansi, selectListTheme } from "./theme.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
@@ -84,6 +84,12 @@ export class FirstRunWizard extends Container {
 	private menuList: SelectList | undefined;
 	private providerList: SelectList | undefined;
 	private keyInput: Input | undefined;
+	/** Paste-input box on the oauth-running screen. Lazily built when the URL arrives. */
+	private pasteInput: Input | undefined;
+	/** Callback handed back from flow.ts to validate + submit a pasted URL. */
+	private submitPaste: ((input: string) => PasteResult) | undefined;
+	/** Last paste error, rendered inline so the user knows what to fix. */
+	private pasteError: string | undefined;
 
 	constructor(opts: FirstRunWizardOptions) {
 		super();
@@ -100,7 +106,23 @@ export class FirstRunWizard extends Container {
 		if (this.mode === "menu") return this.menuList;
 		if (this.mode === "byok-provider") return this.providerList;
 		if (typeof this.mode === "object" && this.mode.kind === "byok-key") return this.keyInput;
+		if (this.mode === "oauth-running" && this.pasteInput) return this.pasteInput;
 		return undefined;
+	}
+
+	private handlePasteSubmit(text: string): void {
+		if (!this.submitPaste) return;
+		const result = this.submitPaste(text);
+		if (result.ok) {
+			// Flow will resolve and runOAuth() will swap to signed-in.
+			this.pasteError = undefined;
+			return;
+		}
+		this.pasteError = result.error;
+		// Clear the input so the user can paste a fresh URL without first
+		// having to manually delete the bad one.
+		this.pasteInput?.setValue("");
+		this.renderMode();
 	}
 
 	private renderMode(): void {
@@ -152,12 +174,24 @@ export class FirstRunWizard extends Container {
 			// select-copy doesn't pick up indent spaces. The terminal may
 			// still hard-wrap the URL across rows; cmd/triple-click most
 			// modern terminals still grab the whole token, and selecting
-			// across rows usually preserves the contiguous string. The
-			// click-here OSC 8 hyperlink was removed — terminals that
-			// don't honor it (or that intercept clicks for selection)
-			// made it actively confusing.
+			// across rows usually preserves the contiguous string.
 			this.addChild(new Text(ansi.cyan(this.manualUrl.url), 0, 0));
-			this.addChild(new Text(ansi.dim("Waiting for the browser to redirect back. (Ctrl-C to cancel.)"), 1, 1));
+			this.addChild(new Text(ansi.dim("Waiting for the browser to redirect back."), 1, 1));
+			// Paste fallback. If the localhost redirect fails (remote SSH,
+			// browser refusing to hit 127.0.0.1, etc.) the user's browser
+			// still has the failed URL in its address bar — that URL
+			// contains the code + state. They paste it here and we finish
+			// the flow without the local listener.
+			this.addChild(
+				new Text(ansi.dim("Redirect failed? Paste the http://127.0.0.1/callback?... URL here:"), 1, 0),
+			);
+			this.pasteInput = new Input();
+			this.pasteInput.onSubmit = (text) => this.handlePasteSubmit(text);
+			this.addChild(this.pasteInput);
+			if (this.pasteError) {
+				this.addChild(new Text(ansi.red(this.pasteError), 1, 0));
+			}
+			this.addChild(new Text(ansi.dim("(Ctrl-C to cancel)"), 1, 1));
 		} else {
 			this.addChild(new Text(`Opening ${ansi.cyan(this.authBase)} in your browser…`, 1, 0));
 			this.addChild(
@@ -237,6 +271,8 @@ export class FirstRunWizard extends Container {
 
 	private async runOAuth(): Promise<void> {
 		this.cancelOAuth = false;
+		this.submitPaste = undefined;
+		this.pasteError = undefined;
 		try {
 			const config = oauthConfigForBase(this.authBase);
 			const creds = await runOAuthLogin(config, {
@@ -244,6 +280,9 @@ export class FirstRunWizard extends Container {
 					if (this.cancelOAuth) return;
 					this.manualUrl = { url, reason };
 					this.renderMode();
+				},
+				onPasteFallback: (submit) => {
+					this.submitPaste = submit;
 				},
 			});
 			if (this.cancelOAuth) return;

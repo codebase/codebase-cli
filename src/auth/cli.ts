@@ -113,16 +113,14 @@ async function loginCmd(
 	out: (m: string) => void,
 	err: (m: string) => void,
 ): Promise<number> {
+	const stopReading = beginPasteFallbackReader();
 	try {
 		const creds = await runOAuthLogin(config, {
 			onManualUrl: (url) => {
 				// Auto-open the browser is the primary path (fired by
 				// runOAuthLogin); the URL print below is the fallback for
 				// when the browser can't open — headless / SSH / no
-				// $DISPLAY. The click-here OSC 8 hyperlink was removed
-				// because terminals that don't honor it (or that intercept
-				// clicks for selection) made it actively confusing. The
-				// URL prints with NO leading indent so terminal
+				// $DISPLAY. URL prints with NO leading indent so terminal
 				// select-copy doesn't pick up padding spaces.
 				out("Opening your browser. If it didn't open, copy this URL:");
 				out("");
@@ -141,6 +139,18 @@ async function loginCmd(
 					}
 				}
 				out("Waiting for sign-in…");
+				out("");
+				out("Redirect failed? Paste the http://127.0.0.1/callback?... URL here and press Enter.");
+			},
+			onPasteFallback: (submit) => {
+				stopReading.attachSubmit((line) => {
+					const result = submit(line);
+					if (result.ok) {
+						out("Got the code — finishing sign-in…");
+					} else {
+						err(result.error);
+					}
+				});
 			},
 		});
 		store.save(creds);
@@ -150,7 +160,53 @@ async function loginCmd(
 	} catch (e) {
 		err(`login failed: ${e instanceof Error ? e.message : String(e)}`);
 		return 1;
+	} finally {
+		stopReading.stop();
 	}
+}
+
+/**
+ * Read lines from stdin and forward each to whatever paste handler is
+ * later attached via attachSubmit(). Lines submitted before the handler
+ * is set are dropped — flow.ts wires the handler synchronously, so the
+ * window is microseconds in practice, but the guard means a fast paster
+ * isn't met with a crash.
+ *
+ * Returns { stop, attachSubmit }. stop() restores stdin to its prior
+ * mode so the parent shell behaves normally after `auth login` returns.
+ */
+function beginPasteFallbackReader(): {
+	stop: () => void;
+	attachSubmit: (handler: (line: string) => void) => void;
+} {
+	let buffer = "";
+	let handler: ((line: string) => void) | undefined;
+	const onData = (chunk: Buffer | string): void => {
+		const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+		buffer += text;
+		// Submit each complete line; keep the trailing partial in the buffer
+		// for the next chunk. \r\n and \r both count as line breaks since
+		// terminals on different OSes split paste differently.
+		let idx = buffer.search(/\r\n|\r|\n/);
+		while (idx >= 0) {
+			const line = buffer.slice(0, idx);
+			buffer = buffer.slice(idx + (buffer.slice(idx, idx + 2) === "\r\n" ? 2 : 1));
+			if (line.trim()) handler?.(line);
+			idx = buffer.search(/\r\n|\r|\n/);
+		}
+	};
+	process.stdin.setEncoding("utf8");
+	process.stdin.resume();
+	process.stdin.on("data", onData);
+	return {
+		stop: () => {
+			process.stdin.off("data", onData);
+			process.stdin.pause();
+		},
+		attachSubmit: (h) => {
+			handler = h;
+		},
+	};
 }
 
 async function logoutCmd(store: CredentialsStore, config: OAuthConfig, out: (m: string) => void): Promise<number> {

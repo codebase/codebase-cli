@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CredentialsStore } from "../auth/credentials.js";
-import { type OAuthConfig, runOAuthLogin } from "../auth/flow.js";
+import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
 import { PixelC } from "./PixelC.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
@@ -55,11 +55,19 @@ interface ManualUrlInfo {
 export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_BASE }: FirstRunSetupProps) {
 	const [mode, setMode] = useState<Mode>({ kind: "menu", cursor: 0 });
 	const [manualUrl, setManualUrl] = useState<ManualUrlInfo | undefined>(undefined);
+	const [pasteBuffer, setPasteBuffer] = useState("");
+	const [pasteError, setPasteError] = useState<string | undefined>(undefined);
+	const submitPasteRef = useRef<((input: string) => PasteResult) | null>(null);
 	const credStore = useMemo(() => store ?? new CredentialsStore(), [store]);
 
 	useEffect(() => {
 		if (mode.kind !== "oauth-running") return;
 		let cancelled = false;
+		// Reset paste-fallback state each time we enter oauth-running so a
+		// retry doesn't show stale errors from the previous attempt.
+		setPasteBuffer("");
+		setPasteError(undefined);
+		submitPasteRef.current = null;
 		(async () => {
 			try {
 				const config = oauthConfigForBase(authBase);
@@ -67,6 +75,10 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 					onManualUrl: (url, reason) => {
 						if (cancelled) return;
 						setManualUrl({ url, reason });
+					},
+					onPasteFallback: (submit) => {
+						if (cancelled) return;
+						submitPasteRef.current = submit;
 					},
 				});
 				if (cancelled) return;
@@ -181,8 +193,38 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 					setMode({ kind: "menu", cursor: 0 });
 				}
 			}
+			if (mode.kind === "oauth-running") {
+				// Esc cancels back to the menu. Submit the buffer on Enter;
+				// printable input + backspace edit it. The paste-fallback
+				// channel is only wired once the auth URL exists — until
+				// then we accept input but submit is a no-op.
+				if (key.escape) {
+					onQuit();
+					return;
+				}
+				if (key.return) {
+					const trimmed = pasteBuffer.trim();
+					if (!trimmed || !submitPasteRef.current) return;
+					const result = submitPasteRef.current(trimmed);
+					if (result.ok) {
+						// Flow resolves; the useEffect handles credStore + onDone.
+						setPasteError(undefined);
+					} else {
+						setPasteError(result.error);
+						setPasteBuffer("");
+					}
+					return;
+				}
+				if (key.backspace || key.delete) {
+					setPasteBuffer((p) => p.slice(0, -1));
+					return;
+				}
+				if (input && !key.ctrl && !key.meta) {
+					setPasteBuffer((p) => p + input);
+				}
+			}
 		},
-		{ isActive: mode.kind !== "oauth-running" },
+		{ isActive: true },
 	);
 
 	function applyMenuChoice(choice: "oauth" | "byok" | "quit"): void {
@@ -197,7 +239,7 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 			<Box marginBottom={1}>
 				<Text dimColor>Pick how you want to power the agent. You can change this later via `codebase auth`.</Text>
 			</Box>
-			{renderBody(mode, authBase, manualUrl)}
+			{renderBody(mode, authBase, manualUrl, pasteBuffer, pasteError)}
 		</Box>
 	);
 }
@@ -221,7 +263,13 @@ function BrandHeader(): React.ReactNode {
 	);
 }
 
-function renderBody(mode: Mode, authBase: string, manualUrl: ManualUrlInfo | undefined): React.ReactNode {
+function renderBody(
+	mode: Mode,
+	authBase: string,
+	manualUrl: ManualUrlInfo | undefined,
+	pasteBuffer: string,
+	pasteError: string | undefined,
+): React.ReactNode {
 	if (mode.kind === "menu") {
 		return (
 			<Box flexDirection="column">
@@ -257,7 +305,21 @@ function renderBody(mode: Mode, authBase: string, manualUrl: ManualUrlInfo | und
 						<Text color="cyan">{manualUrl.url}</Text>
 					</Box>
 					<Box marginTop={1}>
-						<Text dimColor>Waiting for the browser to redirect back. (Ctrl-C to cancel.)</Text>
+						<Text dimColor>Waiting for the browser to redirect back.</Text>
+					</Box>
+					<Box marginTop={1} flexDirection="column">
+						<Text dimColor>
+							Redirect failed? Paste the http://127.0.0.1/callback?... URL from your browser here:
+						</Text>
+						<Box>
+							<Text color="cyan">{"> "}</Text>
+							<Text>{pasteBuffer}</Text>
+							<Text color="cyan">▎</Text>
+						</Box>
+						{pasteError ? <Text color="red">{pasteError}</Text> : null}
+					</Box>
+					<Box marginTop={1}>
+						<Text dimColor>Enter to submit · Esc to cancel</Text>
 					</Box>
 				</Box>
 			);
