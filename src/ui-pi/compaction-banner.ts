@@ -33,14 +33,13 @@ export class CompactionBanner extends Container {
 	private applyState(state: CompactionState): void {
 		this.state = state;
 		this.stopTimer();
-		const children = (this as unknown as { children: unknown[] }).children;
 		if (!state.active) {
-			if (Array.isArray(children)) children.length = 0;
+			this.children.length = 0;
 			this.invalidate();
 			this.requestRender();
 			return;
 		}
-		if (Array.isArray(children) && children.length === 0) {
+		if (this.children.length === 0) {
 			this.addChild(this.line);
 		}
 		this.refresh();

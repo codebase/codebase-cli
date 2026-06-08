@@ -163,27 +163,53 @@ export function buildMessageBlocks(
 	}
 	if (!Array.isArray(message.content)) return out;
 	for (const block of message.content) {
-		const b = block as {
-			type: string;
-			text?: string;
-			thinking?: string;
-			name?: string;
-			arguments?: unknown;
-			id?: string;
-		};
-		if (b.type === "text" && typeof b.text === "string") {
-			if (role === "assistant") {
-				out.push(new Markdown(b.text, 0, 0, markdownTheme));
-			} else {
-				out.push(new PlainText(b.text));
+		switch (block.type) {
+			case "text": {
+				if (typeof block.text !== "string") break;
+				if (role === "assistant") {
+					out.push(new Markdown(block.text, 0, 0, markdownTheme));
+				} else {
+					out.push(new PlainText(block.text));
+				}
+				break;
 			}
-		} else if (b.type === "thinking" && typeof b.thinking === "string") {
-			out.push(new PlainText(ansi.dim(ansi.italic(b.thinking))));
-		} else if (b.type === "toolCall" && typeof b.name === "string" && typeof b.id === "string") {
-			out.push(new ToolCallLine(b.id, b.name, b.arguments, tools));
+			case "thinking": {
+				if (typeof block.thinking !== "string") break;
+				out.push(new PlainText(ansi.dim(ansi.italic(block.thinking))));
+				break;
+			}
+			case "toolCall": {
+				if (typeof block.name !== "string" || typeof block.id !== "string") break;
+				out.push(new ToolCallLine(block.id, block.name, block.arguments, tools));
+				break;
+			}
+			case "image": {
+				out.push(new PlainText(ansi.dim(formatImageCard(block))));
+				break;
+			}
+			// Unknown content kinds (server gateways could add new ones; pi-ai's
+			// union may grow). Skip silently rather than crash the render.
 		}
 	}
 	return out;
+}
+
+/**
+ * Render a user image attachment as a single dim line — "📷 image (PNG, 142 KB)".
+ * Base64 length × 3/4 is the byte estimate; close enough for a transcript label.
+ * Matches the v2 React path's UserBlocks renderer so the two render the same.
+ */
+function formatImageCard(block: { mimeType?: string; data?: string }): string {
+	const subtype = (block.mimeType ?? "image/?").split("/")[1]?.toUpperCase() ?? "?";
+	const bytes = block.data ? Math.floor((block.data.length * 3) / 4) : 0;
+	const size = bytes > 0 ? `, ${formatBytes(bytes)}` : "";
+	return `📷 image (${subtype}${size})`;
+}
+
+function formatBytes(n: number): string {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+	return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /** Minimal wrapped-text Component without padding — Text adds 1col paddingX which fights the gutter. */
