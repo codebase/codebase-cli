@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { basename } from "node:path";
 import { Box, Text } from "ink";
+import { VERSION } from "../version.js";
 import { PixelC } from "./PixelC.js";
 
 /**
@@ -65,9 +66,12 @@ export function Welcome({ modelName, source, cwd, resumedFrom }: WelcomeProps) {
 					<PixelC />
 				</Box>
 				<Box flexDirection="column" justifyContent="center">
-					<Text bold color="cyan">
-						codebase
-					</Text>
+					<Box>
+						<Text bold color="cyan">
+							codebase
+						</Text>
+						<Text dimColor> v{VERSION}</Text>
+					</Box>
 					<Text dimColor>{modelName}</Text>
 					<Text dimColor>
 						{cwdLabel} · {sourceLabel}

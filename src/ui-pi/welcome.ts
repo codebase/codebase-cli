@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { basename } from "node:path";
 import { type Component, visibleWidth } from "@earendil-works/pi-tui";
+import { VERSION } from "../version.js";
 import { ansi } from "./theme.js";
 
 interface WelcomeProps {
@@ -51,7 +52,7 @@ export class WelcomeBanner implements Component {
 		const gitInfo = readGitInfo(props.cwd);
 
 		const info: string[] = [];
-		info.push(ansi.bold(ansi.cyan("codebase")));
+		info.push(`${ansi.bold(ansi.cyan("codebase"))} ${ansi.dim(`v${VERSION}`)}`);
 		info.push(ansi.dim(props.modelName));
 		info.push(ansi.dim(`${cwdLabel} · ${sourceLabel}`));
 		if (gitInfo) {

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
 import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
@@ -9,6 +8,7 @@ import { runProjectSubcommand } from "./projects/cli.js";
 import { runSshSubcommand } from "./ssh/cli.js";
 import { App } from "./ui/App.js";
 import { installTerminalRestoreHandlers } from "./ui/terminal-restore.js";
+import { VERSION } from "./version.js";
 import { setTerminalTitle } from "./ui/terminal-title.js";
 
 // Auto-load .env files before any subsystem reads process.env.
@@ -63,7 +63,7 @@ for (const a of rawArgv) {
 }
 
 if (argv[0] === "--version" || argv[0] === "-v") {
-	process.stdout.write(`${readPackageVersion()}\n`);
+	process.stdout.write(`${VERSION}\n`);
 	process.exit(0);
 } else if (argv[0] === "--help" || argv[0] === "-h") {
 	printHelp();
@@ -155,19 +155,6 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 	}
 	const prompt = remaining.join(" ").trim();
 	return { prompt: prompt || undefined, outputFormat, autoApprove };
-}
-
-function readPackageVersion(): string {
-	// dist/cli.js → ../package.json. Works for tsc-emitted output; if
-	// we ever ship a bundled binary this needs to switch to a build-time
-	// version constant.
-	try {
-		const url = new URL("../package.json", import.meta.url);
-		const pkg = JSON.parse(readFileSync(url, "utf8")) as { version?: string };
-		return pkg.version ?? "unknown";
-	} catch {
-		return "unknown";
-	}
 }
 
 function printUnrestrictedBanner(): void {
