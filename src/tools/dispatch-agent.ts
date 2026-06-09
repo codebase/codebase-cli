@@ -71,7 +71,12 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 		label: "Subagent",
 		description: DESCRIPTION,
 		parameters: Params,
-		executionMode: "sequential",
+		// Parallel so the model can fan out multiple read-only subagents in a
+		// single turn — exactly what the system prompt instructs it to do for
+		// multi-file audits / broad exploration. Each subagent is its own
+		// isolated Agent with a read-only toolset, so concurrent dispatches
+		// don't share mutable state.
+		executionMode: "parallel",
 		execute: async (_toolCallId, params, parentSignal, onUpdate) => {
 			const maxTurns = params.max_turns ?? DEFAULT_MAX_TURNS;
 			let turns = 0;
