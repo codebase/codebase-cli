@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createAskUser } from "./ask-user.js";
+import { capToolResult } from "./cap-tool-result.js";
 import { createConfig } from "./config.js";
 import { createDispatchAgent } from "./dispatch-agent.js";
 import { createEditFile } from "./edit-file.js";
@@ -34,7 +35,7 @@ import { createWriteFile } from "./write-file.js";
  * Add new tools by importing their factory and appending it here.
  */
 export function buildTools(ctx: ToolContext): AgentTool<any>[] {
-	return [
+	const tools = [
 		createReadFile(ctx),
 		createEditFile(ctx),
 		createMultiEdit(ctx),
@@ -65,4 +66,10 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		...createMemoryTools(ctx),
 		createConfig(ctx),
 	];
+	// Wrap every tool so an oversized result is persisted to disk and
+	// replaced in-context with a preview + path. Protects the context
+	// window (and the user's token bill) from an unbounded grep /
+	// read_file / web_fetch. Self-capped tools (shell, ssh) are skipped
+	// inside the wrapper.
+	return tools.map((t) => capToolResult(t));
 }
