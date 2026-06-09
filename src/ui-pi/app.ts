@@ -313,6 +313,26 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 	}
 
 	private async handleSubmit(text: string): Promise<void> {
+		// Both call sites fire this as a floating promise (`void`). Any
+		// throw in the early branches — slash dispatch, @path attachment
+		// resolution, !shell escape — would otherwise reject silently and
+		// the prompt would vanish with no error. Wrap the whole body so a
+		// failure always surfaces as an error card instead of dead air.
+		try {
+			await this.handleSubmitInner(text);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			this.errorCard.show(msg);
+			this.busy = false;
+			this.status = "idle";
+			this.statusBar.setStatus("idle");
+			this.stopRateSampling();
+			this.stopSpinners();
+			this.tui?.requestRender();
+		}
+	}
+
+	private async handleSubmitInner(text: string): Promise<void> {
 		const trimmed = text.trim();
 		if (!trimmed) return;
 
@@ -693,7 +713,7 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 	}
 
 	private handleAgentEvent(event: AgentEvent): void {
-		alwaysLog(`event=${event.type}`);
+		debugLog(`event=${event.type}`);
 		switch (event.type) {
 			case "agent_start":
 				this.busy = true;
@@ -805,18 +825,15 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 						this.errorCard.show(errMsg);
 					} else {
 						this.errorCard.hide();
-						// Diagnostic: agent_end without errorMessage AND without
-						// any assistant message means the turn produced no
-						// visible output — usually a model that returned empty,
-						// a misconfigured proxy route, or a tool turn that
-						// settled before content streamed. Surface this so the
-						// user knows the silence is intentional from the model
-						// side, not a UI hang.
+						// agent_end without errorMessage AND without any assistant
+						// message means the turn produced no visible output —
+						// usually a model that returned empty, a misconfigured
+						// proxy route, or a tool turn that settled before content
+						// streamed. Surface it so the user knows the silence is
+						// from the model side, not a UI hang.
 						if (this.assistantMessagesThisTurn === 0) {
-							alwaysLog(`agent_end with 0 assistant messages this turn`);
-							this.statusBar.note(
-								"(agent completed with no response — check ~/.codebase/pi-tui-events.log)",
-							);
+							debugLog("agent_end with 0 assistant messages this turn");
+							this.statusBar.note("(no response from the model — try again, or /model to switch)");
 						}
 					}
 				}
@@ -1142,23 +1159,6 @@ function debugLog(msg: string): void {
 	try {
 		appendFileSync(
 			`${process.env.HOME ?? "/tmp"}/.codebase/pi-tui-debug.log`,
-			`[${new Date().toISOString()}] ${msg}\n`,
-		);
-	} catch {
-		// Filesystem issues shouldn't crash the agent — best effort.
-	}
-}
-
-/**
- * Diagnostic logger that ALWAYS writes — used for capturing the agent
- * event stream during the "no response after submit" investigation.
- * Cheap (one append per event), bounded by the rotating turn count, and
- * lives next to the on-demand debug log so users can grep for context.
- */
-function alwaysLog(msg: string): void {
-	try {
-		appendFileSync(
-			`${process.env.HOME ?? "/tmp"}/.codebase/pi-tui-events.log`,
 			`[${new Date().toISOString()}] ${msg}\n`,
 		);
 	} catch {
