@@ -69,6 +69,18 @@ export class TokenManager {
 		return this.refresh();
 	}
 
+	/**
+	 * "Should I refresh proactively?" — true when expiry is within
+	 * `refreshSkewMs` (default 5 min) of now. Wider than
+	 * `CredentialsStore.isExpired`'s 60s wire-dead check on purpose:
+	 * refreshing 5 min early absorbs clock skew, slow refresh round
+	 * trips, and a request that starts just under the wire so the
+	 * outbound API call never carries an already-dead token.
+	 *
+	 * Pair: `CredentialsStore.isExpired` is "is this dead RIGHT NOW";
+	 * this is "should I rotate it soon." Both are checks against the
+	 * same `expiresAt` field with different skew windows.
+	 */
 	private needsRefresh(creds: Credentials): boolean {
 		if (!creds.expiresAt) return false;
 		return creds.expiresAt - this.refreshSkewMs <= Date.now();

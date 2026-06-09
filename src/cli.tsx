@@ -2,6 +2,7 @@
 import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
+import { ensureFreshCredentials } from "./auth/ensure-fresh.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
@@ -82,6 +83,12 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	// own approval flow via the `permission_request` event.
 	const noAutoApprove = argv.includes("--no-auto-approve");
 	const resume = argv.includes("--resume");
+	// Refresh the saved access token if it's expired since the last
+	// launch (proxy session, valid refresh token sitting next to it).
+	// Otherwise createAgent would synchronously bail at "no usable
+	// provider" and the IDE would see a setup_error envelope instead
+	// of a working server.
+	await ensureFreshCredentials();
 	runAppServer({ autoApprove: !noAutoApprove, resume }).then((code) => process.exit(code));
 } else if (argv[0] === "run") {
 	const { prompt, outputFormat, autoApprove, error } = parseRunArgs(argv.slice(1));
@@ -93,6 +100,7 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 		process.stderr.write("usage: codebase run [--output text|json|stream-json] [--auto-approve] <prompt>\n");
 		process.exit(2);
 	}
+	await ensureFreshCredentials();
 	runHeadless({ prompt, outputFormat, autoApprove }).then((code) => process.exit(code));
 } else {
 	setTerminalTitle("codebase");
@@ -105,6 +113,12 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	// CSI 200~ / 201~ markers. terminal-restore.ts emits the matching
 	// disable sequence on every exit path.
 	if (process.stdout.isTTY) process.stdout.write("\x1b[?2004h");
+	// Cold-start credential refresh. If this is a returning user whose
+	// saved access token expired while the laptop was closed, refresh
+	// it now using the long-lived refresh token instead of dumping them
+	// back to the login wizard. A network failure here is silent — the
+	// wizard path catches it downstream.
+	await ensureFreshCredentials();
 	if (process.env.CODEBASE_PI_TUI === "1") {
 		// Opt-in pi-tui render path — differential renderer, no React.
 		// During the migration this is feature-gated; the ink path stays

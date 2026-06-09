@@ -181,7 +181,20 @@ export class CredentialsStore {
 		}
 	}
 
-	/** True when credentials exist and the access token has expired (with 60s skew). */
+	/**
+	 * "Is this access token already wire-dead?" — true when expiry is
+	 * within 60s of now, treating the next minute as "too late to send."
+	 *
+	 * NOT a refresh trigger. Use `TokenManager.getAccessToken()` for
+	 * "give me a usable token (refresh proactively if it's expiring
+	 * soon)." That method honors a wider 5-minute preemptive window so
+	 * a request never travels with a token about to die mid-wire.
+	 *
+	 * Callers of THIS method want "do I have a token I can use RIGHT
+	 * NOW, with zero refresh round-trip" — used by display code (`/auth
+	 * status`), platform calls that should skip rather than block on a
+	 * refresh, and the cold-start gate in `ensureFreshCredentials`.
+	 */
 	isExpired(credentials?: Credentials | null): boolean {
 		const creds = credentials ?? this.load();
 		if (!creds) return false;
