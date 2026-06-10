@@ -76,6 +76,26 @@ export class ConfigStore {
 		return this.load().model;
 	}
 
+	/** The active output-style id, if one is selected. */
+	outputStyle(): string | undefined {
+		const v = this.load().outputStyle;
+		return typeof v === "string" && v.trim() ? v.trim() : undefined;
+	}
+
+	/** Persist the active output-style id at the user layer. Pass null to clear. */
+	setOutputStyle(id: string | null): void {
+		const existing = readLayer(this.userPath) ?? { ...EMPTY_CONFIG };
+		const next: Config = { ...existing };
+		if (id === null) {
+			delete next.outputStyle;
+		} else {
+			next.outputStyle = id;
+		}
+		mkdirSync(dirname(this.userPath), { recursive: true });
+		writeFileSync(this.userPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o644 });
+		this.invalidate();
+	}
+
 	/**
 	 * Persist a model preference at the *user* layer (`~/.codebase/config.json`).
 	 * Pass `null` to clear. Reads-then-writes the user file so unrelated

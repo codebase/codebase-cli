@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parseMarkdownWithFrontmatter } from "../config/frontmatter.js";
 import type { AssetLoader } from "./loader.js";
 import type { PromptAsset, SkillAsset, TemplateAsset } from "./types.js";
 
@@ -98,68 +99,13 @@ function walkAssets<T>(dir: string, build: (entry: ParsedFile) => T | undefined)
 }
 
 /**
- * Split a markdown file into frontmatter + body. Tolerates files
- * without frontmatter entirely (whole file becomes the body) and
- * preserves the body's leading whitespace untouched so prompt authors
- * who want blank lines at the start get them.
+ * Split a markdown file into frontmatter + body via the shared parser,
+ * carrying the filename-derived default id.
  */
 function parseFile(filename: string, raw: string): ParsedFile {
 	const defaultId = filename.replace(/\.md$/, "");
-	const FENCE = "---";
-	const normalized = raw.replace(/^﻿/, ""); // strip BOM
-	if (!normalized.startsWith(FENCE)) {
-		return { defaultId, frontmatter: {}, body: normalized };
-	}
-	// Find the closing fence on its own line (the most permissive parse
-	// of YAML frontmatter delimiters).
-	const closeIdx = normalized.indexOf(`\n${FENCE}`, FENCE.length);
-	if (closeIdx === -1) {
-		return { defaultId, frontmatter: {}, body: normalized };
-	}
-	const fmText = normalized.slice(FENCE.length, closeIdx).trim();
-	const bodyStart = closeIdx + 1 + FENCE.length;
-	// Skip the newline that follows the closing fence so the body
-	// doesn't start with a blank line just because we hit the fence.
-	const body = normalized.slice(bodyStart).replace(/^\r?\n/, "");
-	return { defaultId, frontmatter: parseFrontmatter(fmText), body };
-}
-
-/**
- * Parse the simple YAML subset we accept. Each non-blank line is
- * `key: value`. Values that look like `[a, b, c]` become string lists.
- * Bare strings get whitespace-trimmed; quoted strings honor `"…"` and
- * `'…'`. We don't support nested objects, multi-line values, or
- * anchors — keep it boring so users can hand-write the headers.
- */
-function parseFrontmatter(text: string): Record<string, string | readonly string[]> {
-	const out: Record<string, string | readonly string[]> = {};
-	for (const rawLine of text.split(/\r?\n/)) {
-		const line = rawLine.trim();
-		if (!line || line.startsWith("#")) continue;
-		const colon = line.indexOf(":");
-		if (colon === -1) continue;
-		const key = line.slice(0, colon).trim();
-		const value = line.slice(colon + 1).trim();
-		if (!key) continue;
-		if (value.startsWith("[") && value.endsWith("]")) {
-			out[key] = value
-				.slice(1, -1)
-				.split(",")
-				.map((s) => unquote(s.trim()))
-				.filter((s) => s.length > 0);
-		} else {
-			out[key] = unquote(value);
-		}
-	}
-	return out;
-}
-
-function unquote(s: string): string {
-	if (s.length >= 2 && (s.startsWith('"') || s.startsWith("'"))) {
-		const q = s[0];
-		if (s.endsWith(q)) return s.slice(1, -1);
-	}
-	return s;
+	const { frontmatter, body } = parseMarkdownWithFrontmatter(raw);
+	return { defaultId, frontmatter, body };
 }
 
 function strOrUndef(value: string | readonly string[] | undefined): string | undefined {

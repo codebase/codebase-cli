@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import { describe, expect, it } from "vitest";
 import { capToolResult } from "./cap-tool-result.js";
 
 function fakeTool(name: string, result: AgentToolResult<unknown>): AgentTool<any> {
@@ -8,8 +8,7 @@ function fakeTool(name: string, result: AgentToolResult<unknown>): AgentTool<any
 		name,
 		label: name,
 		description: "",
-		// biome-ignore lint/suspicious/noExplicitAny: minimal schema stub for the test.
-		parameters: { type: "object", properties: {} } as any,
+		parameters: { type: "object", properties: {} } as unknown as AgentTool<any>["parameters"],
 		execute: async () => result,
 	};
 }

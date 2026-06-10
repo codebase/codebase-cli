@@ -189,6 +189,27 @@ the system prompt:
 - `CODEX.md`
 - `.cursorrules`
 
+## Output styles
+
+Reshape how the agent writes its answers (terse / explanatory /
+report-mode / …) without touching the base prompt. Markdown files in
+`~/.codebase/output-styles/<name>.md` (user) or
+`<cwd>/.codebase/output-styles/<name>.md` (project, wins on id clash):
+
+```markdown
+---
+name: Terse
+description: One-liners, no preamble.
+---
+Answer in as few words as possible. Skip restating the question.
+```
+
+`/output-style` lists them, `/output-style <id>` activates one (the
+body is appended to the system prompt and the agent rebuilds in place),
+`/output-style off` clears it. The choice persists in
+`~/.codebase/config.json`. Same frontmatter parser as skills
+(`src/config/frontmatter.ts`).
+
 ## Direct dependencies
 
 Runtime:

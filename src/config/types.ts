@@ -34,6 +34,13 @@ export interface Config {
 		modelId: string;
 	};
 
+	/**
+	 * Active output style id (filename without `.md`). When set and the
+	 * style exists, its body is appended to the system prompt to reshape
+	 * response formatting. Written by /output-style; read at agent start.
+	 */
+	outputStyle?: string;
+
 	/** Forward-compatibility: unknown keys are preserved on load. */
 	[key: string]: unknown;
 }

@@ -1,7 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-// biome-ignore lint/suspicious/noExplicitAny: AgentTool is generic over its schema; the wrapper is schema-agnostic by design.
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 
 /**
@@ -40,7 +39,6 @@ const SELF_CAPPED_TOOLS: ReadonlySet<string> = new Set([
  * The wrapper is transparent: same name, schema, label, execution mode
  * — only `execute`'s return value is post-processed.
  */
-// biome-ignore lint/suspicious/noExplicitAny: schema-agnostic decorator over the generic AgentTool.
 export function capToolResult(tool: AgentTool<any>, maxChars = DEFAULT_MAX_RESULT_CHARS): AgentTool<any> {
 	if (SELF_CAPPED_TOOLS.has(tool.name)) return tool;
 
@@ -54,7 +52,6 @@ export function capToolResult(tool: AgentTool<any>, maxChars = DEFAULT_MAX_RESUL
 	};
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: AgentToolResult details type varies per tool.
 function capResult(result: AgentToolResult<any>, toolName: string, toolCallId: string, maxChars: number) {
 	// Sum the text length across all text blocks. Images don't count
 	// toward the char budget — they're handled by the provider's own

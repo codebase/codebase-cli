@@ -7,6 +7,7 @@ import { CredentialsStore } from "../auth/credentials.js";
 import { TokenManager } from "../auth/token-manager.js";
 import { CompactionEngine } from "../compaction/engine.js";
 import { CompactionMonitor } from "../compaction/monitor.js";
+import { getOutputStyle } from "../config/output-styles.js";
 import { ConfigStore } from "../config/store.js";
 import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
 import { GlueClient, resolveGlueModels } from "../glue/client.js";
@@ -226,7 +227,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// .cursorrules) gets pinned to the prompt so the agent sees the
 	// project's conventions on every turn. Memory addendum is appended
 	// after — it's the user's accumulated long-term notes.
-	const fullSystemPrompt = systemPrompt + buildProjectFilesAddendum(cwd) + buildMemoryAddendum(memory);
+	const fullSystemPrompt =
+		systemPrompt + buildProjectFilesAddendum(cwd) + buildMemoryAddendum(memory) + buildOutputStyleAddendum(persistedConfig, cwd);
 
 	const agent = new Agent({
 		initialState: {
@@ -469,6 +471,22 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		backgroundShells: toolContext.backgroundShells,
 		monitors: toolContext.monitors,
 	};
+}
+
+/**
+ * Build the output-style addendum appended to the system prompt. When a
+ * style is selected in config and resolvable from
+ * ~/.codebase/output-styles or <cwd>/.codebase/output-styles, its body
+ * is wrapped in a labeled section so the model treats it as formatting
+ * guidance. Returns "" when no style is active or the named style is
+ * missing (e.g. config points at a deleted file).
+ */
+function buildOutputStyleAddendum(config: ConfigStore, cwd: string): string {
+	const id = config.outputStyle();
+	if (!id) return "";
+	const style = getOutputStyle(id, { cwd });
+	if (!style) return "";
+	return `\n\n# Response style: ${style.name}\n${style.body}`;
 }
 
 /** Extract the trailing assistant text content from an array of messages. */

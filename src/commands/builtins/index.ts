@@ -6,6 +6,7 @@ import { context, debug, help, pwd, whoami } from "./info.js";
 import { init } from "./init.js";
 import { memory } from "./memory.js";
 import { modelCmd, modelsCmd } from "./model.js";
+import { outputStyleCmd } from "./output-style.js";
 import { projects } from "./projects.js";
 import { commit, diff, review } from "./scm.js";
 import { clear, compact, exit, fresh, redo, resume, session } from "./session.js";
@@ -19,6 +20,7 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	cost,
 	modelCmd,
 	modelsCmd,
+	outputStyleCmd,
 	whoami,
 	copy,
 	diff,
