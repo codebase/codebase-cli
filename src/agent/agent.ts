@@ -114,9 +114,7 @@ export interface AgentBundle {
 	 * veto. Callers that originate prompts from real user input should use
 	 * this instead of `agent.prompt()` directly.
 	 */
-	submitUserPrompt: (
-		text: string,
-	) => Promise<{ submitted: boolean; reason?: string; error?: string }>;
+	submitUserPrompt: (text: string) => Promise<{ submitted: boolean; reason?: string; error?: string }>;
 	/**
 	 * Set when `--resume` actually loaded a prior session, with its
 	 * timestamp + message count so the welcome banner can say
@@ -228,7 +226,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// project's conventions on every turn. Memory addendum is appended
 	// after — it's the user's accumulated long-term notes.
 	const fullSystemPrompt =
-		systemPrompt + buildProjectFilesAddendum(cwd) + buildMemoryAddendum(memory) + buildOutputStyleAddendum(persistedConfig, cwd);
+		systemPrompt +
+		buildProjectFilesAddendum(cwd) +
+		buildMemoryAddendum(memory) +
+		buildOutputStyleAddendum(persistedConfig, cwd);
 
 	const agent = new Agent({
 		initialState: {
@@ -240,14 +241,28 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		getApiKey: () => apiKey,
 		transformContext: async (messages, signal) => {
 			if (!compaction.needsCompaction(messages)) return messages;
-			compactionMonitor.start(messages.length);
+
+			// Stage 1 — microcompaction: clear stale tool-result content
+			// (old reads, grep dumps, command output) without a summary
+			// round-trip. Cheap. If that alone drops us back under the
+			// threshold, we're done and skip the expensive summarize path.
+			const micro = compaction.microcompact(messages);
+			if (micro.clearedCount > 0 && !compaction.needsCompaction(micro.messages)) {
+				return micro.messages;
+			}
+			// Microcompaction wasn't enough (or freed nothing) — fall through
+			// to the full summarize-everything compaction, operating on the
+			// already-cleared messages so the summary input is smaller too.
+			const working = micro.messages;
+
+			compactionMonitor.start(working.length);
 			try {
 				await hooks.dispatch(
 					"PreCompact",
-					{ event: "PreCompact", workingDir: cwd, messageCount: messages.length },
+					{ event: "PreCompact", workingDir: cwd, messageCount: working.length },
 					signal,
 				);
-				const result = await compaction.compact(messages, signal);
+				const result = await compaction.compact(working, signal);
 				await hooks.dispatch(
 					"PostCompact",
 					{
@@ -419,9 +434,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	 * accepted the prompt. The agent's own turn lifecycle still emits
 	 * events on bundle.subscribe.
 	 */
-	const submitUserPrompt = async (
-		text: string,
-	): Promise<{ submitted: boolean; reason?: string; error?: string }> => {
+	const submitUserPrompt = async (text: string): Promise<{ submitted: boolean; reason?: string; error?: string }> => {
 		const outcome = await hooks.dispatch("UserPromptSubmit", {
 			event: "UserPromptSubmit",
 			workingDir: cwd,

@@ -1,10 +1,13 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { GlueClient } from "../glue/client.js";
+import { microcompact } from "./microcompact.js";
 import { contextWindow, estimateMessageTokens, estimateTotalTokens } from "./tokens.js";
-import type { CompactionDetails, CompactionResult } from "./types.js";
+import type { CompactionDetails, CompactionResult, MicrocompactResult } from "./types.js";
 
 const DEFAULT_THRESHOLD = 0.75;
 const DEFAULT_KEEP_RECENT = 8;
+/** Newest compactable tool results microcompaction always keeps intact. */
+const MICRO_KEEP_RECENT = 6;
 
 const SUMMARY_SYSTEM_PROMPT = `Summarize the prior conversation between a user and a coding agent in tight markdown. Output structure:
 
@@ -60,6 +63,21 @@ export class CompactionEngine {
 
 	needsCompaction(messages: AgentMessage[]): boolean {
 		return estimateTotalTokens(messages) >= this.threshold();
+	}
+
+	/**
+	 * Cheap first-pass compaction: clear the content of stale tool
+	 * results (old file reads, grep dumps, command output the model
+	 * already consumed) while keeping the newest few and preserving
+	 * message structure. No glue-model round-trip. Returns the rewritten
+	 * messages plus how much was freed.
+	 *
+	 * Exposed so the agent's transformContext can try this before the
+	 * expensive summarize-everything path — clearing tool results often
+	 * relieves the pressure on its own.
+	 */
+	microcompact(messages: AgentMessage[]): MicrocompactResult {
+		return microcompact(messages, MICRO_KEEP_RECENT);
 	}
 
 	async compact(messages: AgentMessage[], signal?: AbortSignal): Promise<CompactionResult> {

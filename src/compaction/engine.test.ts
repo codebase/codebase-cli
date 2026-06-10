@@ -222,4 +222,22 @@ describe("CompactionEngine", () => {
 		const result = await engine.compact(messages);
 		expect(result.details.summary).toMatch(/summarization failed/);
 	});
+
+	it("microcompact clears stale tool-result content without a glue call", () => {
+		const glue = fakeGlue("should not be called");
+		const engine = new CompactionEngine({ glue, modelId: "claude-sonnet-4-6" });
+		const big = "x".repeat(4000);
+		const messages: AgentMessage[] = [];
+		for (let i = 0; i < 10; i++) {
+			messages.push(toolCallMessage("read_file", `tc${i}`, { path: `f${i}.ts` }));
+			messages.push(toolResultMessage(`tc${i}`, "read_file", `${big} #${i}`));
+		}
+		const before = estimateTotalTokens(messages);
+		const out = engine.microcompact(messages);
+		expect(out.clearedCount).toBeGreaterThan(0);
+		expect(out.tokensSaved).toBeGreaterThan(0);
+		expect(estimateTotalTokens(out.messages)).toBeLessThan(before);
+		// Microcompaction never summarizes — glue must not be touched.
+		expect(glue.smart).not.toHaveBeenCalled();
+	});
 });

@@ -17,3 +17,11 @@ export interface CompactionResult {
 	messages: AgentMessage[];
 	details: CompactionDetails;
 }
+
+export interface MicrocompactResult {
+	messages: AgentMessage[];
+	/** Approximate tokens freed by clearing stale tool-result content. */
+	tokensSaved: number;
+	/** How many tool-result messages had their content cleared. */
+	clearedCount: number;
+}
