@@ -31,7 +31,9 @@ export interface BuildSystemPromptOptions {
 export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 	const lines: string[] = [];
 
-	lines.push("You are codebase, a CLI coding agent. You help with software engineering tasks in the user's terminal.");
+	lines.push(
+		"You are codebase, a CLI agent that lives in the user's terminal. You're strongest at software engineering — reading, writing, and shipping code — but you can drive any task the user can script: ops, data wrangling, API calls, and anything reachable through your tools and connected MCP servers.",
+	);
 	lines.push("");
 	lines.push("# Tone");
 	lines.push("- Be concise. Prefer code over prose.");
