@@ -12,6 +12,7 @@ import { ConfigStore } from "../config/store.js";
 import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
 import { GlueClient, resolveGlueModels } from "../glue/client.js";
 import { HookManager } from "../hooks/manager.js";
+import { McpManager, type McpServerStatus } from "../mcp/manager.js";
 import { buildMemoryAddendum } from "../memory/inject.js";
 import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
@@ -133,6 +134,16 @@ export interface AgentBundle {
 	/** Push-style line monitors over background shells. App subscribes
 	 * here and steers matched lines into the agent as system-reminders. */
 	monitors: MonitorStore;
+	/** MCP server manager — configured stdio servers + their bridged tools. */
+	mcp: McpManager;
+	/**
+	 * Connect configured MCP servers and splice their tools into the live
+	 * agent. Async (spawns subprocesses + handshake), so callers run it
+	 * after the bundle is built rather than blocking createAgent. Returns
+	 * the per-server connection status for display. Safe no-op when no
+	 * mcp.json exists.
+	 */
+	connectMcp: () => Promise<readonly McpServerStatus[]>;
 }
 
 export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
@@ -460,6 +471,20 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		return { submitted: true };
 	};
 
+	// MCP: configured stdio servers are connected lazily after the bundle
+	// is built (connect is async; createAgent is sync). On connect we
+	// splice the bridged tools into the live agent's tool set so the
+	// model can call them from the next turn.
+	const mcp = new McpManager();
+	const connectMcp = async (): Promise<readonly McpServerStatus[]> => {
+		await mcp.connectAll({ cwd });
+		const mcpTools = mcp.tools();
+		if (mcpTools.length > 0) {
+			agent.state.tools = [...agent.state.tools, ...mcpTools];
+		}
+		return mcp.status();
+	};
+
 	void agentRef;
 	return {
 		agent,
@@ -483,6 +508,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		resumedMessages: opts.initialMessages ?? resumed?.messages ?? [],
 		backgroundShells: toolContext.backgroundShells,
 		monitors: toolContext.monitors,
+		mcp,
+		connectMcp,
 	};
 }
 

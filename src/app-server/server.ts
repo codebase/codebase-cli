@@ -76,6 +76,12 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 		return fatal(msg);
 	}
 
+	// Connect configured MCP servers so IDE-bridge sessions get the same
+	// tool surface. Best-effort; failures are logged, never fatal.
+	await bundle.connectMcp().catch((e) => {
+		stderr.write(`app-server: MCP connect failed: ${e instanceof Error ? e.message : String(e)}\n`);
+	});
+
 	let totalUsage: Usage = { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost } };
 	let status: SessionState["status"] = "idle";
 	let pendingPermission: PendingPermission | undefined;
@@ -180,6 +186,7 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 
 	unsubscribeAgent();
 	unsubscribePerms();
+	bundle.mcp.dispose();
 	return 0;
 
 	// ─── command dispatch ──────────────────────────────────────────────

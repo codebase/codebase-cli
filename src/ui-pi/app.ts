@@ -138,14 +138,14 @@ export class App extends Container {
 		this.addChild(this.statusBar);
 
 		// Async handler so the event loop can yield between events — pi-tui's
-// timer + render scheduler need microtask gaps to fire. Without `async`
-// here, a burst of agent events drains the microtask queue without
-// letting setTimeout-driven renders or interval-driven spinners ever
-// run, and the user sees nothing until they press a key.
-this.unsubscribe = this.bundle.subscribe(async (event) => {
-	debugLog(`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`);
-	this.handleAgentEvent(event);
-});
+		// timer + render scheduler need microtask gaps to fire. Without `async`
+		// here, a burst of agent events drains the microtask queue without
+		// letting setTimeout-driven renders or interval-driven spinners ever
+		// run, and the user sees nothing until they press a key.
+		this.unsubscribe = this.bundle.subscribe(async (event) => {
+			debugLog(`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`);
+			this.handleAgentEvent(event);
+		});
 	}
 
 	/**
@@ -209,9 +209,7 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 				this.bgShellPrevStatus.set(s.id, s.status);
 				if (prev !== "running" || s.status === "running") continue;
 				const summary =
-					s.status === "killed"
-						? `(killed${s.signal ? ` ${s.signal}` : ""})`
-						: `(exit code ${s.exitCode ?? "?"})`;
+					s.status === "killed" ? `(killed${s.signal ? ` ${s.signal}` : ""})` : `(exit code ${s.exitCode ?? "?"})`;
 				const note = `Background shell ${s.id} ${summary}: ${s.command}`;
 				this.statusBar.note(`↪ ${note}`);
 				if (this.busy) {
@@ -228,6 +226,22 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 			}
 			this.tui?.requestRender();
 		});
+
+		// Connect MCP servers (async — spawns subprocesses) and splice their
+		// tools into the live agent. Surface a status note per server.
+		this.bundle
+			.connectMcp()
+			.then((statuses) => {
+				for (const s of statuses) {
+					if (s.connected) {
+						this.statusBar.note(`⚙ MCP ${s.name}: ${s.toolCount} tool${s.toolCount === 1 ? "" : "s"}`);
+					} else {
+						this.statusBar.note(`⚙ MCP ${s.name}: failed — ${s.error ?? "unknown"}`);
+					}
+				}
+				this.tui?.requestRender();
+			})
+			.catch(() => undefined);
 	}
 
 	private showUserQueryOverlay(q: import("../user-queries/store.js").UserQuery): void {
@@ -573,6 +587,9 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 			}
 			const previousMessages = [...this.messages];
 			this.unsubscribe();
+			// Tear down the old bundle's MCP subprocesses before building the
+			// new one — otherwise a /model switch would leak a server per swap.
+			this.bundle.mcp.dispose();
 			const next = createAgent({
 				cwd: this.bundle.toolContext.cwd,
 				modelOverride: spec ?? undefined,
@@ -580,14 +597,19 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 				resume: false,
 			});
 			this.bundle = next;
+			// Re-connect MCP on the fresh bundle so its tools are available
+			// on the new model too. Fire-and-forget; status notes surface as
+			// servers come up.
+			next
+				.connectMcp()
+				.then(() => this.tui?.requestRender())
+				.catch(() => undefined);
 			// Same async handler pattern as the constructor — needed so the
 			// event loop can yield between events, otherwise a burst of
 			// agent events drains the microtask queue and renders/spinners
 			// stall until the user presses a key.
 			this.unsubscribe = this.bundle.subscribe(async (event) => {
-				debugLog(
-					`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`,
-				);
+				debugLog(`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`);
 				this.handleAgentEvent(event);
 			});
 			this.statusBar.setModelName(next.model.name);
@@ -878,6 +900,7 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 		this.taskPanel.dispose();
 		this.bgShellPanel.dispose();
 		this.bundle.backgroundShells.killAllSync();
+		this.bundle.mcp.dispose();
 		this.unsubscribe();
 	}
 }

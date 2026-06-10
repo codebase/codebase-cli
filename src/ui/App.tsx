@@ -163,6 +163,28 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		return bundle.toolContext.tasks.subscribe((snapshot) => setTasks(snapshot));
 	}, [bundle]);
 
+	// Connect MCP servers once after mount (async — spawns subprocesses).
+	// Their tools splice into the live agent so the model can call them
+	// from the next turn. Surface a status line per server so the user
+	// sees what connected (and what failed). Dispose on unmount.
+	useEffect(() => {
+		let disposed = false;
+		bundle
+			.connectMcp()
+			.then((statuses) => {
+				if (disposed) return;
+				for (const s of statuses) {
+					if (s.connected) appendStatus(`⚙ MCP ${s.name}: ${s.toolCount} tool${s.toolCount === 1 ? "" : "s"}`);
+					else appendStatus(`⚙ MCP ${s.name}: failed — ${s.error ?? "unknown"}`);
+				}
+			})
+			.catch(() => undefined);
+		return () => {
+			disposed = true;
+			bundle.mcp.dispose();
+		};
+	}, [bundle, appendStatus]);
+
 	// SIGTERM any background shells still running when the process exits.
 	// Without this, dev servers / watchers spawned via background mode
 	// would survive the CLI and leak to the parent shell.
@@ -465,6 +487,9 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			} catch {
 				// Persistence failure is non-fatal; the in-session swap still works.
 			}
+			// Tear down the old bundle's MCP subprocesses before rebuilding so
+			// a /model switch doesn't leak a server per swap.
+			bundle.mcp.dispose();
 			const next = createAgent({
 				cwd: bundle.toolContext.cwd,
 				modelOverride: spec ?? undefined,
@@ -477,6 +502,8 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 				model: { provider: next.model.provider, id: next.model.id, name: next.model.name },
 			});
 			appendStatus(`Switched to ${next.model.name} (${next.model.provider}/${next.model.id}).`);
+			// Re-connect MCP on the fresh bundle; the connect effect keys on
+			// `bundle`, so swapping it re-runs that effect automatically.
 		} catch (err) {
 			appendStatus(`model switch failed: ${err instanceof Error ? err.message : String(err)}`);
 		}

@@ -439,9 +439,45 @@ Monitors auto-clean when the watched shell exits or when `max_matches`
 is reached. The background shell itself keeps running until
 `shell_kill` — `monitor_stop` only unsubscribes from notifications.
 
+## MCP (Model Context Protocol)
+
+Connect external tool servers (filesystem, Postgres, git, fetch, …)
+without us writing each integration. v1 supports **stdio** servers;
+remote HTTP/SSE is a planned follow-up. No SDK dependency — the client
+is a hand-rolled newline-delimited JSON-RPC 2.0 stdio client
+(`src/mcp/`), consistent with our minimal-deps tenet and the
+app-server's existing JSON-RPC pattern.
+
+Configure in `~/.codebase/mcp.json` (user) or `<cwd>/.codebase/mcp.json`
+(project, wins on name clash) — the de-facto `mcpServers` schema so
+existing Claude Desktop / Cursor configs port over:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
+    },
+    "postgres": {
+      "command": "uvx",
+      "args": ["mcp-server-postgres"],
+      "env": { "DATABASE_URL": "postgres://…" }
+    }
+  }
+}
+```
+
+Servers connect after launch (async subprocess spawn + handshake);
+their tools splice into the live agent namespaced as
+`mcp__<server>__<tool>` so they can't collide with built-ins. A broken
+server is recorded and skipped — never blocks the others. `/mcp` shows
+status + tools. Remote MCP tools route through the same effect-based
+permission prompts. Lifecycle: connected on mount, re-connected on a
+`/model` swap, torn down on exit.
+
 ## In-flight features
 
-- **MCP**: real MCP client support hasn't shipped (the `/mcp`
-  placeholder was removed). The pi-mono roadmap will likely add this.
 - **Skills**: bundled + platform-fetched skills work; local
   user skills (`~/.codebase/skills/*.md`) coming.
+- **MCP remote transport**: HTTP/SSE servers + OAuth — stdio ships now.

@@ -102,6 +102,11 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	let errorMessage: string | undefined;
 	let totalUsage: Usage = { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost } };
 
+	// Connect configured MCP servers so headless runs (CI, scripts) can
+	// use MCP tools too. Best-effort: a failed server is skipped, never
+	// blocks the run. Subprocesses are torn down in the finally below.
+	await bundle.connectMcp().catch(() => undefined);
+
 	// Always tap the event stream for usage accumulation, regardless of
 	// output format — pi-agent-core surfaces per-turn usage on
 	// message_end events; the JSON output reports the running total.
@@ -167,6 +172,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		unsubscribe();
 		usageUnsub();
 		process.off("SIGINT", onSigInt);
+		// Terminate MCP server subprocesses so a headless run doesn't leak
+		// children to the parent shell / CI runner.
+		bundle.mcp.dispose();
 	}
 
 	const exitCode = aborted ? 130 : errored ? 1 : 0;

@@ -4,6 +4,7 @@ import { copy } from "./copy.js";
 import { cost } from "./cost.js";
 import { context, debug, help, pwd, whoami } from "./info.js";
 import { init } from "./init.js";
+import { mcp } from "./mcp.js";
 import { memory } from "./memory.js";
 import { modelCmd, modelsCmd } from "./model.js";
 import { outputStyleCmd } from "./output-style.js";
@@ -27,6 +28,7 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	commit,
 	review,
 	memory,
+	mcp,
 	context,
 	login,
 	logout,
