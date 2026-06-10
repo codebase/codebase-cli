@@ -169,7 +169,9 @@ export class FirstRunWizard extends Container {
 	private renderOAuthRunning(): void {
 		if (this.manualUrl) {
 			this.addChild(new Text(ansi.bold(ansi.yellow("Sign in to continue")), 1, 0));
-			this.addChild(new Text(ansi.dim("Opening browser automatically. If it didn't open, copy the URL below:"), 1, 1));
+			this.addChild(
+				new Text(ansi.dim("Opening browser automatically. If it didn't open, copy the URL below:"), 1, 1),
+			);
 			// Bare URL on its own line with NO left padding so terminal
 			// select-copy doesn't pick up indent spaces. The terminal may
 			// still hard-wrap the URL across rows; cmd/triple-click most
@@ -182,9 +184,7 @@ export class FirstRunWizard extends Container {
 			// still has the failed URL in its address bar — that URL
 			// contains the code + state. They paste it here and we finish
 			// the flow without the local listener.
-			this.addChild(
-				new Text(ansi.dim("Redirect failed? Paste the http://127.0.0.1/callback?... URL here:"), 1, 0),
-			);
+			this.addChild(new Text(ansi.dim("Redirect failed? Paste the http://127.0.0.1/callback?... URL here:"), 1, 0));
 			this.pasteInput = new Input();
 			this.pasteInput.onSubmit = (text) => this.handlePasteSubmit(text);
 			this.addChild(this.pasteInput);
@@ -195,11 +195,7 @@ export class FirstRunWizard extends Container {
 		} else {
 			this.addChild(new Text(`Opening ${ansi.cyan(this.authBase)} in your browser…`, 1, 0));
 			this.addChild(
-				new Text(
-					ansi.dim("Complete sign-in in the browser tab. This window will continue automatically."),
-					1,
-					1,
-				),
+				new Text(ansi.dim("Complete sign-in in the browser tab. This window will continue automatically."), 1, 1),
 			);
 		}
 	}
@@ -235,7 +231,9 @@ export class FirstRunWizard extends Container {
 		input.onEscape = () => this.setMode("byok-provider");
 		this.keyInput = input;
 		this.addChild(input);
-		this.addChild(new Text(ansi.dim("Stored at ~/.codebase/credentials.json (mode 0600). Enter to save, Esc to go back."), 1, 1));
+		this.addChild(
+			new Text(ansi.dim("Stored at ~/.codebase/credentials.json (mode 0600). Enter to save, Esc to go back."), 1, 1),
+		);
 	}
 
 	private renderError(message: string): void {

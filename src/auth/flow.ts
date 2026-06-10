@@ -46,9 +46,7 @@ export interface OAuthConfig {
  * Result of validating a pasted callback URL. The wizard renders the
  * error inline next to the input so the user knows what to fix.
  */
-export type PasteResult =
-	| { ok: true }
-	| { ok: false; error: string };
+export type PasteResult = { ok: true } | { ok: false; error: string };
 
 export interface RunOAuthLoginOptions {
 	/** Override the browser-open path (tests). */

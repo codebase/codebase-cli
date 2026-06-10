@@ -9,8 +9,8 @@ import { runProjectSubcommand } from "./projects/cli.js";
 import { runSshSubcommand } from "./ssh/cli.js";
 import { App } from "./ui/App.js";
 import { installTerminalRestoreHandlers } from "./ui/terminal-restore.js";
-import { VERSION } from "./version.js";
 import { setTerminalTitle } from "./ui/terminal-title.js";
+import { VERSION } from "./version.js";
 
 // Auto-load .env files before any subsystem reads process.env.
 loadDotEnv();

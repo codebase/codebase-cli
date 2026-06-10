@@ -151,12 +151,7 @@ export class CollapsedReadGroup implements Component {
 		const pathWidth = Math.max(20, width - 6);
 		for (const c of this.calls) {
 			const a = (c.args ?? {}) as Record<string, unknown>;
-			const rawPath =
-				typeof a.path === "string"
-					? a.path
-					: typeof a.file_path === "string"
-						? a.file_path
-						: "";
+			const rawPath = typeof a.path === "string" ? a.path : typeof a.file_path === "string" ? a.file_path : "";
 			const path = displayPath(rawPath);
 			const status = this.tools.get(c.id)?.status;
 			const failed = status === "error";

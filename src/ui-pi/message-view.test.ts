@@ -26,11 +26,7 @@ function assistantBlocks(content: AgentMessage["content"]): AgentMessage {
 	} as AgentMessage;
 }
 
-function toolResult(opts: {
-	toolName: string;
-	text: string;
-	isError?: boolean;
-}): AgentMessage {
+function toolResult(opts: { toolName: string; text: string; isError?: boolean }): AgentMessage {
 	return {
 		role: "toolResult",
 		toolCallId: "tc",
@@ -67,11 +63,7 @@ describe("buildMessageBlocks", () => {
 	});
 
 	it("skips unknown block types instead of crashing", () => {
-		const blocks = userBlocks([
-			{ type: "text", text: "hi" },
-			// biome-ignore lint/suspicious/noExplicitAny: deliberately invalid block to assert the safety branch
-			{ type: "future-format-we-dont-know" } as any,
-		]);
+		const blocks = userBlocks([{ type: "text", text: "hi" }, { type: "future-format-we-dont-know" } as any]);
 		const out = buildMessageBlocks(blocks, NO_TOOLS, "user");
 		expect(out).toHaveLength(1);
 	});
@@ -126,11 +118,7 @@ describe("buildMessageBlocks", () => {
 
 	it("toolResult NEVER truncates errors, even when long", () => {
 		const text = Array.from({ length: 200 }, (_, i) => `boom ${i}`).join("\n");
-		const out = buildMessageBlocks(
-			toolResult({ toolName: "shell", text, isError: true }),
-			NO_TOOLS,
-			"toolResult",
-		);
+		const out = buildMessageBlocks(toolResult({ toolName: "shell", text, isError: true }), NO_TOOLS, "toolResult");
 		expect(out).toHaveLength(1);
 	});
 });

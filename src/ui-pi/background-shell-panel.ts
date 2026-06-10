@@ -9,7 +9,6 @@ import { ansi } from "./theme.js";
  * short.
  */
 export class BackgroundShellPanel extends Container {
-	private store: BackgroundShellStore;
 	private unsubscribe: () => void;
 	private shells: readonly BackgroundShellRecord[] = [];
 	private prunedAt = Date.now();
@@ -17,7 +16,6 @@ export class BackgroundShellPanel extends Container {
 
 	constructor(store: BackgroundShellStore, requestRender: () => void = () => undefined) {
 		super();
-		this.store = store;
 		this.requestRender = requestRender;
 		this.unsubscribe = store.subscribe((next) => {
 			this.shells = next;
@@ -30,7 +28,6 @@ export class BackgroundShellPanel extends Container {
 	/** Re-bind to a fresh BackgroundShellStore after a model swap. */
 	rebind(store: BackgroundShellStore): void {
 		this.unsubscribe();
-		this.store = store;
 		this.unsubscribe = store.subscribe((next) => {
 			this.shells = next;
 			this.rebuild();

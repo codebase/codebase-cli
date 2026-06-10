@@ -91,7 +91,9 @@ export class ContextWarning extends Container {
 		const urgent = this.pct >= 95;
 		const glyph = urgent ? "⚠" : "•";
 		const color = urgent ? ansi.red : ansi.yellow;
-		this.line.setText(`${color(ansi.bold(`${glyph} ${this.pct}% of context used`))} ${ansi.dim("— run /compact to free space")}`);
+		this.line.setText(
+			`${color(ansi.bold(`${glyph} ${this.pct}% of context used`))} ${ansi.dim("— run /compact to free space")}`,
+		);
 		this.line.invalidate();
 	}
 }

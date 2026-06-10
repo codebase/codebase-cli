@@ -398,7 +398,6 @@ function renderBody(
 	);
 }
 
-
 function oauthConfigForBase(base: string): OAuthConfig {
 	const trimmed = base.replace(/\/+$/, "");
 	return {

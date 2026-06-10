@@ -63,7 +63,10 @@ export class LiveToolPanel implements Component {
 }
 
 function takeTail(text: string, maxLines: number): string[] {
-	const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.length > 0);
+	const lines = text
+		.replace(/\r/g, "")
+		.split("\n")
+		.filter((l) => l.length > 0);
 	return lines.slice(-maxLines);
 }
 

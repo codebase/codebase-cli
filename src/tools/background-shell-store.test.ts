@@ -120,7 +120,6 @@ describe("BackgroundShellStore", () => {
 	it("returns copies from get() / list() so callers can't mutate live state", () => {
 		const record = store.spawn("true", process.cwd());
 		const copy = store.get(record.id);
-		// biome-ignore lint/style/noNonNullAssertion: just spawned, definitely present
 		copy!.output = "tampered";
 		expect(store.get(record.id)?.output).not.toBe("tampered");
 	});

@@ -153,8 +153,6 @@ export function DiffSummary({ diff, width, keyPrefix }: { diff: DiffInfo; width:
 	return (
 		<Box flexDirection="column" marginLeft={2}>
 			<Text dimColor>{counts}</Text>
-			{/* biome-ignore lint/suspicious/noArrayIndexKey: hunks are freshly built per render from
-			    immutable args; no reorder, no insertion, so index is a stable per-render key */}
 			{diff.hunks.map((h, i) => {
 				const isRemove = h.type === "remove";
 				const sign = isRemove ? "    - " : "    + ";
