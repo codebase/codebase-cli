@@ -57,6 +57,24 @@ describe("PermissionStore trust state", () => {
 		await expect(second).resolves.toBe("block");
 	});
 
+	it("trust-tool on a shell command scopes to the command prefix", async () => {
+		const store = new PermissionStore();
+		// `git commit` needs permission (write-ish). Trust it.
+		const first = store.evaluate("shell", { command: 'git commit -m "wip"' });
+		store.respond(store.current()!.id, "trust-tool");
+		await expect(first).resolves.toBe("allow");
+
+		// Another `git commit` is auto-allowed by prefix.
+		await expect(store.evaluate("shell", { command: 'git commit -m "more"' })).resolves.toBe("allow");
+		expect(store.current()).toBeUndefined();
+
+		// But a DIFFERENT command family still prompts — trust didn't leak.
+		const danger = store.evaluate("shell", { command: "rm -rf build" });
+		expect(store.current()).toMatchObject({ tool: "shell" });
+		store.respond(store.current()!.id, "deny");
+		await expect(danger).resolves.toBe("block");
+	});
+
 	it("trust-all auto-allows everything for the rest of the session", async () => {
 		const store = new PermissionStore();
 		const first = store.evaluate("shell", { command: "rm file" });

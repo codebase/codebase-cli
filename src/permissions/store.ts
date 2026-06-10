@@ -1,4 +1,5 @@
 import { shellNeedsPermission } from "../tools/permission.js";
+import { commandPrefix } from "./command-prefix.js";
 
 export type Decision = "allow" | "block";
 
@@ -167,7 +168,16 @@ export interface PermissionStoreOptions {
 export class PermissionStore {
 	private trustAll = false;
 	private readonly trustedTools = new Set<string>();
-	private readonly queue: Array<{ request: PermissionRequest; resolve: (d: Decision) => void }> = [];
+	/** Trusted shell command prefixes (e.g. "git commit") from a trust-tool
+	 * response to a shell prompt. Scopes trust to the command family rather
+	 * than all of shell — trusting one `git commit` doesn't trust `rm`. */
+	private readonly trustedShellPrefixes = new Set<string>();
+	private readonly queue: Array<{
+		request: PermissionRequest;
+		resolve: (d: Decision) => void;
+		/** Command prefix for a shell prompt, used to scope trust-tool. */
+		shellPrefix?: string;
+	}> = [];
 	private readonly listeners = new Set<(req: PermissionRequest | undefined) => void>();
 	private counter = 0;
 	private readonly matchAllow: (toolName: string, args: unknown) => boolean;
@@ -194,7 +204,15 @@ export class PermissionStore {
 				detail: detailFor(toolName, args),
 				risk: riskFor(toolName, args),
 			};
-			this.queue.push({ request, resolve });
+			// For shell, capture the command prefix so a trust-tool response
+			// trusts the command family (e.g. "git commit") rather than all
+			// of shell.
+			let shellPrefix: string | undefined;
+			if (toolName === "shell") {
+				const cmd = (args as { command?: string } | undefined)?.command;
+				if (typeof cmd === "string") shellPrefix = commandPrefix(cmd) ?? undefined;
+			}
+			this.queue.push({ request, resolve, shellPrefix });
 			this.notify();
 		});
 	}
@@ -215,8 +233,19 @@ export class PermissionStore {
 		const head = this.queue[0];
 		if (!head || head.request.id !== id) return;
 
-		if (choice === "trust-tool") this.trustedTools.add(head.request.tool);
-		else if (choice === "trust-all") this.trustAll = true;
+		if (choice === "trust-tool") {
+			// Shell trust is scoped to the command prefix when we have one,
+			// so "trust" on a `git commit` prompt auto-allows future
+			// `git commit …` calls but NOT every shell command. Falls back to
+			// whole-tool trust when no prefix could be extracted.
+			if (head.request.tool === "shell" && head.shellPrefix) {
+				this.trustedShellPrefixes.add(head.shellPrefix);
+			} else {
+				this.trustedTools.add(head.request.tool);
+			}
+		} else if (choice === "trust-all") {
+			this.trustAll = true;
+		}
 
 		head.resolve(choice === "deny" ? "block" : "allow");
 		this.queue.shift();
@@ -227,6 +256,7 @@ export class PermissionStore {
 	clear(): void {
 		this.trustAll = false;
 		this.trustedTools.clear();
+		this.trustedShellPrefixes.clear();
 	}
 
 	private shouldAutoAllow(toolName: string, args: unknown): boolean {
@@ -235,7 +265,12 @@ export class PermissionStore {
 		if (this.trustedTools.has(toolName)) return true;
 		if (toolName === "shell") {
 			const cmd = (args as { command?: string } | undefined)?.command;
-			if (typeof cmd === "string" && !shellNeedsPermission(cmd)) return true;
+			if (typeof cmd === "string") {
+				if (!shellNeedsPermission(cmd)) return true;
+				// Auto-allow if the command's prefix was trusted earlier.
+				const prefix = commandPrefix(cmd);
+				if (prefix && this.trustedShellPrefixes.has(prefix)) return true;
+			}
 		}
 		// git_branch with no name (or just listing) is read-only.
 		if (toolName === "git_branch") {
