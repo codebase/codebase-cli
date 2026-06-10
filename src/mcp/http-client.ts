@@ -1,4 +1,5 @@
 import { CLIENT_INFO, type McpClient, REQUEST_TIMEOUT_MS } from "./client.js";
+import type { McpAuthProvider } from "./oauth/provider.js";
 import {
 	isResponse,
 	type JsonRpcResponse,
@@ -28,6 +29,9 @@ export interface HttpServerSpec {
  *
  * Server → client requests (sampling, elicitation) are not supported; we
  * ignore inbound messages that aren't responses to our own requests.
+ *
+ * An optional auth provider supplies bearer credentials and reacts to a
+ * 401 by (re)authorizing; the request is then retried once.
  */
 export class HttpMcpClient implements McpClient {
 	private nextId = 1;
@@ -38,6 +42,7 @@ export class HttpMcpClient implements McpClient {
 	constructor(
 		readonly name: string,
 		private readonly spec: HttpServerSpec,
+		private readonly auth?: McpAuthProvider,
 	) {}
 
 	async connect(): Promise<void> {
@@ -67,11 +72,12 @@ export class HttpMcpClient implements McpClient {
 		this.closed = true;
 		// Best-effort session teardown; the server frees its state on DELETE.
 		if (this.sessionId) {
-			void fetch(this.spec.url, { method: "DELETE", headers: this.headers() }).catch(() => undefined);
+			void fetch(this.spec.url, { method: "DELETE", headers: this.baseHeaders() }).catch(() => undefined);
 		}
 	}
 
-	private headers(): Record<string, string> {
+	/** Transport headers, sans auth (auth is async — see buildHeaders). */
+	private baseHeaders(): Record<string, string> {
 		const h: Record<string, string> = {
 			"Content-Type": "application/json",
 			Accept: "application/json, text/event-stream",
@@ -81,6 +87,13 @@ export class HttpMcpClient implements McpClient {
 		// after the handshake; harmless to include during it too.
 		h["MCP-Protocol-Version"] = this.negotiatedVersion;
 		if (this.sessionId) h["Mcp-Session-Id"] = this.sessionId;
+		return h;
+	}
+
+	/** Full request headers including any bearer credentials from the auth provider. */
+	private async buildHeaders(): Promise<Record<string, string>> {
+		const h = this.baseHeaders();
+		if (this.auth) Object.assign(h, await this.auth.authHeaders());
 		return h;
 	}
 
@@ -108,14 +121,14 @@ export class HttpMcpClient implements McpClient {
 		await res.body?.cancel().catch(() => undefined);
 	}
 
-	private async post(payload: unknown, method: string): Promise<Response> {
+	private async post(payload: unknown, method: string, isRetry = false): Promise<Response> {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 		let res: Response;
 		try {
 			res = await fetch(this.spec.url, {
 				method: "POST",
-				headers: this.headers(),
+				headers: await this.buildHeaders(),
 				body: JSON.stringify(payload),
 				signal: controller.signal,
 			});
@@ -127,6 +140,17 @@ export class HttpMcpClient implements McpClient {
 			throw new Error(`MCP server "${this.name}" request to ${this.spec.url} failed: ${(err as Error).message}`);
 		}
 		clearTimeout(timer);
+
+		// 401 → let the auth provider refresh or run the OAuth flow, then
+		// retry exactly once so a single expired token can't loop forever.
+		if (res.status === 401 && this.auth && !isRetry) {
+			const www = res.headers.get("www-authenticate");
+			await res.body?.cancel().catch(() => undefined);
+			if (await this.auth.handleUnauthorized(www)) {
+				return this.post(payload, method, true);
+			}
+		}
+
 		if (!res.ok) {
 			const detail = await res.text().catch(() => "");
 			throw new Error(

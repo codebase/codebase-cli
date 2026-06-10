@@ -13,6 +13,8 @@ interface MockServer {
 	sseForCall: boolean;
 	/** Set to a status code to force an HTTP error on the next request. */
 	failStatus?: number;
+	/** When set, requests without a matching Authorization header get a 401. */
+	requireAuth?: string;
 }
 
 function readBody(req: IncomingMessage): Promise<any> {
@@ -39,6 +41,16 @@ async function startMockServer(): Promise<MockServer> {
 		if (state.failStatus) {
 			res.statusCode = state.failStatus;
 			res.end("upstream boom");
+			return;
+		}
+
+		if (state.requireAuth && req.headers.authorization !== state.requireAuth) {
+			res.statusCode = 401;
+			res.setHeader(
+				"WWW-Authenticate",
+				'Bearer resource_metadata="https://mock/.well-known/oauth-protected-resource"',
+			);
+			res.end("unauthorized");
 			return;
 		}
 
@@ -143,5 +155,36 @@ describe("HttpMcpClient", () => {
 		mock.failStatus = 500;
 		const client = new HttpMcpClient("remote", { url: mock.url });
 		await expect(client.connect()).rejects.toThrow(/HTTP 500/);
+	});
+
+	it("on a 401, invokes the auth provider and retries once with credentials", async () => {
+		mock.requireAuth = "Bearer granted";
+		let authorized = false;
+		const calls: Array<string | null> = [];
+		const auth = {
+			authHeaders: async () => (authorized ? { Authorization: "Bearer granted" } : {}),
+			handleUnauthorized: async (www: string | null) => {
+				calls.push(www);
+				authorized = true;
+				return true;
+			},
+		};
+		const client = new HttpMcpClient("remote", { url: mock.url }, auth);
+		await client.connect(); // first POST 401s → handleUnauthorized → retry succeeds
+		expect(authorized).toBe(true);
+		expect(calls[0]).toContain("resource_metadata");
+		const tools = await client.listTools();
+		expect(tools.map((t) => t.name)).toEqual(["echo"]);
+		client.close();
+	});
+
+	it("gives up after one retry when the provider can't authorize", async () => {
+		mock.requireAuth = "Bearer never";
+		const auth = {
+			authHeaders: async () => ({}),
+			handleUnauthorized: async () => false,
+		};
+		const client = new HttpMcpClient("remote", { url: mock.url }, auth);
+		await expect(client.connect()).rejects.toThrow(/HTTP 401/);
 	});
 });
