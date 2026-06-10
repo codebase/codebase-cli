@@ -23,10 +23,14 @@ export const mcp: Command = {
 			ctx.emit('      "filesystem": {');
 			ctx.emit('        "command": "npx",');
 			ctx.emit('        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]');
+			ctx.emit("      },");
+			ctx.emit('      "remote": {');
+			ctx.emit('        "url": "https://mcp.example.com/sse",');
+			ctx.emit('        "headers": { "Authorization": "Bearer <token>" }');
 			ctx.emit("      }");
 			ctx.emit("    }");
 			ctx.emit("  }");
-			ctx.emit("Restart codebase to connect. (Remote HTTP/SSE servers: coming soon — stdio only for now.)");
+			ctx.emit("Restart codebase to connect. Both stdio (command) and remote (url) servers are supported.");
 			return { handled: true };
 		}
 

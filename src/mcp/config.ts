@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { HttpServerSpec } from "./http-client.js";
 import type { StdioServerSpec } from "./stdio-client.js";
 
 /**
@@ -23,14 +24,13 @@ import type { StdioServerSpec } from "./stdio-client.js";
  *     }
  *   }
  *
- * v1 supports stdio servers only. Entries with a `url` (remote HTTP/SSE
- * servers) are skipped with a one-line note — that transport is a
- * planned follow-up.
+ * Two transports: a `command` entry spawns a stdio subprocess; a `url`
+ * entry talks Streamable HTTP to a remote server. Optional `headers` on
+ * a remote entry carry static auth (e.g. a bearer token).
  */
-export interface NamedServer {
-	name: string;
-	spec: StdioServerSpec;
-}
+export type NamedServer =
+	| { name: string; transport: "stdio"; spec: StdioServerSpec }
+	| { name: string; transport: "http"; spec: HttpServerSpec };
 
 export interface LoadMcpConfigOptions {
 	home?: string;
@@ -72,23 +72,26 @@ function readConfigFile(path: string, cwd: string): NamedServer[] {
 	const out: NamedServer[] = [];
 	for (const [name, value] of Object.entries(servers)) {
 		const entry = value as Record<string, unknown>;
-		if (typeof entry?.url === "string") {
-			process.stderr.write(`[mcp] skipping "${name}": remote (url) servers aren't supported yet — stdio only.\n`);
+		if (typeof entry?.url === "string" && entry.url.trim()) {
+			out.push({ name, transport: "http", spec: { url: entry.url, headers: strMap(entry.headers) } });
 			continue;
 		}
 		if (typeof entry?.command !== "string" || !entry.command.trim()) {
-			process.stderr.write(`[mcp] skipping "${name}": missing "command".\n`);
+			process.stderr.write(`[mcp] skipping "${name}": needs a "command" (stdio) or "url" (remote).\n`);
 			continue;
 		}
 		const args = Array.isArray(entry.args) ? entry.args.filter((a): a is string => typeof a === "string") : undefined;
-		let env: Record<string, string> | undefined;
-		if (entry.env && typeof entry.env === "object") {
-			env = {};
-			for (const [k, v] of Object.entries(entry.env as Record<string, unknown>)) {
-				if (typeof v === "string") env[k] = v;
-			}
-		}
-		out.push({ name, spec: { command: entry.command, args, env, cwd } });
+		out.push({ name, transport: "stdio", spec: { command: entry.command, args, env: strMap(entry.env), cwd } });
 	}
 	return out;
+}
+
+/** Coerce an unknown config value into a string→string map, dropping non-string values. */
+function strMap(value: unknown): Record<string, string> | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof v === "string") out[k] = v;
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
 }

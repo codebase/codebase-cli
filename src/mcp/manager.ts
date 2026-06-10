@@ -1,5 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { type LoadMcpConfigOptions, loadMcpServers } from "./config.js";
+import type { McpClient } from "./client.js";
+import { type LoadMcpConfigOptions, loadMcpServers, type NamedServer } from "./config.js";
+import { HttpMcpClient } from "./http-client.js";
 import { StdioMcpClient } from "./stdio-client.js";
 import { mcpToAgentTool } from "./to-agent-tool.js";
 
@@ -21,20 +23,21 @@ export interface McpServerStatus {
  * connected or failed. dispose() terminates all subprocesses.
  */
 export class McpManager {
-	private readonly clients: StdioMcpClient[] = [];
+	private readonly clients: McpClient[] = [];
 	private readonly statuses: McpServerStatus[] = [];
 	private readonly toolList: AgentTool<any>[] = [];
 
 	/**
-	 * Load config + connect every configured stdio server. Tools are
-	 * collected as servers come up. Returns once all have settled. Safe
-	 * to call when no config exists — yields zero tools.
+	 * Load config + connect every configured server (stdio or remote).
+	 * Tools are collected as servers come up. Returns once all have
+	 * settled. Safe to call when no config exists — yields zero tools.
 	 */
 	async connectAll(options: LoadMcpConfigOptions = {}): Promise<void> {
 		const servers = loadMcpServers(options);
 		await Promise.all(
-			servers.map(async ({ name, spec }) => {
-				const client = new StdioMcpClient(name, spec);
+			servers.map(async (server) => {
+				const { name } = server;
+				const client = makeClient(server);
 				try {
 					await client.connect();
 					const descriptors = await client.listTools();
@@ -66,8 +69,15 @@ export class McpManager {
 		return this.statuses;
 	}
 
-	/** Terminate every server subprocess. Idempotent. */
+	/** Terminate every server connection. Idempotent. */
 	dispose(): void {
 		for (const client of this.clients) client.close();
 	}
+}
+
+/** Build the right transport client for a configured server. */
+function makeClient(server: NamedServer): McpClient {
+	return server.transport === "http"
+		? new HttpMcpClient(server.name, server.spec)
+		: new StdioMcpClient(server.name, server.spec);
 }

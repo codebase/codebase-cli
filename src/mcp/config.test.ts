@@ -34,8 +34,11 @@ describe("loadMcpServers", () => {
 		});
 		const servers = loadMcpServers({ home, cwd });
 		expect(servers).toHaveLength(1);
-		expect(servers[0].name).toBe("postgres");
-		expect(servers[0].spec).toMatchObject({
+		const server = servers[0];
+		expect(server.name).toBe("postgres");
+		expect(server.transport).toBe("stdio");
+		if (server.transport !== "stdio") throw new Error("expected stdio");
+		expect(server.spec).toMatchObject({
 			command: "uvx",
 			args: ["mcp-server-postgres"],
 			env: { DATABASE_URL: "postgres://x" },
@@ -47,21 +50,26 @@ describe("loadMcpServers", () => {
 		write(cwd, { mcpServers: { fs: { command: "project-cmd" } } });
 		const servers = loadMcpServers({ home, cwd });
 		expect(servers).toHaveLength(1);
-		expect(servers[0].spec.command).toBe("project-cmd");
+		const server = servers[0];
+		if (server.transport !== "stdio") throw new Error("expected stdio");
+		expect(server.spec.command).toBe("project-cmd");
 	});
 
-	it("skips remote (url) servers — stdio only in v1", () => {
+	it("parses a remote (url) server with headers as http transport", () => {
 		write(home, {
 			mcpServers: {
-				remote: { url: "https://mcp.example.com" },
+				remote: { url: "https://mcp.example.com", headers: { Authorization: "Bearer t0ken" } },
 				local: { command: "local-cmd" },
 			},
 		});
 		const servers = loadMcpServers({ home, cwd });
-		expect(servers.map((s) => s.name)).toEqual(["local"]);
+		expect(servers.map((s) => s.name)).toEqual(["local", "remote"]);
+		const remote = servers.find((s) => s.name === "remote");
+		if (remote?.transport !== "http") throw new Error("expected http");
+		expect(remote.spec).toEqual({ url: "https://mcp.example.com", headers: { Authorization: "Bearer t0ken" } });
 	});
 
-	it("skips entries missing a command", () => {
+	it("skips entries with neither command nor url", () => {
 		write(home, { mcpServers: { broken: { args: ["x"] } } });
 		expect(loadMcpServers({ home, cwd })).toEqual([]);
 	});

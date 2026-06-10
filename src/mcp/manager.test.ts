@@ -1,4 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,4 +79,47 @@ describe("McpManager (against the mock server)", () => {
 		expect(manager.tools()).toEqual([]);
 		expect(manager.status()).toEqual([]);
 	});
+
+	it("connects a remote (url) server over HTTP and bridges its tools", async () => {
+		const server = await startHttpMock();
+		try {
+			writeConfig({ remote: { url: server.url } });
+			manager = new McpManager();
+			await manager.connectAll({ home, cwd });
+			expect(manager.status()).toEqual([{ name: "remote", connected: true, toolCount: 1 }]);
+			expect(manager.tools()[0].name).toBe(mcpToolName("remote", "echo"));
+		} finally {
+			await server.close();
+		}
+	});
 });
+
+/** Minimal Streamable-HTTP MCP server: initialize → initialized → tools/list. */
+async function startHttpMock(): Promise<{ url: string; close: () => Promise<void> }> {
+	const server: Server = createServer((req, res) => {
+		let raw = "";
+		req.on("data", (c) => {
+			raw += c;
+		});
+		req.on("end", () => {
+			const body = raw ? JSON.parse(raw) : {};
+			if (body.method === "notifications/initialized") {
+				res.statusCode = 202;
+				res.end();
+				return;
+			}
+			const result =
+				body.method === "tools/list"
+					? { tools: [{ name: "echo", description: "e", inputSchema: { type: "object" } }] }
+					: { protocolVersion: "2025-06-18", capabilities: {} };
+			res.setHeader("Content-Type", "application/json");
+			res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const port = (server.address() as AddressInfo).port;
+	return {
+		url: `http://127.0.0.1:${port}/mcp`,
+		close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+	};
+}

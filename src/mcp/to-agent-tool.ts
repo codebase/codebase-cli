@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { McpClient } from "./client.js";
 import type { McpContentBlock, McpToolDescriptor } from "./protocol.js";
-import type { StdioMcpClient } from "./stdio-client.js";
 
 /**
  * Namespaced tool name: `mcp__<server>__<tool>`. Mirrors Claude Code so
@@ -19,7 +19,7 @@ export function mcpToolName(server: string, tool: string): string {
  * execute() forwards the call to the live MCP client and flattens the
  * result's content blocks into the agent's text/image content shape.
  */
-export function mcpToAgentTool(server: string, client: StdioMcpClient, desc: McpToolDescriptor): AgentTool<any> {
+export function mcpToAgentTool(server: string, client: McpClient, desc: McpToolDescriptor): AgentTool<any> {
 	const schema = desc.inputSchema ?? { type: "object", properties: {} };
 	return {
 		name: mcpToolName(server, desc.name),

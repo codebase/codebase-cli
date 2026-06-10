@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
+import { CLIENT_INFO, type McpClient, REQUEST_TIMEOUT_MS } from "./client.js";
 import {
 	isResponse,
 	type JsonRpcResponse,
@@ -20,9 +21,6 @@ export interface StdioServerSpec {
 	cwd?: string;
 }
 
-const REQUEST_TIMEOUT_MS = 30_000;
-const CLIENT_INFO = { name: "codebase-cli", version: "1" };
-
 /**
  * A JSON-RPC 2.0 client speaking MCP over a spawned subprocess's stdio.
  * Newline-delimited messages, request/response correlated by numeric id.
@@ -31,7 +29,7 @@ const CLIENT_INFO = { name: "codebase-cli", version: "1" };
  * callTool() → close(). A spawn failure or server crash rejects all
  * pending requests so callers fail fast instead of hanging.
  */
-export class StdioMcpClient {
+export class StdioMcpClient implements McpClient {
 	private child: ChildProcess | undefined;
 	private rl: Interface | undefined;
 	private nextId = 1;
