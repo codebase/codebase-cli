@@ -471,11 +471,22 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		return { submitted: true };
 	};
 
-	// MCP: configured stdio servers are connected lazily after the bundle
-	// is built (connect is async; createAgent is sync). On connect we
-	// splice the bridged tools into the live agent's tool set so the
-	// model can call them from the next turn.
-	const mcp = new McpManager();
+	// MCP: configured servers (stdio + remote) are connected lazily after
+	// the bundle is built (connect is async; createAgent is sync). On
+	// connect we splice the bridged tools into the live agent's tool set so
+	// the model can call them from the next turn. A remote server that
+	// requires OAuth opens the browser on first connect; we also print the
+	// URL so headless sessions can complete the flow by hand.
+	const mcp = new McpManager({
+		authDeps: {
+			onAuthUrl: (url, server) => {
+				process.stderr.write(
+					`[mcp] "${server}" requires sign-in. Opening your browser…\n` +
+						`      If it doesn't open, visit this URL to authorize:\n      ${url}\n`,
+				);
+			},
+		},
+	});
 	const connectMcp = async (): Promise<readonly McpServerStatus[]> => {
 		await mcp.connectAll({ cwd });
 		const mcpTools = mcp.tools();
