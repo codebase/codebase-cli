@@ -2,12 +2,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BackgroundShellStore } from "./background-shell-store.js";
 import { FileStateCache } from "./file-state-cache.js";
 import { createShell, OutputAccumulator } from "./shell.js";
 import type { ToolContext } from "./types.js";
 
 function makeCtx(cwd: string): ToolContext {
-	return { cwd, fileStateCache: new FileStateCache() };
+	return { cwd, fileStateCache: new FileStateCache(), backgroundShells: new BackgroundShellStore() };
 }
 
 async function run(ctx: ToolContext, params: Parameters<ReturnType<typeof createShell>["execute"]>[1]) {
@@ -84,8 +85,19 @@ describe("shell tool", () => {
 		await expect(run(ctx, { command: "pwd", cwd: "../../etc" })).rejects.toThrow(/outside the project root/);
 	});
 
-	it("times out runaway commands", async () => {
-		await expect(run(ctx, { command: "sleep 5", timeout_ms: 200 })).rejects.toThrow(/timed out/);
+	it("moves a timed-out command to the background instead of killing it", async () => {
+		const { result } = await run(ctx, { command: "sleep 5", timeout_ms: 200 });
+		// Does NOT throw — returns a background-adopted result.
+		expect(result.details.timedOut).toBe(true);
+		expect(result.details.backgroundId).toMatch(/^bg-/);
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toMatch(/moved to the background/);
+		expect(text).toMatch(/STILL RUNNING/);
+		// The process is tracked + running in the store.
+		const record = ctx.backgroundShells.get(result.details.backgroundId as string);
+		expect(record?.status).toBe("running");
+		// Clean up so the sleep doesn't outlive the test.
+		await ctx.backgroundShells.kill(result.details.backgroundId as string);
 	});
 
 	it("aborts when the abort signal fires", async () => {

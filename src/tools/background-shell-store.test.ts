@@ -81,6 +81,18 @@ describe("BackgroundShellStore", () => {
 		expect(store.get(b.id)?.status).toBe("killed");
 	});
 
+	it("adopt() takes a running child, seeds prior output, and tracks it", async () => {
+		const { spawn } = await import("node:child_process");
+		const child = spawn("sleep", ["30"], { stdio: ["ignore", "pipe", "pipe"] });
+		const record = store.adopt(child, "sleep 30", process.cwd(), "earlier output\n");
+		expect(record.status).toBe("running");
+		expect(record.id).toMatch(/^bg-\d+$/);
+		expect(store.get(record.id)?.output).toContain("earlier output");
+		// Killing the adopted child marks it killed, like any tracked shell.
+		await store.kill(record.id);
+		expect(store.get(record.id)?.status).toBe("killed");
+	});
+
 	it("subscribe() fires on spawn, output growth, and exit", async () => {
 		const events: number[] = [];
 		const unsubscribe = store.subscribe((shells) => events.push(shells.length));

@@ -117,6 +117,63 @@ export class BackgroundShellStore {
 	}
 
 	/**
+	 * Adopt an already-running ChildProcess into the store — used when a
+	 * foreground `shell` call times out: instead of killing the process
+	 * and discarding the work, we hand the live child here so it keeps
+	 * running in the background and the agent can poll / kill it like any
+	 * other background shell. `priorOutput` seeds the rolling buffer with
+	 * whatever the foreground run captured before the timeout.
+	 *
+	 * The caller MUST have already detached its own stdout/stderr/exit
+	 * listeners; we re-attach our own here.
+	 */
+	adopt(child: ChildProcess, command: string, cwd: string, priorOutput: string): BackgroundShellRecord {
+		const id = `bg-${this.nextId++}`;
+		const record: BackgroundShellRecord = {
+			id,
+			command,
+			cwd,
+			startedAt: Date.now(),
+			status: "running",
+			output: priorOutput,
+			bytesEmitted: Buffer.byteLength(priorOutput, "utf8"),
+		};
+		const onChunk = (chunk: Buffer): void => {
+			const text = chunk.toString("utf8");
+			record.bytesEmitted += chunk.byteLength;
+			record.output += text;
+			if (record.output.length > MAX_BUFFER_BYTES) {
+				record.output = record.output.slice(record.output.length - MAX_BUFFER_BYTES);
+			}
+			this.notify();
+			this.notifyOutput(id, text);
+		};
+		child.stdout?.on("data", onChunk);
+		child.stderr?.on("data", onChunk);
+		child.on("exit", (code, signal) => {
+			record.endedAt = Date.now();
+			record.status = signal === "SIGTERM" || signal === "SIGKILL" ? "killed" : "exited";
+			record.exitCode = code ?? undefined;
+			record.signal = signal ?? undefined;
+			this.processes.delete(id);
+			this.outputListeners.delete(id);
+			this.notify();
+		});
+		child.on("error", (err) => {
+			record.output += `\n[error: ${err.message}]\n`;
+			record.endedAt = Date.now();
+			record.status = "exited";
+			record.exitCode = -1;
+			this.processes.delete(id);
+			this.notify();
+		});
+		this.records.set(id, record);
+		this.processes.set(id, child);
+		this.notify();
+		return { ...record };
+	}
+
+	/**
 	 * Read the current state of a tracked shell. Returns a copy so
 	 * callers can't mutate the live record. Returns undefined for
 	 * unknown ids.

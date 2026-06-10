@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { AgentTool, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
-import { TimeoutError } from "./errors.js";
 import { validateShellCommand } from "./shell-validator.js";
 import type { ToolContext } from "./types.js";
 
@@ -46,6 +45,8 @@ export interface ShellDetails {
 	spillPath: string | null;
 	timedOut: boolean;
 	aborted: boolean;
+	/** Set when a timed-out command was adopted into the background store. */
+	backgroundId?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -57,7 +58,7 @@ const DESCRIPTION = `Run a shell command. Output is streamed back as it arrives 
 Behavior:
 - Runs through the platform shell (sh -c on Unix, cmd /c on Windows) so pipes and redirection work.
 - Output is captured combined (stdout + stderr in source order). Up to ~30 KB is shown to you; anything beyond is written to a temp file whose path is reported in the result so you can read selectively.
-- Default timeout is 30 seconds; raise via timeout_ms (max 10 minutes). On timeout you'll see "command timed out".
+- Default timeout is 30 seconds; raise via timeout_ms (max 10 minutes). On timeout the command is NOT killed — it's moved to the background and keeps running. You get a task_id to read its output (shell_output) or terminate it (shell_kill), so a slow build or dev server isn't lost.
 - The cwd defaults to the project root. Set cwd if the command needs to run elsewhere within the project.
 - Aborting the agent (Ctrl-C) propagates to the running command via SIGTERM.
 
@@ -162,19 +163,16 @@ export function createShell(ctx: ToolContext): AgentTool<typeof Params, ShellDet
 			};
 
 			const stop = (kind: "timeout" | "abort") => {
-				if (kind === "timeout") timedOut = true;
-				if (kind === "abort") aborted = true;
-				killProcess(child);
+				if (kind === "abort") {
+					aborted = true;
+					killProcess(child);
+					return;
+				}
+				// Timeout: do NOT kill. Flag it and stop waiting — the process
+				// keeps running and gets adopted into the background store
+				// below so a slow build/server isn't discarded.
+				timedOut = true;
 			};
-
-			child.stdout?.on("data", (chunk: Buffer) => {
-				acc.add(chunk);
-				scheduleUpdate();
-			});
-			child.stderr?.on("data", (chunk: Buffer) => {
-				acc.add(chunk);
-				scheduleUpdate();
-			});
 
 			function scheduleUpdate(): void {
 				if (!onUpdate || updateTimer) return;
@@ -184,30 +182,78 @@ export function createShell(ctx: ToolContext): AgentTool<typeof Params, ShellDet
 				}, 100);
 			}
 
+			// Named stdout/stderr handlers so they can be detached before the
+			// child is adopted into the background store (which attaches its
+			// own listeners) on the timeout path.
+			const onStdout = (chunk: Buffer): void => {
+				acc.add(chunk);
+				scheduleUpdate();
+			};
+			const onStderr = (chunk: Buffer): void => {
+				acc.add(chunk);
+				scheduleUpdate();
+			};
+			child.stdout?.on("data", onStdout);
+			child.stderr?.on("data", onStderr);
+
 			const abortHandler = () => stop("abort");
 			signal?.addEventListener("abort", abortHandler);
 
-			const timeoutTimer = setTimeout(() => stop("timeout"), timeoutMs);
+			let timeoutResolve: (() => void) | undefined;
+			const timeoutTimer = setTimeout(() => {
+				stop("timeout");
+				timeoutResolve?.();
+			}, timeoutMs);
 
-			const exit: { code: number | null; signal: NodeJS.Signals | null } = await new Promise((resolveExit) => {
-				child.on("error", (err) => {
-					acc.add(Buffer.from(`\n[shell error: ${err.message}]\n`, "utf8"));
-					resolveExit({ code: 1, signal: null });
-				});
-				child.on("close", (code, sig) => resolveExit({ code, signal: sig }));
-			});
+			const exit: { code: number | null; signal: NodeJS.Signals | null } | "timed-out" = await new Promise(
+				(resolveExit) => {
+					timeoutResolve = () => resolveExit("timed-out");
+					child.on("error", (err) => {
+						acc.add(Buffer.from(`\n[shell error: ${err.message}]\n`, "utf8"));
+						resolveExit({ code: 1, signal: null });
+					});
+					child.on("close", (code, sig) => resolveExit({ code, signal: sig }));
+				},
+			);
 
 			signal?.removeEventListener("abort", abortHandler);
 			clearTimeout(timeoutTimer);
 			if (updateTimer) clearTimeout(updateTimer);
 
 			const durationMs = Date.now() - startedAt;
+
+			// Timeout → adopt the still-running process into the background
+			// store instead of killing it. The agent gets a task_id to poll
+			// / kill, and a slow build or dev server keeps running.
+			if (exit === "timed-out") {
+				child.stdout?.removeListener("data", onStdout);
+				child.stderr?.removeListener("data", onStderr);
+				const priorOutput = acc.visible(VISIBLE_CAP_BYTES).text;
+				const record = ctx.backgroundShells.adopt(child, params.command, cwd, priorOutput);
+				const text =
+					`Command exceeded its ${Math.round(timeoutMs / 1000)}s timeout and was moved to the background as ${record.id}.\n` +
+					`It is STILL RUNNING. Read output with shell_output("${record.id}"); terminate with shell_kill("${record.id}").\n` +
+					`You'll be notified when it exits.\n\n` +
+					`Output so far:\n${priorOutput}`;
+				return {
+					content: [{ type: "text", text }],
+					details: {
+						command: params.command,
+						exitCode: null,
+						signal: null,
+						durationMs,
+						bytesTotal: acc.size(),
+						truncated: acc.visible(VISIBLE_CAP_BYTES).truncated,
+						spillPath: null,
+						timedOut: true,
+						aborted: false,
+						backgroundId: record.id,
+					},
+				};
+			}
+
 			const visible = acc.visible(VISIBLE_CAP_BYTES);
 			const spillPath = visible.truncated ? spillToFile(toolCallId, acc.full()) : null;
-
-			if (timedOut) {
-				throw new TimeoutError(Math.round(timeoutMs / 1000), "shell");
-			}
 
 			const summary = formatSummary(visible.text, exit, durationMs, acc.size(), spillPath, aborted);
 
