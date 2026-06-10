@@ -254,9 +254,21 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		// escapes bypass the queue — they don't talk to the agent, so they
 		// can run alongside whatever the agent is doing.
 		if (busy && !text.startsWith("/") && !text.startsWith("!")) {
-			setQueuedPrompts((q) => [...q, text]);
-			const preview = text.length > 60 ? `${text.slice(0, 60)}…` : text;
-			appendStatus(`↩ queued (${queuedPrompts.length + 1}): ${preview}`);
+			// Steer the live turn rather than just queueing for after it. The
+			// running agent loop drains the steering queue between tool
+			// batches, so a mid-turn correction/addition reaches the model
+			// before its next action — the Claude-Code "type while it works"
+			// behavior. Show it in the transcript so the user sees what they
+			// steered with. Falls back to the post-turn queue only if steer()
+			// throws (no active run — a race with the turn settling).
+			dispatch({ type: "user-prompt", text });
+			try {
+				bundle.agent.steer({ role: "user", content: text, timestamp: Date.now() });
+				const preview = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+				appendStatus(`↳ steering: ${preview}`);
+			} catch {
+				setQueuedPrompts((q) => [...q, text]);
+			}
 			return;
 		}
 		// `!cmd` runs a shell command directly without involving the LLM —

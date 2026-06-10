@@ -351,13 +351,28 @@ this.unsubscribe = this.bundle.subscribe(async (event) => {
 			return;
 		}
 
-		// Mid-turn typing: agent is busy → queue the prompt for after the
-		// current turn ends. Drained automatically when status flips back
-		// to idle.
+		// Mid-turn typing: agent is busy → STEER the live turn. The message
+		// is injected into the running agent loop via the steering queue,
+		// so the model sees the correction/addition before its next tool
+		// batch rather than only after the whole turn finishes. This is the
+		// Claude-Code "type while it works" behavior. The message also lands
+		// in the transcript so the user sees what they steered with.
 		if (this.busy) {
-			this.queuedPrompts.push(trimmed);
-			const preview = trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
-			this.statusBar.note(`↩ queued (${this.queuedPrompts.length}): ${preview}`);
+			const userMsg: AgentMessage = { role: "user", content: trimmed, timestamp: Date.now() };
+			this.messages.push(userMsg);
+			this.transcript.appendUserMessage(trimmed);
+			this.persistHistory(trimmed);
+			try {
+				this.bundle.agent.steer(userMsg);
+				const preview = trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
+				this.statusBar.note(`↳ steering: ${preview}`);
+			} catch {
+				// steer() throws only if there's no active run — race between
+				// the busy check and the turn settling. Fall back to the queue
+				// so the message isn't lost.
+				this.queuedPrompts.push(trimmed);
+			}
+			this.tui?.requestRender();
 			return;
 		}
 
