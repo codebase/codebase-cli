@@ -80,6 +80,7 @@ export function createMultiEdit(ctx: ToolContext): AgentTool<typeof Params, Mult
 			const { mtimeMs, size } = atomicWrite(absPath, content, {
 				hasBOM: snap.hasBOM,
 				eol: snap.eol,
+				encoding: snap.encoding,
 				mode,
 			});
 
@@ -89,6 +90,7 @@ export function createMultiEdit(ctx: ToolContext): AgentTool<typeof Params, Mult
 				mtimeMs,
 				size,
 				hasBOM: snap.hasBOM,
+				encoding: snap.encoding,
 				eol: snap.eol,
 				isPartialView: false,
 				storedAt: Date.now(),

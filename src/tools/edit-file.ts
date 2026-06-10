@@ -68,6 +68,7 @@ export function createEditFile(ctx: ToolContext): AgentTool<typeof Params, EditF
 			const { mtimeMs, size } = atomicWrite(absPath, nextContent, {
 				hasBOM: snap.hasBOM,
 				eol: snap.eol,
+				encoding: snap.encoding,
 				mode,
 			});
 
@@ -77,6 +78,7 @@ export function createEditFile(ctx: ToolContext): AgentTool<typeof Params, EditF
 				mtimeMs,
 				size,
 				hasBOM: snap.hasBOM,
+				encoding: snap.encoding,
 				eol: snap.eol,
 				isPartialView: false,
 				storedAt: Date.now(),

@@ -18,8 +18,10 @@ export interface FileSnapshot {
 	mtimeMs: number;
 	/** File size in bytes when we read it. */
 	size: number;
-	/** Whether the original bytes started with a UTF-8 BOM. */
+	/** Whether the original bytes started with a BOM. */
 	hasBOM: boolean;
+	/** Text encoding detected on read; round-tripped on write. Default "utf8". */
+	encoding?: "utf8" | "utf16le" | "utf16be";
 	/** Detected newline: "\n" (LF), "\r\n" (CRLF), or "" (none). */
 	eol: "\n" | "\r\n" | "";
 	/** True if read used offset/limit; partial views can't be edited safely. */

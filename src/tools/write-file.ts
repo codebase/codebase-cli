@@ -48,11 +48,13 @@ export function createWriteFile(ctx: ToolContext): AgentTool<typeof Params, Writ
 			let hasBOM = false;
 			let eol: "\n" | "\r\n" | "" = detectEol(params.content);
 			let mode = 0o644;
+			let encoding: "utf8" | "utf16le" | "utf16be" = "utf8";
 
 			if (exists) {
 				const snap = validateForOverwrite(absPath, ctx.fileStateCache);
 				hasBOM = snap.hasBOM;
 				eol = snap.eol;
+				encoding = snap.encoding ?? "utf8";
 				mode = statSync(absPath).mode & 0o777;
 			} else {
 				// Bare-bytes hint: a new file's content may already start with BOM characters.
@@ -61,7 +63,7 @@ export function createWriteFile(ctx: ToolContext): AgentTool<typeof Params, Writ
 				}
 			}
 
-			const written = atomicWrite(absPath, params.content, { hasBOM, eol, mode });
+			const written = atomicWrite(absPath, params.content, { hasBOM, eol, encoding, mode });
 
 			ctx.fileStateCache.record({
 				path: absPath,
@@ -69,6 +71,7 @@ export function createWriteFile(ctx: ToolContext): AgentTool<typeof Params, Writ
 				mtimeMs: written.mtimeMs,
 				size: written.size,
 				hasBOM,
+				encoding,
 				eol,
 				isPartialView: false,
 				storedAt: Date.now(),

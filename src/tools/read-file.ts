@@ -116,7 +116,7 @@ export function createReadFile(ctx: ToolContext): AgentTool<typeof Params, ReadF
 				throw new BinaryFileError(params.path);
 			}
 
-			const { content, hasBOM } = stripBOM(raw);
+			const { content, hasBOM, encoding } = stripBOM(raw);
 			const eol = detectEol(content);
 			const allLines = content.split(/\r\n|\n/);
 			// Trailing-newline files split into an extra empty trailing element; trim it for line counts.
@@ -144,6 +144,7 @@ export function createReadFile(ctx: ToolContext): AgentTool<typeof Params, ReadF
 				mtimeMs: stat.mtimeMs,
 				size: stat.size,
 				hasBOM,
+				encoding,
 				eol,
 				isPartialView,
 				range: isPartialView ? { startLine: startIdx + 1, endLine: endIdx } : undefined,

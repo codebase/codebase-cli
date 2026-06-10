@@ -41,16 +41,45 @@ export function detectEol(content: string): "\n" | "\r\n" | "" {
 	return idx > 0 && content[idx - 1] === "\r" ? "\r\n" : "\n";
 }
 
-/** Strip a UTF-8 BOM if present and return the decoded string. */
-export function stripBOM(buf: Buffer): { content: string; hasBOM: boolean } {
+/** Text encodings we detect via BOM and round-trip on write. */
+export type FileEncoding = "utf8" | "utf16le" | "utf16be";
+
+/**
+ * Decode a file buffer, detecting + stripping a leading BOM. Handles
+ * UTF-8 (EF BB BF), UTF-16LE (FF FE), and UTF-16BE (FE FF). UTF-16BE
+ * has no native Node decoder, so we byte-swap to LE first. The detected
+ * encoding is returned so the write path can re-encode identically — a
+ * Windows-authored UTF-16 file stays UTF-16 after an edit.
+ */
+export function stripBOM(buf: Buffer): { content: string; hasBOM: boolean; encoding: FileEncoding } {
 	if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
-		return { content: buf.subarray(3).toString("utf8"), hasBOM: true };
+		return { content: buf.subarray(3).toString("utf8"), hasBOM: true, encoding: "utf8" };
 	}
-	return { content: buf.toString("utf8"), hasBOM: false };
+	if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+		return { content: buf.subarray(2).toString("utf16le"), hasBOM: true, encoding: "utf16le" };
+	}
+	if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+		// UTF-16BE: swap byte pairs to LE so Node can decode.
+		const body = buf.subarray(2);
+		const swapped = Buffer.from(body);
+		swapped.swap16();
+		return { content: swapped.toString("utf16le"), hasBOM: true, encoding: "utf16be" };
+	}
+	return { content: buf.toString("utf8"), hasBOM: false, encoding: "utf8" };
 }
 
-/** Heuristic null-byte scan over the first 8 KB. */
+/**
+ * Heuristic null-byte scan over the first 8 KB. A UTF-16 BOM is checked
+ * first — UTF-16 text is full of legitimate null bytes (every ASCII
+ * char is `XX 00`), so the raw scan would false-positive every
+ * Windows-authored UTF-16 file as "binary."
+ */
 export function isLikelyBinary(buf: Buffer): boolean {
+	if (buf.length >= 2) {
+		const b0 = buf[0];
+		const b1 = buf[1];
+		if ((b0 === 0xff && b1 === 0xfe) || (b0 === 0xfe && b1 === 0xff)) return false;
+	}
 	const slice = buf.subarray(0, Math.min(buf.length, 8192));
 	for (let i = 0; i < slice.length; i++) {
 		if (slice[i] === 0) return true;
@@ -165,6 +194,8 @@ export interface WriteOptions {
 	hasBOM?: boolean;
 	eol?: "\n" | "\r\n" | "";
 	mode?: number;
+	/** Re-encode with this encoding + matching BOM. Default "utf8". */
+	encoding?: FileEncoding;
 }
 
 /**
@@ -181,9 +212,18 @@ export function atomicWrite(
 	const normalized =
 		eol === "\r\n" ? content.replace(/\r?\n/g, "\r\n") : eol === "\n" ? content.replace(/\r\n/g, "\n") : content;
 
-	let buf = Buffer.from(normalized, "utf8");
-	if (options.hasBOM) {
-		buf = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), buf]);
+	const encoding = options.encoding ?? "utf8";
+	let buf: Buffer;
+	if (encoding === "utf16le") {
+		const body = Buffer.from(normalized, "utf16le");
+		buf = options.hasBOM ? Buffer.concat([Buffer.from([0xff, 0xfe]), body]) : body;
+	} else if (encoding === "utf16be") {
+		const le = Buffer.from(normalized, "utf16le");
+		le.swap16(); // LE → BE
+		buf = options.hasBOM ? Buffer.concat([Buffer.from([0xfe, 0xff]), le]) : le;
+	} else {
+		const body = Buffer.from(normalized, "utf8");
+		buf = options.hasBOM ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]) : body;
 	}
 
 	mkdirSync(dirname(absPath), { recursive: true });
