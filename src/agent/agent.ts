@@ -21,6 +21,7 @@ import { PlanModeStore } from "../plan/store.js";
 import { SessionStore } from "../sessions/store.js";
 import type { AssetRegistry } from "../skills/loader.js";
 import { buildAssetRegistry } from "../skills/registry-factory.js";
+import { loadSubagentDefinitions } from "../subagents/definitions.js";
 import { BackgroundShellStore } from "../tools/background-shell-store.js";
 import { FileStateCache } from "../tools/file-state-cache.js";
 import { MonitorStore } from "../tools/monitor-store.js";
@@ -206,6 +207,61 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const backgroundShells = new BackgroundShellStore();
 	const monitors = new MonitorStore(backgroundShells);
 	const checkpoints = new CheckpointStore({ cwd });
+
+	// Shared tool-call guards. The main agent AND every spawned subagent
+	// route through these, so a write-capable subagent's edit_file/shell
+	// calls hit the same plan-mode gate, permission prompts, and
+	// PreToolUse/PostToolUse/PostEdit hooks as the main loop — subagents
+	// are never a permission bypass.
+	const guardToolCall = async (
+		toolName: string,
+		args: unknown,
+		signal?: AbortSignal,
+	): Promise<{ block: true; reason: string } | undefined> => {
+		if (planMode.isActive() && PLAN_MODE_BLOCKED.has(toolName)) {
+			return {
+				block: true,
+				reason:
+					`${toolName} is blocked while plan mode is active. ` +
+					"Use exit_plan_mode after presenting your plan to regain write access.",
+			};
+		}
+		const decision = await permissions.evaluate(toolName, args);
+		if (decision === "block") {
+			return { block: true, reason: "Permission denied by user." };
+		}
+		const filePath = (args as { path?: string } | undefined)?.path;
+		const outcome = await hooks.dispatch(
+			"PreToolUse",
+			{ event: "PreToolUse", toolName, toolArgs: args, filePath, workingDir: cwd },
+			signal,
+		);
+		if (outcome.blocked) {
+			return { block: true, reason: outcome.reason ?? "Blocked by hook." };
+		}
+		return undefined;
+	};
+
+	const dispatchPostToolHooks = async (toolName: string, args: unknown, signal?: AbortSignal): Promise<void> => {
+		const filePath = (args as { path?: string } | undefined)?.path;
+		await hooks.dispatch(
+			"PostToolUse",
+			{ event: "PostToolUse", toolName, toolArgs: args, filePath, workingDir: cwd },
+			signal,
+		);
+		// PostEdit fires for write-family tools so hooks can run formatters
+		// / linters / commit-on-save scripts targeted specifically at file
+		// mutations (instead of having to filter inside a generic
+		// PostToolUse handler).
+		if (filePath && WRITE_TOOL_NAMES.has(toolName)) {
+			await hooks.dispatch(
+				"PostEdit",
+				{ event: "PostEdit", toolName, toolArgs: args, filePath, workingDir: cwd },
+				signal,
+			);
+		}
+	};
+
 	const toolContext: ToolContext = {
 		cwd,
 		fileStateCache: new FileStateCache(),
@@ -217,10 +273,16 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		backgroundShells,
 		monitors,
 		checkpoints,
+		subagentTypes: loadSubagentDefinitions({ cwd }),
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
 				getApiKey,
+				beforeToolCall: (ctx, signal) => guardToolCall(ctx.toolCall.name, ctx.args, signal),
+				afterToolCall: async (ctx, signal) => {
+					await dispatchPostToolHooks(ctx.toolCall.name, ctx.args, signal);
+					return undefined;
+				},
 			}),
 	};
 
@@ -297,64 +359,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 				compactionMonitor.end();
 			}
 		},
-		beforeToolCall: async (ctx, signal) => {
-			// 1. Plan mode gate: block destructive tools entirely while planning.
-			if (planMode.isActive() && PLAN_MODE_BLOCKED.has(ctx.toolCall.name)) {
-				return {
-					block: true,
-					reason:
-						`${ctx.toolCall.name} is blocked while plan mode is active. ` +
-						"Use exit_plan_mode after presenting your plan to regain write access.",
-				};
-			}
-			// 2. Built-in permission gate (fast, sync for read-only tools).
-			const decision = await permissions.evaluate(ctx.toolCall.name, ctx.args);
-			if (decision === "block") {
-				return { block: true, reason: "Permission denied by user." };
-			}
-			// 3. User-defined hooks (typically audit/lint/validation steps).
-			const filePath = (ctx.args as { path?: string } | undefined)?.path;
-			const outcome = await hooks.dispatch(
-				"PreToolUse",
-				{
-					event: "PreToolUse",
-					toolName: ctx.toolCall.name,
-					toolArgs: ctx.args,
-					filePath,
-					workingDir: cwd,
-				},
-				signal,
-			);
-			if (outcome.blocked) {
-				return { block: true, reason: outcome.reason ?? "Blocked by hook." };
-			}
-			return undefined;
-		},
+		beforeToolCall: (ctx, signal) => guardToolCall(ctx.toolCall.name, ctx.args, signal),
 		afterToolCall: async (ctx, signal) => {
+			await dispatchPostToolHooks(ctx.toolCall.name, ctx.args, signal);
 			const filePath = (ctx.args as { path?: string } | undefined)?.path;
-			await hooks.dispatch(
-				"PostToolUse",
-				{
-					event: "PostToolUse",
-					toolName: ctx.toolCall.name,
-					toolArgs: ctx.args,
-					filePath,
-					workingDir: cwd,
-				},
-				signal,
-			);
-
-			// PostEdit fires for write-family tools so hooks can run formatters
-			// / linters / commit-on-save scripts targeted specifically at file
-			// mutations (instead of having to filter inside a generic
-			// PostToolUse handler).
-			if (filePath && WRITE_TOOL_NAMES.has(ctx.toolCall.name)) {
-				await hooks.dispatch(
-					"PostEdit",
-					{ event: "PostEdit", toolName: ctx.toolCall.name, toolArgs: ctx.args, filePath, workingDir: cwd },
-					signal,
-				);
-			}
 
 			// After a write/edit tool, run language checkers on the affected file
 			// and steer the result into the next turn. Fire-and-forget so the

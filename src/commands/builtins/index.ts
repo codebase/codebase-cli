@@ -1,4 +1,5 @@
 import type { Command } from "../types.js";
+import { agents } from "./agents.js";
 import { login, logout } from "./auth.js";
 import { copy } from "./copy.js";
 import { cost } from "./cost.js";
@@ -32,6 +33,7 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	memory,
 	mcp,
 	skills,
+	agents,
 	context,
 	login,
 	logout,
