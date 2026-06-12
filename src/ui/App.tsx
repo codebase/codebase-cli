@@ -18,6 +18,7 @@ import { buildAttachmentPrompt, collectAttachments } from "./attachments.js";
 import { BackgroundShellPanel } from "./BackgroundShellPanel.js";
 import { CompactionBanner } from "./CompactionBanner.js";
 import { FirstRunSetup } from "./FirstRunSetup.js";
+import { HistorySearch } from "./HistorySearch.js";
 import { HistoryStore } from "./history-store.js";
 import { Input, type InputHandle } from "./Input.js";
 import { MessageList } from "./MessageList.js";
@@ -110,6 +111,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	const [tasks, setTasks] = useState<readonly Task[]>(() => bundle.toolContext.tasks.list());
 	const inputRef = useRef<InputHandle | null>(null);
 	const [modelPickerOpen, setModelPickerOpen] = useState(false);
+	const [historySearchOpen, setHistorySearchOpen] = useState(false);
 	// Prompts typed while the agent is busy. The bottom of the queue is
 	// dispatched automatically when the agent goes idle. Lets the user
 	// stack the next thing while the current turn is still running, the
@@ -562,6 +564,10 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	// (Esc to deny, etc.) but Ctrl-C now routes through here.
 	useInput((input, key) => {
 		if (key.ctrl && input === "c") handleAbort();
+		// Ctrl-R opens reverse history search when no other modal is up.
+		if (key.ctrl && input === "r" && !historySearchOpen && !modelPickerOpen && !permRequest && !userQuery) {
+			setHistorySearchOpen(true);
+		}
 	});
 
 	return (
@@ -619,16 +625,29 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 					onCancel={() => setModelPickerOpen(false)}
 				/>
 			) : (
-				<Input
-					ref={inputRef}
-					onSubmit={handleSubmit}
-					onAbort={handleAbort}
-					commands={commandSuggestions}
-					history={inputHistory}
-					cwd={bundle.toolContext.cwd}
-					suggestion={suggestion}
-					onSuggestionDismiss={dismissSuggestion}
-				/>
+				<>
+					{historySearchOpen ? (
+						<HistorySearch
+							history={inputHistory}
+							onPick={(text) => {
+								setHistorySearchOpen(false);
+								inputRef.current?.setText(text);
+							}}
+							onCancel={() => setHistorySearchOpen(false)}
+						/>
+					) : null}
+					<Input
+						ref={inputRef}
+						disabled={historySearchOpen}
+						onSubmit={handleSubmit}
+						onAbort={handleAbort}
+						commands={commandSuggestions}
+						history={inputHistory}
+						cwd={bundle.toolContext.cwd}
+						suggestion={suggestion}
+						onSuggestionDismiss={dismissSuggestion}
+					/>
+				</>
 			)}
 		</Box>
 	);

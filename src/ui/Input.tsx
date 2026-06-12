@@ -33,6 +33,8 @@ export interface InputHandle {
 	/** If the buffer has non-whitespace text, clear it and return true.
 	 * Otherwise no-op and return false. */
 	clearIfHasText: () => boolean;
+	/** Replace the buffer with `text`, cursor at the end. Used by Ctrl-R history search. */
+	setText: (text: string) => void;
 }
 
 interface InputProps {
@@ -122,6 +124,9 @@ export const Input = forwardRef<InputHandle, InputProps>(function Input(
 				if (stateRef.current.buffer.trim().length === 0) return false;
 				setState(initialInputState());
 				return true;
+			},
+			setText: (text: string) => {
+				setState({ ...initialInputState(), buffer: text, cursor: text.length });
 			},
 		}),
 		[],

@@ -28,6 +28,7 @@ import { pickNextVerb, THINKING_VERBS } from "../ui/thinking-verbs.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
 import { ContextWarning, ErrorCard } from "./banners.js";
 import { CompactionBanner } from "./compaction-banner.js";
+import { HistorySearchOverlay } from "./history-search-overlay.js";
 import { buildMessageBlocks, MessageView } from "./message-view.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
 import { PermissionOverlay } from "./permission-overlay.js";
@@ -67,6 +68,7 @@ export class App extends Container {
 	private permissionOverlay: { handle: OverlayHandle; component: PermissionOverlay } | undefined;
 	private userQueryOverlay: { handle: OverlayHandle; component: UserQueryOverlay } | undefined;
 	private modelPickerOverlay: { handle: OverlayHandle; component: ModelPickerOverlay } | undefined;
+	private historySearchOverlay: { handle: OverlayHandle; component: HistorySearchOverlay } | undefined;
 	private removePermSubscription: (() => void) | undefined;
 	private removeUserQuerySubscription: (() => void) | undefined;
 	private tui: TUI | undefined;
@@ -343,7 +345,50 @@ export class App extends Container {
 			this.exitResolve?.();
 			return { consume: true };
 		}
+		// Ctrl-R opens reverse history search when no other modal is up.
+		// (Once open, the overlay's own input handles the repeat-Ctrl-R cycle.)
+		if (
+			data === "\x12" &&
+			this.inputBar &&
+			!this.historySearchOverlay &&
+			!this.permissionOverlay &&
+			!this.userQueryOverlay &&
+			!this.modelPickerOverlay
+		) {
+			this.showHistorySearchOverlay();
+			return { consume: true };
+		}
 		return undefined;
+	}
+
+	private showHistorySearchOverlay(): void {
+		if (!this.tui || !this.inputBar) return;
+		// Persisted prior runs ++ this session's prompts, chronological.
+		const history = [...this.historyStore.load()];
+		for (const m of this.messages) {
+			if (m.role !== "user" || typeof m.content !== "string") continue;
+			if (m.content.trim() && history[history.length - 1] !== m.content) history.push(m.content);
+		}
+		const component = new HistorySearchOverlay(
+			history,
+			(text) => {
+				this.hideHistorySearchOverlay();
+				this.inputBar?.setText(text);
+				this.tui?.requestRender();
+			},
+			() => this.hideHistorySearchOverlay(),
+		);
+		const handle = this.tui.showOverlay(component, { anchor: "center", width: "70%", minWidth: 50 });
+		this.tui.setFocus(component.getFocusTarget());
+		this.historySearchOverlay = { handle, component };
+	}
+
+	private hideHistorySearchOverlay(): void {
+		if (!this.historySearchOverlay) return;
+		this.historySearchOverlay.handle.hide();
+		this.historySearchOverlay = undefined;
+		if (this.inputBar) this.tui?.setFocus(this.inputBar);
+		this.tui?.requestRender();
 	}
 
 	private async handleSubmit(text: string): Promise<void> {
