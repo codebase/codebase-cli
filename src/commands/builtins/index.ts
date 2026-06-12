@@ -11,6 +11,7 @@ import { outputStyleCmd } from "./output-style.js";
 import { projects } from "./projects.js";
 import { commit, diff, review } from "./scm.js";
 import { clear, compact, exit, fresh, redo, resume, session } from "./session.js";
+import { skills } from "./skills.js";
 
 export const BUILTIN_COMMANDS: readonly Command[] = [
 	help,
@@ -29,6 +30,7 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	review,
 	memory,
 	mcp,
+	skills,
 	context,
 	login,
 	logout,

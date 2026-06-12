@@ -7,6 +7,7 @@ import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { CommandRegistry } from "../commands/registry.js";
+import { buildSkillCommands } from "../commands/skill-commands.js";
 import { ConfigStore } from "../config/store.js";
 import type { PermissionRequest } from "../permissions/store.js";
 import { runPlanFlow } from "../plan/run-flow.js";
@@ -122,10 +123,32 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		return reg;
 	}, []);
 
+	// Bumped when async command sources (skills) finish registering, so
+	// the autocomplete list picks them up.
+	const [commandsVersion, setCommandsVersion] = useState(0);
+
 	const commandSuggestions = useMemo(
 		() => registry.list().map((c) => ({ name: c.name, description: c.description })),
-		[registry],
+		// biome-ignore lint/correctness/useExhaustiveDependencies: commandsVersion invalidates the memo when late registrations land
+		[registry, commandsVersion],
 	);
+
+	// Skills load async (filesystem + future platform fetch) and register
+	// as slash commands after mount — same late-splice pattern as MCP.
+	useEffect(() => {
+		let disposed = false;
+		bundle.assets
+			.listSkills()
+			.then((loaded) => {
+				if (disposed || loaded.length === 0) return;
+				registry.registerAll(buildSkillCommands(loaded, registry));
+				setCommandsVersion((v) => v + 1);
+			})
+			.catch(() => undefined);
+		return () => {
+			disposed = true;
+		};
+	}, [bundle, registry]);
 
 	const historyStore = useMemo(() => new HistoryStore({ cwd: bundle.toolContext.cwd }), [bundle.toolContext.cwd]);
 	const persistedHistory = useMemo(() => historyStore.load(), [historyStore]);

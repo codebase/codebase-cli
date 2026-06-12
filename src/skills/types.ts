@@ -18,7 +18,7 @@
  * to opt out of a platform-shipped skill by overriding it locally.
  */
 
-export type AssetSource = "bundled" | "user" | "platform";
+export type AssetSource = "bundled" | "user" | "project" | "platform";
 
 export interface SkillAsset {
 	kind: "skill";

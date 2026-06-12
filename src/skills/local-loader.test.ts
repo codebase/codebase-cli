@@ -28,6 +28,14 @@ describe("LocalLoader", () => {
 		await expect(loader.listPrompts()).resolves.toEqual([]);
 	});
 
+	it("tags assets with the loader's source (project loader)", async () => {
+		mkdirSync(skillsDir, { recursive: true });
+		writeFileSync(join(skillsDir, "deploy.md"), "Run the deploy checklist.");
+		const loader = new LocalLoader(root, "project");
+		const [skill] = await loader.listSkills();
+		expect(skill.source).toBe("project");
+	});
+
 	it("loads a skill with full frontmatter", async () => {
 		mkdirSync(skillsDir, { recursive: true });
 		writeFileSync(

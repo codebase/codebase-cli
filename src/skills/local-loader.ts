@@ -35,26 +35,27 @@ import type { PromptAsset, SkillAsset, TemplateAsset } from "./types.js";
  * at `~/.codebase/skills/<id>.md`.
  */
 export class LocalLoader implements AssetLoader {
-	readonly source = "user" as const;
+	readonly source: "user" | "project";
 	private readonly rootDir: string;
 
-	constructor(rootDir?: string) {
+	constructor(rootDir?: string, source: "user" | "project" = "user") {
 		this.rootDir = rootDir ?? join(homedir(), ".codebase");
+		this.source = source;
 	}
 
 	async listSkills(): Promise<readonly SkillAsset[]> {
 		const dir = join(this.rootDir, "skills");
-		return walkAssets(dir, (entry) => parseSkill(entry));
+		return walkAssets(dir, (entry) => parseSkill(entry, this.source));
 	}
 
 	async listTemplates(): Promise<readonly TemplateAsset[]> {
 		const dir = join(this.rootDir, "templates");
-		return walkAssets(dir, (entry) => parseTemplate(entry));
+		return walkAssets(dir, (entry) => parseTemplate(entry, this.source));
 	}
 
 	async listPrompts(): Promise<readonly PromptAsset[]> {
 		const dir = join(this.rootDir, "prompts");
-		return walkAssets(dir, (entry) => parsePrompt(entry));
+		return walkAssets(dir, (entry) => parsePrompt(entry, this.source));
 	}
 }
 
@@ -116,14 +117,14 @@ function strArrOrUndef(value: string | readonly string[] | undefined): readonly 
 	return Array.isArray(value) ? value : undefined;
 }
 
-function parseSkill(entry: ParsedFile): SkillAsset | undefined {
+function parseSkill(entry: ParsedFile, source: "user" | "project"): SkillAsset | undefined {
 	const fm = entry.frontmatter;
 	const id = strOrUndef(fm.id) ?? entry.defaultId;
 	if (!id) return undefined;
 	return {
 		kind: "skill",
 		id,
-		source: "user",
+		source,
 		name: strOrUndef(fm.name) ?? id,
 		description: strOrUndef(fm.description) ?? "",
 		systemPrompt: entry.body,
@@ -132,14 +133,14 @@ function parseSkill(entry: ParsedFile): SkillAsset | undefined {
 	};
 }
 
-function parseTemplate(entry: ParsedFile): TemplateAsset | undefined {
+function parseTemplate(entry: ParsedFile, source: "user" | "project"): TemplateAsset | undefined {
 	const fm = entry.frontmatter;
 	const id = strOrUndef(fm.id) ?? entry.defaultId;
 	if (!id) return undefined;
 	return {
 		kind: "template",
 		id,
-		source: "user",
+		source,
 		name: strOrUndef(fm.name) ?? id,
 		description: strOrUndef(fm.description) ?? "",
 		body: entry.body,
@@ -147,14 +148,14 @@ function parseTemplate(entry: ParsedFile): TemplateAsset | undefined {
 	};
 }
 
-function parsePrompt(entry: ParsedFile): PromptAsset | undefined {
+function parsePrompt(entry: ParsedFile, source: "user" | "project"): PromptAsset | undefined {
 	const fm = entry.frontmatter;
 	const id = strOrUndef(fm.id) ?? entry.defaultId;
 	if (!id) return undefined;
 	return {
 		kind: "prompt",
 		id,
-		source: "user",
+		source,
 		name: strOrUndef(fm.name) ?? id,
 		description: strOrUndef(fm.description) ?? "",
 		body: entry.body,

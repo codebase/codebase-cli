@@ -16,6 +16,7 @@ import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { CommandRegistry } from "../commands/registry.js";
+import { buildSkillCommands } from "../commands/skill-commands.js";
 import { ConfigStore } from "../config/store.js";
 import { runPlanFlow } from "../plan/run-flow.js";
 import type { ChatState, ToolExecution } from "../types.js";
@@ -240,6 +241,25 @@ export class App extends Container {
 					}
 				}
 				this.tui?.requestRender();
+			})
+			.catch(() => undefined);
+
+		// Skills load async and register as slash commands — same late-splice
+		// pattern as MCP. The autocomplete provider snapshots the command
+		// list at construction, so rebuild it once the skills land.
+		this.bundle.assets
+			.listSkills()
+			.then((loaded) => {
+				if (loaded.length === 0) return;
+				this.registry.registerAll(buildSkillCommands(loaded, this.registry));
+				const refreshed: AutocompleteItem[] = this.registry.list().map((cmd) => ({
+					value: cmd.name,
+					label: `/${cmd.name}`,
+					description: cmd.description,
+				}));
+				this.inputBar?.setAutocompleteProvider(
+					new CombinedAutocompleteProvider(refreshed, this.bundle.toolContext.cwd),
+				);
 			})
 			.catch(() => undefined);
 	}

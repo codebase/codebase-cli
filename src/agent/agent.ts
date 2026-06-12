@@ -183,7 +183,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// PlatformLoader is gated on a real auth session — for now we skip
 	// it (LocalLoader still works). A future change wires it once we have
 	// a stable endpoint contract and the user is signed in.
-	const assets = buildAssetRegistry();
+	const assets = buildAssetRegistry({ projectRoot: cwd });
 
 	const glueModels = resolveGlueModels({ parentModel: model, parentApiKey: apiKey });
 	const glue = new GlueClient({
