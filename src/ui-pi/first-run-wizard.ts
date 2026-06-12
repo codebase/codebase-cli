@@ -1,6 +1,7 @@
 import { type Component, Container, Input, SelectList, Text, type TUI } from "@earendil-works/pi-tui";
 import { CredentialsStore } from "../auth/credentials.js";
 import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
+import { type DiscoveredServer, formatContextWindow, SCAN_PORTS, scanLocalEndpoints } from "../config/local-llm.js";
 import { ansi, selectListTheme } from "./theme.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
@@ -41,6 +42,26 @@ const COMPAT_PROMPTS: Record<CompatStep, { title: string; hint: string }> = {
 	key: { title: "API key", hint: "Enter to skip if your server doesn't need one" },
 };
 
+interface ScanRow {
+	serverLabel: string;
+	baseUrl: string;
+	model: string;
+	contextWindow?: number;
+}
+
+/** Cap models shown per server so a big Ollama library doesn't swamp the list. */
+const MAX_MODELS_PER_SERVER = 6;
+
+function flattenScan(servers: DiscoveredServer[]): ScanRow[] {
+	const rows: ScanRow[] = [];
+	for (const s of servers) {
+		for (const m of s.models.slice(0, MAX_MODELS_PER_SERVER)) {
+			rows.push({ serverLabel: s.label, baseUrl: s.baseUrl, model: m.id, contextWindow: m.contextWindow });
+		}
+	}
+	return rows;
+}
+
 const MENU_ITEMS = [
 	{
 		value: "oauth",
@@ -67,6 +88,7 @@ type WizardMode =
 	| "signed-in"
 	| "byok-provider"
 	| { kind: "byok-key"; provider: ProviderChoice }
+	| { kind: "byok-scan" }
 	| { kind: "byok-compat"; step: CompatStep; url: string; model: string }
 	| { kind: "error"; message: string };
 
@@ -102,6 +124,9 @@ export class FirstRunWizard extends Container {
 	private menuList: SelectList | undefined;
 	private providerList: SelectList | undefined;
 	private keyInput: Input | undefined;
+	private scanList: SelectList | undefined;
+	private scanRows: ScanRow[] | undefined;
+	private scanStarted = false;
 	/** Paste-input box on the oauth-running screen. Lazily built when the URL arrives. */
 	private pasteInput: Input | undefined;
 	/** Callback handed back from flow.ts to validate + submit a pasted URL. */
@@ -126,6 +151,7 @@ export class FirstRunWizard extends Container {
 		if (typeof this.mode === "object" && (this.mode.kind === "byok-key" || this.mode.kind === "byok-compat")) {
 			return this.keyInput;
 		}
+		if (typeof this.mode === "object" && this.mode.kind === "byok-scan") return this.scanList;
 		if (this.mode === "oauth-running" && this.pasteInput) return this.pasteInput;
 		return undefined;
 	}
@@ -177,6 +203,8 @@ export class FirstRunWizard extends Container {
 			this.addChild(new Text(ansi.dim("↑↓ Enter · Esc to go back"), 1, 1));
 		} else if (typeof this.mode === "object" && this.mode.kind === "byok-key") {
 			this.renderKeyEntry(this.mode.provider);
+		} else if (typeof this.mode === "object" && this.mode.kind === "byok-scan") {
+			this.renderScan();
 		} else if (typeof this.mode === "object" && this.mode.kind === "byok-compat") {
 			this.renderCompatEntry(this.mode);
 		} else if (typeof this.mode === "object" && this.mode.kind === "error") {
@@ -258,6 +286,73 @@ export class FirstRunWizard extends Container {
 		);
 	}
 
+	private renderScan(): void {
+		if (!this.scanRows) {
+			this.addChild(new Text(ansi.bold("Looking for local LLM servers…"), 1, 0));
+			this.addChild(
+				new Text(ansi.dim(`Scanning localhost ports ${SCAN_PORTS.join(", ")} (LM Studio, Ollama, vLLM, …)`), 1, 1),
+			);
+			this.startScan();
+			return;
+		}
+		const rows = this.scanRows;
+		this.addChild(new Text(ansi.bold(rows.length > 0 ? "Found local models:" : "No local LLM servers found."), 1, 0));
+		const items = [
+			...rows.map((row, i) => {
+				const ctx = formatContextWindow(row.contextWindow);
+				return {
+					value: String(i),
+					label: row.model,
+					description: `${row.serverLabel}${ctx ? ` · ${ctx}` : ""} · ${row.baseUrl}`,
+				};
+			}),
+			{ value: "manual", label: "Enter URL manually…", description: "for a remote or unlisted endpoint" },
+		];
+		this.scanList = new SelectList(items, Math.min(8, items.length), selectListTheme);
+		this.scanList.onSelect = (item) => {
+			if (item.value === "manual") {
+				this.setMode({ kind: "byok-compat", step: "url", url: "", model: "" });
+				return;
+			}
+			const row = rows[Number(item.value)];
+			if (row) this.saveCompat(row.baseUrl, row.model, "none", row.contextWindow);
+		};
+		this.scanList.onCancel = () => this.setMode("byok-provider");
+		this.addChild(this.scanList);
+		this.addChild(new Text(ansi.dim("↑↓ Enter · Esc to go back"), 1, 1));
+	}
+
+	private startScan(): void {
+		if (this.scanStarted) return;
+		this.scanStarted = true;
+		void scanLocalEndpoints().then((servers) => {
+			this.scanRows = flattenScan(servers);
+			if (typeof this.mode === "object" && this.mode.kind === "byok-scan") {
+				this.renderMode();
+				this.tui.requestRender();
+			}
+		});
+	}
+
+	private saveCompat(baseUrl: string, model: string, key: string, contextWindow?: number): void {
+		try {
+			this.store.save({
+				// Servers without auth still get a syntactically-valid
+				// bearer; Ollama / LM Studio ignore it entirely.
+				accessToken: key,
+				scopes: [],
+				source: "byok",
+				provider: "openai-compat",
+				baseUrl: baseUrl.replace(/\/+$/, ""),
+				model,
+				contextWindow,
+			});
+			this.onDone();
+		} catch (err) {
+			this.setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+		}
+	}
+
 	private renderCompatEntry(mode: { step: CompatStep; url: string; model: string }): void {
 		const prompt = COMPAT_PROMPTS[mode.step];
 		const stepNum = mode.step === "url" ? 1 : mode.step === "model" ? 2 : 3;
@@ -275,30 +370,16 @@ export class FirstRunWizard extends Container {
 				if (trimmed.length === 0) return;
 				this.setMode({ kind: "byok-compat", step: "key", url: mode.url, model: trimmed });
 			} else {
-				try {
-					this.store.save({
-						// Servers without auth still get a syntactically-valid
-						// bearer; Ollama / LM Studio ignore it entirely.
-						accessToken: trimmed.length > 0 ? trimmed : "none",
-						scopes: [],
-						source: "byok",
-						provider: "openai-compat",
-						baseUrl: mode.url.replace(/\/+$/, ""),
-						model: mode.model,
-					});
-					this.onDone();
-				} catch (err) {
-					this.setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
-				}
+				this.saveCompat(mode.url, mode.model, trimmed.length > 0 ? trimmed : "none");
 			}
 		};
 		input.onEscape = () => {
-			// Step back one field; from the first field, back to the picker.
+			// Step back one field; from the first field, back to the scan list.
 			if (mode.step === "key")
 				this.setMode({ kind: "byok-compat", step: "model", url: mode.url, model: mode.model });
 			else if (mode.step === "model")
 				this.setMode({ kind: "byok-compat", step: "url", url: mode.url, model: mode.model });
-			else this.setMode("byok-provider");
+			else this.setMode({ kind: "byok-scan" });
 		};
 		this.keyInput = input;
 		this.addChild(input);
@@ -334,7 +415,10 @@ export class FirstRunWizard extends Container {
 		const provider = PROVIDER_CHOICES.find((p) => p.id === value);
 		if (!provider) return;
 		if (provider.id === "openai-compat") {
-			this.setMode({ kind: "byok-compat", step: "url", url: "", model: "" });
+			// Re-scan on every entry — a server may have started since last time.
+			this.scanRows = undefined;
+			this.scanStarted = false;
+			this.setMode({ kind: "byok-scan" });
 		} else {
 			this.setMode({ kind: "byok-key", provider });
 		}

@@ -2,6 +2,7 @@ import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CredentialsStore } from "../auth/credentials.js";
 import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
+import { type DiscoveredServer, formatContextWindow, SCAN_PORTS, scanLocalEndpoints } from "../config/local-llm.js";
 import { PixelC } from "./PixelC.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
@@ -42,6 +43,26 @@ const COMPAT_PROMPTS: Record<CompatStep, { title: string; hint: string }> = {
 	key: { title: "API key", hint: "Enter to skip if your server doesn't need one" },
 };
 
+interface ScanRow {
+	serverLabel: string;
+	baseUrl: string;
+	model: string;
+	contextWindow?: number;
+}
+
+/** Cap models shown per server so a big Ollama library doesn't swamp the list. */
+const MAX_MODELS_PER_SERVER = 6;
+
+function flattenScan(servers: DiscoveredServer[]): ScanRow[] {
+	const rows: ScanRow[] = [];
+	for (const s of servers) {
+		for (const m of s.models.slice(0, MAX_MODELS_PER_SERVER)) {
+			rows.push({ serverLabel: s.label, baseUrl: s.baseUrl, model: m.id, contextWindow: m.contextWindow });
+		}
+	}
+	return rows;
+}
+
 interface FirstRunSetupProps {
 	/** Called once a credential has been persisted and config can be re-resolved. */
 	onDone: () => void;
@@ -66,6 +87,7 @@ type Mode =
 	| { kind: "oauth-running" }
 	| { kind: "byok-provider"; cursor: number }
 	| { kind: "byok-key"; provider: ProviderChoice; buffer: string }
+	| { kind: "byok-scan"; rows: ScanRow[] | undefined; cursor: number }
 	| { kind: "byok-compat"; step: CompatStep; url: string; model: string; buffer: string }
 	| { kind: "error"; message: string };
 
@@ -125,6 +147,19 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 		};
 	}, [mode.kind, authBase, credStore, onDone]);
 
+	useEffect(() => {
+		if (mode.kind !== "byok-scan") return;
+		let cancelled = false;
+		(async () => {
+			const servers = await scanLocalEndpoints();
+			if (cancelled) return;
+			setMode((m) => (m.kind === "byok-scan" && !m.rows ? { ...m, rows: flattenScan(servers) } : m));
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [mode.kind]);
+
 	useInput(
 		(input, key) => {
 			if (key.ctrl && input === "c") {
@@ -177,12 +212,34 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 				}
 				return;
 			}
+			if (mode.kind === "byok-scan") {
+				if (key.escape) {
+					setMode({ kind: "byok-provider", cursor: 0 });
+					return;
+				}
+				if (!mode.rows) return; // still scanning — only Esc works
+				const total = mode.rows.length + 1; // +1 for "enter manually"
+				if (key.upArrow || (key.shift && key.tab)) {
+					setMode({ ...mode, cursor: (mode.cursor - 1 + total) % total });
+					return;
+				}
+				if (key.downArrow || key.tab) {
+					setMode({ ...mode, cursor: (mode.cursor + 1) % total });
+					return;
+				}
+				if (key.return) {
+					const row = mode.rows[mode.cursor];
+					if (row) saveCompat(row.baseUrl, row.model, "none", row.contextWindow);
+					else setMode({ kind: "byok-compat", step: "url", url: "", model: "", buffer: "" });
+				}
+				return;
+			}
 			if (mode.kind === "byok-compat") {
 				if (key.escape) {
-					// Step back one field; from the first field, back to the picker.
+					// Step back one field; from the first field, back to the scan list.
 					if (mode.step === "key") setMode({ ...mode, step: "model", buffer: mode.model });
 					else if (mode.step === "model") setMode({ ...mode, step: "url", buffer: mode.url });
-					else setMode({ kind: "byok-provider", cursor: 0 });
+					else setMode({ kind: "byok-scan", rows: undefined, cursor: 0 });
 					return;
 				}
 				if (key.return) {
@@ -197,21 +254,7 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 						setMode({ ...mode, step: "key", model: trimmed, buffer: "" });
 						return;
 					}
-					try {
-						credStore.save({
-							// Servers without auth still get a syntactically-valid
-							// bearer; Ollama / LM Studio ignore it entirely.
-							accessToken: trimmed.length > 0 ? trimmed : "none",
-							scopes: [],
-							source: "byok",
-							provider: "openai-compat",
-							baseUrl: mode.url.replace(/\/+$/, ""),
-							model: mode.model,
-						});
-						onDone();
-					} catch (err) {
-						setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
-					}
+					saveCompat(mode.url, mode.model, trimmed.length > 0 ? trimmed : "none");
 					return;
 				}
 				if (key.backspace || key.delete) {
@@ -303,9 +346,28 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 
 	function pickProvider(provider: ProviderChoice): void {
 		if (provider.id === "openai-compat") {
-			setMode({ kind: "byok-compat", step: "url", url: "", model: "", buffer: "" });
+			setMode({ kind: "byok-scan", rows: undefined, cursor: 0 });
 		} else {
 			setMode({ kind: "byok-key", provider, buffer: "" });
+		}
+	}
+
+	function saveCompat(baseUrl: string, model: string, key: string, contextWindow?: number): void {
+		try {
+			credStore.save({
+				// Servers without auth still get a syntactically-valid
+				// bearer; Ollama / LM Studio ignore it entirely.
+				accessToken: key,
+				scopes: [],
+				source: "byok",
+				provider: "openai-compat",
+				baseUrl: baseUrl.replace(/\/+$/, ""),
+				model,
+				contextWindow,
+			});
+			onDone();
+		} catch (err) {
+			setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
 		}
 	}
 
@@ -433,6 +495,51 @@ function renderBody(
 					<Text dimColor>
 						↑↓ to move · Enter to select · 1–{PROVIDER_CHOICES.length} fast-path · Esc to go back
 					</Text>
+				</Box>
+			</Box>
+		);
+	}
+	if (mode.kind === "byok-scan") {
+		if (!mode.rows) {
+			return (
+				<Box flexDirection="column">
+					<Text bold>Looking for local LLM servers…</Text>
+					<Box marginTop={1}>
+						<Text dimColor>Scanning localhost ports {SCAN_PORTS.join(", ")} (LM Studio, Ollama, vLLM, …)</Text>
+					</Box>
+					<Box marginTop={1}>
+						<Text dimColor>Esc to skip</Text>
+					</Box>
+				</Box>
+			);
+		}
+		const manualSelected = mode.cursor === mode.rows.length;
+		return (
+			<Box flexDirection="column">
+				<Text bold>{mode.rows.length > 0 ? "Found local models:" : "No local LLM servers found."}</Text>
+				<Box flexDirection="column" marginTop={1}>
+					{mode.rows.map((row, i) => {
+						const selected = i === mode.cursor;
+						const ctx = formatContextWindow(row.contextWindow);
+						return (
+							<Text key={`${row.baseUrl}/${row.model}`}>
+								<Text color={selected ? "cyan" : "gray"}>{selected ? "▸ " : "  "}</Text>
+								<Text bold={selected} color={selected ? "white" : undefined}>
+									{row.model}
+								</Text>
+								<Text dimColor>{`  — ${row.serverLabel}${ctx ? ` · ${ctx}` : ""} · ${row.baseUrl}`}</Text>
+							</Text>
+						);
+					})}
+					<Text>
+						<Text color={manualSelected ? "cyan" : "gray"}>{manualSelected ? "▸ " : "  "}</Text>
+						<Text bold={manualSelected} color={manualSelected ? "white" : undefined}>
+							Enter URL manually…
+						</Text>
+					</Text>
+				</Box>
+				<Box marginTop={1}>
+					<Text dimColor>↑↓ to move · Enter to select · Esc to go back</Text>
 				</Box>
 			</Box>
 		);

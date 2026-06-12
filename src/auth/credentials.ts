@@ -47,6 +47,11 @@ export interface Credentials {
 	baseUrl?: string;
 	/** Model id to request from a custom endpoint (`provider === "openai-compat"`). */
 	model?: string;
+	/**
+	 * Context window of the custom-endpoint model, when the wizard's
+	 * local-server scan detected it. Drives the compaction budget.
+	 */
+	contextWindow?: number;
 }
 
 export interface CredentialsStoreOptions {

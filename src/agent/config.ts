@@ -87,6 +87,7 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 				baseUrl: creds.baseUrl,
 				modelId: creds.model ?? "default",
 				apiKey: creds.accessToken,
+				contextWindow: creds.contextWindow,
 			});
 			if (compat) return { ...compat, source: "byok" };
 		} else if (creds.source === "byok" && creds.provider) {
@@ -285,7 +286,12 @@ function guessContextWindow(modelId: string, fallback: number): number {
  * zero it — /cost will report $0 for these runs, which is honest
  * (we don't know the rate) rather than wrong.
  */
-function buildOpenAiCompatConfig(opts: { baseUrl: string; modelId: string; apiKey: string }): ResolvedConfig | null {
+function buildOpenAiCompatConfig(opts: {
+	baseUrl: string;
+	modelId: string;
+	apiKey: string;
+	contextWindow?: number;
+}): ResolvedConfig | null {
 	// groq's llama-3.3-70b-versatile uses "openai-completions" — the
 	// closest match for what MiniMax / Qwen in-house actually serve.
 	const template = getModel("groq", "llama-3.3-70b-versatile") as Model<string> | undefined;
@@ -296,6 +302,10 @@ function buildOpenAiCompatConfig(opts: { baseUrl: string; modelId: string; apiKe
 		name: opts.modelId,
 		baseUrl: opts.baseUrl.replace(/\/+$/, ""),
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		// Detected by the wizard's local-server scan when available — a 32k
+		// local model must not inherit the template's 128k or compaction
+		// would fire far too late.
+		contextWindow: opts.contextWindow ?? template.contextWindow,
 	};
 	return { model, apiKey: opts.apiKey, source: "explicit" };
 }

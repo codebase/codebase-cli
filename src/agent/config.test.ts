@@ -55,6 +55,22 @@ describe("resolveConfig", () => {
 		expect(config.model.baseUrl).toBe("http://localhost:11434/v1");
 	});
 
+	it("a scan-detected context window overrides the template default", () => {
+		credentials.save({
+			accessToken: "none",
+			scopes: [],
+			source: "byok",
+			provider: "openai-compat",
+			baseUrl: "http://localhost:1234/v1",
+			model: "qwen2.5-coder-32b",
+			contextWindow: 32768,
+		});
+
+		const config = resolveConfig({ env: {}, credentials });
+
+		expect(config.model.contextWindow).toBe(32768);
+	});
+
 	it("byok credentials win over env-var auto-detect", () => {
 		credentials.save({
 			accessToken: "sk-or-byok",
