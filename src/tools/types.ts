@@ -1,5 +1,6 @@
 import type { Agent, AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
+import type { CheckpointStore } from "../checkpoint/store.js";
 import type { HookManager } from "../hooks/manager.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { PlanModeStore } from "../plan/store.js";
@@ -25,6 +26,11 @@ export interface ToolContext {
 	/** Registered line-monitors over background shells. Drives push-style
 	 * notifications instead of polling shell_output. */
 	monitors: MonitorStore;
+	/**
+	 * Pre-image snapshots of files the agent mutates, for /rewind.
+	 * Optional so the test harness and read-only subagents can omit it.
+	 */
+	checkpoints?: CheckpointStore;
 	/**
 	 * User-defined hooks. Tools that care about lifecycle events (e.g.
 	 * dispatch_agent → SubagentStart/Stop) reach into this. Optional so

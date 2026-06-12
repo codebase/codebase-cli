@@ -607,9 +607,10 @@ export class App extends Container {
 			}
 			const previousMessages = [...this.messages];
 			this.unsubscribe();
-			// Tear down the old bundle's MCP subprocesses before building the
-			// new one — otherwise a /model switch would leak a server per swap.
+			// Tear down the old bundle's MCP subprocesses + checkpoint blobs
+			// before building the new one — a /model switch must not leak.
 			this.bundle.mcp.dispose();
+			this.bundle.checkpoints.dispose();
 			const next = createAgent({
 				cwd: this.bundle.toolContext.cwd,
 				modelOverride: spec ?? undefined,
@@ -921,6 +922,7 @@ export class App extends Container {
 		this.bgShellPanel.dispose();
 		this.bundle.backgroundShells.killAllSync();
 		this.bundle.mcp.dispose();
+		this.bundle.checkpoints.dispose();
 		this.unsubscribe();
 	}
 }

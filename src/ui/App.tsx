@@ -127,9 +127,9 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	// the autocomplete list picks them up.
 	const [commandsVersion, setCommandsVersion] = useState(0);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: commandsVersion invalidates the memo when late registrations land
 	const commandSuggestions = useMemo(
 		() => registry.list().map((c) => ({ name: c.name, description: c.description })),
-		// biome-ignore lint/correctness/useExhaustiveDependencies: commandsVersion invalidates the memo when late registrations land
 		[registry, commandsVersion],
 	);
 
@@ -205,6 +205,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		return () => {
 			disposed = true;
 			bundle.mcp.dispose();
+			bundle.checkpoints.dispose();
 		};
 	}, [bundle, appendStatus]);
 
@@ -510,9 +511,10 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			} catch {
 				// Persistence failure is non-fatal; the in-session swap still works.
 			}
-			// Tear down the old bundle's MCP subprocesses before rebuilding so
-			// a /model switch doesn't leak a server per swap.
+			// Tear down the old bundle's MCP subprocesses + checkpoint blobs
+			// before rebuilding so a /model switch doesn't leak per swap.
 			bundle.mcp.dispose();
+			bundle.checkpoints.dispose();
 			const next = createAgent({
 				cwd: bundle.toolContext.cwd,
 				modelOverride: spec ?? undefined,

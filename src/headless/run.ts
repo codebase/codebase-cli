@@ -175,6 +175,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		// Terminate MCP server subprocesses so a headless run doesn't leak
 		// children to the parent shell / CI runner.
 		bundle.mcp.dispose();
+		bundle.checkpoints.dispose();
 	}
 
 	const exitCode = aborted ? 130 : errored ? 1 : 0;

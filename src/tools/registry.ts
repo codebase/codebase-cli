@@ -28,6 +28,7 @@ import { createTaskTools } from "./tasks.js";
 import type { ToolContext } from "./types.js";
 import { createWebFetch } from "./web-fetch.js";
 import { createWebSearch } from "./web-search.js";
+import { withCheckpoint } from "./with-checkpoint.js";
 import { createWriteFile } from "./write-file.js";
 
 /**
@@ -66,10 +67,11 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		...createMemoryTools(ctx),
 		createConfig(ctx),
 	];
-	// Wrap every tool so an oversized result is persisted to disk and
-	// replaced in-context with a preview + path. Protects the context
-	// window (and the user's token bill) from an unbounded grep /
-	// read_file / web_fetch. Self-capped tools (shell, ssh) are skipped
-	// inside the wrapper.
-	return tools.map((t) => capToolResult(t));
+	// Two cross-cutting wrappers:
+	//  - withCheckpoint snapshots a file's pre-image before any mutating
+	//    tool touches it, so /rewind can restore prior states.
+	//  - capToolResult persists an oversized result to disk and replaces
+	//    it in-context with a preview + path, protecting the context
+	//    window from an unbounded grep / read_file / web_fetch.
+	return tools.map((t) => capToolResult(withCheckpoint(t, ctx)));
 }

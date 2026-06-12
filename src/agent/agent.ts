@@ -5,6 +5,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import { defaultOAuthConfig } from "../auth/cli.js";
 import { CredentialsStore } from "../auth/credentials.js";
 import { TokenManager } from "../auth/token-manager.js";
+import { CheckpointStore } from "../checkpoint/store.js";
 import { CompactionEngine } from "../compaction/engine.js";
 import { CompactionMonitor } from "../compaction/monitor.js";
 import { getOutputStyle } from "../config/output-styles.js";
@@ -134,6 +135,8 @@ export interface AgentBundle {
 	/** Push-style line monitors over background shells. App subscribes
 	 * here and steers matched lines into the agent as system-reminders. */
 	monitors: MonitorStore;
+	/** Pre-image snapshots of agent file mutations; backs /rewind. */
+	checkpoints: CheckpointStore;
 	/** MCP server manager — configured stdio servers + their bridged tools. */
 	mcp: McpManager;
 	/**
@@ -202,6 +205,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 
 	const backgroundShells = new BackgroundShellStore();
 	const monitors = new MonitorStore(backgroundShells);
+	const checkpoints = new CheckpointStore({ cwd });
 	const toolContext: ToolContext = {
 		cwd,
 		fileStateCache: new FileStateCache(),
@@ -212,6 +216,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		hooks,
 		backgroundShells,
 		monitors,
+		checkpoints,
 		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
 			new Agent({
 				initialState: { model, systemPrompt: subPrompt, tools: subTools },
@@ -519,6 +524,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		resumedMessages: opts.initialMessages ?? resumed?.messages ?? [],
 		backgroundShells: toolContext.backgroundShells,
 		monitors: toolContext.monitors,
+		checkpoints,
 		mcp,
 		connectMcp,
 	};

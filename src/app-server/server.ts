@@ -187,6 +187,7 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 	unsubscribeAgent();
 	unsubscribePerms();
 	bundle.mcp.dispose();
+	bundle.checkpoints.dispose();
 	return 0;
 
 	// ─── command dispatch ──────────────────────────────────────────────
