@@ -146,6 +146,21 @@ describe("CredentialsStore", () => {
 		expect(loaded?.accessToken).toBe("sk-ant-foo");
 	});
 
+	it("openai-compat credentials round-trip with baseUrl + model", () => {
+		store.save({
+			accessToken: "none",
+			scopes: [],
+			source: "byok",
+			provider: "openai-compat",
+			baseUrl: "http://localhost:11434/v1",
+			model: "qwen2.5-coder",
+		});
+		const loaded = store.load();
+		expect(loaded?.provider).toBe("openai-compat");
+		expect(loaded?.baseUrl).toBe("http://localhost:11434/v1");
+		expect(loaded?.model).toBe("qwen2.5-coder");
+	});
+
 	it("byok credentials without a provider field are rejected", () => {
 		require("node:fs").mkdirSync(dataRoot, { recursive: true });
 		require("node:fs").writeFileSync(

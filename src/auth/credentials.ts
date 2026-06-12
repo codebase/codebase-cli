@@ -35,10 +35,18 @@ export interface Credentials {
 	source: CredentialSource;
 	/**
 	 * Set only when `source === "byok"`. Names the pi-ai provider (e.g.
-	 * `anthropic`, `openai`) that owns the key. Determines which baseUrl
-	 * + model registry the agent uses.
+	 * `anthropic`, `openai`) that owns the key, or `openai-compat` for a
+	 * custom Chat Completions endpoint. Determines which baseUrl + model
+	 * registry the agent uses.
 	 */
 	provider?: string;
+	/**
+	 * Custom endpoint URL. Set only when `provider === "openai-compat"` —
+	 * Ollama, LM Studio, vLLM, LiteLLM, any Chat Completions server.
+	 */
+	baseUrl?: string;
+	/** Model id to request from a custom endpoint (`provider === "openai-compat"`). */
+	model?: string;
 }
 
 export interface CredentialsStoreOptions {

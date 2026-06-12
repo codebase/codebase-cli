@@ -37,6 +37,24 @@ describe("resolveConfig", () => {
 		expect(config.model.baseUrl).not.toContain("codebase.design");
 	});
 
+	it("resolves a stored openai-compat endpoint to a synthesized model", () => {
+		credentials.save({
+			accessToken: "none",
+			scopes: [],
+			source: "byok",
+			provider: "openai-compat",
+			baseUrl: "http://localhost:11434/v1",
+			model: "llama3.3:70b",
+		});
+
+		const config = resolveConfig({ env: {}, credentials });
+
+		expect(config.source).toBe("byok");
+		expect(config.apiKey).toBe("none");
+		expect(config.model.id).toBe("llama3.3:70b");
+		expect(config.model.baseUrl).toBe("http://localhost:11434/v1");
+	});
+
 	it("byok credentials win over env-var auto-detect", () => {
 		credentials.save({
 			accessToken: "sk-or-byok",

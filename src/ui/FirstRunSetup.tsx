@@ -23,7 +23,24 @@ const PROVIDER_CHOICES: readonly ProviderChoice[] = [
 	{ id: "deepseek", label: "DeepSeek", hint: "deepseek-chat", keyHint: "" },
 	{ id: "xai", label: "xAI (Grok)", hint: "grok-4", keyHint: "xai-…" },
 	{ id: "cerebras", label: "Cerebras", hint: "fastest inference", keyHint: "" },
+	{
+		id: "openai-compat",
+		label: "OpenAI-compatible endpoint",
+		hint: "Ollama / LM Studio / vLLM / any base URL",
+		keyHint: "",
+	},
 ] as const;
+
+type CompatStep = "url" | "model" | "key";
+
+const COMPAT_PROMPTS: Record<CompatStep, { title: string; hint: string }> = {
+	url: {
+		title: "Endpoint base URL",
+		hint: "e.g. http://localhost:11434/v1 (Ollama) or https://my-proxy.example.com/v1",
+	},
+	model: { title: "Model id", hint: "the model name the server expects, e.g. llama3.3:70b or qwen2.5-coder" },
+	key: { title: "API key", hint: "Enter to skip if your server doesn't need one" },
+};
 
 interface FirstRunSetupProps {
 	/** Called once a credential has been persisted and config can be re-resolved. */
@@ -36,7 +53,11 @@ interface FirstRunSetupProps {
 
 const MENU_OPTIONS = [
 	{ key: "oauth", label: "Login to Codebase", hint: "free credits · Codebase Auto model · curated skills" },
-	{ key: "byok", label: "Bring your own LLM key", hint: "paste an Anthropic / OpenAI / Groq / etc. key" },
+	{
+		key: "byok",
+		label: "Bring your own LLM key",
+		hint: "Anthropic / OpenAI / Groq key, or any OpenAI-compatible endpoint",
+	},
 	{ key: "quit", label: "Quit", hint: "exit the wizard" },
 ] as const;
 
@@ -45,6 +66,7 @@ type Mode =
 	| { kind: "oauth-running" }
 	| { kind: "byok-provider"; cursor: number }
 	| { kind: "byok-key"; provider: ProviderChoice; buffer: string }
+	| { kind: "byok-compat"; step: CompatStep; url: string; model: string; buffer: string }
 	| { kind: "error"; message: string };
 
 interface ManualUrlInfo {
@@ -145,13 +167,59 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 					return;
 				}
 				if (key.return) {
-					setMode({ kind: "byok-key", provider: PROVIDER_CHOICES[mode.cursor], buffer: "" });
+					pickProvider(PROVIDER_CHOICES[mode.cursor]);
 					return;
 				}
 				// Number-key fast-path stays.
 				const idx = Number.parseInt(input, 10) - 1;
 				if (Number.isInteger(idx) && idx >= 0 && idx < PROVIDER_CHOICES.length) {
-					setMode({ kind: "byok-key", provider: PROVIDER_CHOICES[idx], buffer: "" });
+					pickProvider(PROVIDER_CHOICES[idx]);
+				}
+				return;
+			}
+			if (mode.kind === "byok-compat") {
+				if (key.escape) {
+					// Step back one field; from the first field, back to the picker.
+					if (mode.step === "key") setMode({ ...mode, step: "model", buffer: mode.model });
+					else if (mode.step === "model") setMode({ ...mode, step: "url", buffer: mode.url });
+					else setMode({ kind: "byok-provider", cursor: 0 });
+					return;
+				}
+				if (key.return) {
+					const trimmed = mode.buffer.trim();
+					if (mode.step === "url") {
+						if (!/^https?:\/\//.test(trimmed)) return;
+						setMode({ ...mode, step: "model", url: trimmed, buffer: mode.model });
+						return;
+					}
+					if (mode.step === "model") {
+						if (trimmed.length === 0) return;
+						setMode({ ...mode, step: "key", model: trimmed, buffer: "" });
+						return;
+					}
+					try {
+						credStore.save({
+							// Servers without auth still get a syntactically-valid
+							// bearer; Ollama / LM Studio ignore it entirely.
+							accessToken: trimmed.length > 0 ? trimmed : "none",
+							scopes: [],
+							source: "byok",
+							provider: "openai-compat",
+							baseUrl: mode.url.replace(/\/+$/, ""),
+							model: mode.model,
+						});
+						onDone();
+					} catch (err) {
+						setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+					}
+					return;
+				}
+				if (key.backspace || key.delete) {
+					setMode({ ...mode, buffer: mode.buffer.slice(0, -1) });
+					return;
+				}
+				if (input && !key.ctrl && !key.meta) {
+					setMode({ ...mode, buffer: mode.buffer + input });
 				}
 				return;
 			}
@@ -231,6 +299,14 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 		if (choice === "oauth") setMode({ kind: "oauth-running" });
 		else if (choice === "byok") setMode({ kind: "byok-provider", cursor: 0 });
 		else onQuit();
+	}
+
+	function pickProvider(provider: ProviderChoice): void {
+		if (provider.id === "openai-compat") {
+			setMode({ kind: "byok-compat", step: "url", url: "", model: "", buffer: "" });
+		} else {
+			setMode({ kind: "byok-key", provider, buffer: "" });
+		}
 	}
 
 	return (
@@ -357,6 +433,42 @@ function renderBody(
 					<Text dimColor>
 						↑↓ to move · Enter to select · 1–{PROVIDER_CHOICES.length} fast-path · Esc to go back
 					</Text>
+				</Box>
+			</Box>
+		);
+	}
+	if (mode.kind === "byok-compat") {
+		const prompt = COMPAT_PROMPTS[mode.step];
+		const stepNum = mode.step === "url" ? 1 : mode.step === "model" ? 2 : 3;
+		const shown = mode.step === "key" ? "•".repeat(Math.min(mode.buffer.length, 40)) : mode.buffer;
+		return (
+			<Box flexDirection="column">
+				<Text bold>
+					OpenAI-compatible endpoint <Text dimColor>{`· step ${stepNum}/3`}</Text>
+				</Text>
+				{mode.url ? (
+					<Text dimColor>
+						{"  url: "}
+						{mode.url}
+					</Text>
+				) : null}
+				{mode.model ? (
+					<Text dimColor>
+						{"  model: "}
+						{mode.model}
+					</Text>
+				) : null}
+				<Box marginTop={1}>
+					<Text bold>{prompt.title}</Text>
+					<Text dimColor>{`  — ${prompt.hint}`}</Text>
+				</Box>
+				<Box>
+					<Text color="cyan">{"> "}</Text>
+					<Text>{shown}</Text>
+					<Text color="magenta">▎</Text>
+				</Box>
+				<Box marginTop={1}>
+					<Text dimColor>Enter to continue · Esc to go back</Text>
 				</Box>
 			</Box>
 		);

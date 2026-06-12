@@ -79,7 +79,17 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 	const useProxy = env.CODEBASE_DISABLE_PROXY !== "1";
 	const creds = credentials.load();
 	if (creds && !credentials.isExpired(creds)) {
-		if (creds.source === "byok" && creds.provider) {
+		if (creds.source === "byok" && creds.provider === "openai-compat" && creds.baseUrl) {
+			// Custom Chat Completions endpoint saved by the wizard (Ollama,
+			// LM Studio, vLLM, …). Same synthesis as the OPENAI_BASE_URL env
+			// path, but persisted so it survives restarts.
+			const compat = buildOpenAiCompatConfig({
+				baseUrl: creds.baseUrl,
+				modelId: creds.model ?? "default",
+				apiKey: creds.accessToken,
+			});
+			if (compat) return { ...compat, source: "byok" };
+		} else if (creds.source === "byok" && creds.provider) {
 			const byok = buildByokConfig(creds.provider as KnownProvider, creds.accessToken);
 			if (byok) return byok;
 		} else if (useProxy) {

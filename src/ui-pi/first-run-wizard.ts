@@ -22,7 +22,24 @@ const PROVIDER_CHOICES: readonly ProviderChoice[] = [
 	{ id: "deepseek", label: "DeepSeek", hint: "deepseek-chat", keyHint: "" },
 	{ id: "xai", label: "xAI (Grok)", hint: "grok-4", keyHint: "xai-…" },
 	{ id: "cerebras", label: "Cerebras", hint: "fastest inference", keyHint: "" },
+	{
+		id: "openai-compat",
+		label: "OpenAI-compatible endpoint",
+		hint: "Ollama / LM Studio / vLLM / any base URL",
+		keyHint: "",
+	},
 ] as const;
+
+type CompatStep = "url" | "model" | "key";
+
+const COMPAT_PROMPTS: Record<CompatStep, { title: string; hint: string }> = {
+	url: {
+		title: "Endpoint base URL",
+		hint: "e.g. http://localhost:11434/v1 (Ollama) or https://my-proxy.example.com/v1",
+	},
+	model: { title: "Model id", hint: "the model name the server expects, e.g. llama3.3:70b or qwen2.5-coder" },
+	key: { title: "API key", hint: "Enter to skip if your server doesn't need one" },
+};
 
 const MENU_ITEMS = [
 	{
@@ -33,7 +50,7 @@ const MENU_ITEMS = [
 	{
 		value: "byok",
 		label: "Bring your own LLM key",
-		description: "paste an Anthropic / OpenAI / Groq / etc. key",
+		description: "Anthropic / OpenAI / Groq key, or any OpenAI-compatible endpoint",
 	},
 	{ value: "quit", label: "Quit", description: "exit the wizard" },
 ];
@@ -50,6 +67,7 @@ type WizardMode =
 	| "signed-in"
 	| "byok-provider"
 	| { kind: "byok-key"; provider: ProviderChoice }
+	| { kind: "byok-compat"; step: CompatStep; url: string; model: string }
 	| { kind: "error"; message: string };
 
 interface FirstRunWizardOptions {
@@ -105,7 +123,9 @@ export class FirstRunWizard extends Container {
 	getFocusTarget(): Component | undefined {
 		if (this.mode === "menu") return this.menuList;
 		if (this.mode === "byok-provider") return this.providerList;
-		if (typeof this.mode === "object" && this.mode.kind === "byok-key") return this.keyInput;
+		if (typeof this.mode === "object" && (this.mode.kind === "byok-key" || this.mode.kind === "byok-compat")) {
+			return this.keyInput;
+		}
 		if (this.mode === "oauth-running" && this.pasteInput) return this.pasteInput;
 		return undefined;
 	}
@@ -157,6 +177,8 @@ export class FirstRunWizard extends Container {
 			this.addChild(new Text(ansi.dim("↑↓ Enter · Esc to go back"), 1, 1));
 		} else if (typeof this.mode === "object" && this.mode.kind === "byok-key") {
 			this.renderKeyEntry(this.mode.provider);
+		} else if (typeof this.mode === "object" && this.mode.kind === "byok-compat") {
+			this.renderCompatEntry(this.mode);
 		} else if (typeof this.mode === "object" && this.mode.kind === "error") {
 			this.renderError(this.mode.message);
 		}
@@ -236,6 +258,53 @@ export class FirstRunWizard extends Container {
 		);
 	}
 
+	private renderCompatEntry(mode: { step: CompatStep; url: string; model: string }): void {
+		const prompt = COMPAT_PROMPTS[mode.step];
+		const stepNum = mode.step === "url" ? 1 : mode.step === "model" ? 2 : 3;
+		this.addChild(new Text(`${ansi.bold("OpenAI-compatible endpoint")}${ansi.dim(` · step ${stepNum}/3`)}`, 1, 0));
+		if (mode.url) this.addChild(new Text(ansi.dim(`  url: ${mode.url}`), 1, 0));
+		if (mode.model) this.addChild(new Text(ansi.dim(`  model: ${mode.model}`), 1, 0));
+		this.addChild(new Text(`${ansi.bold(prompt.title)}${ansi.dim(`  — ${prompt.hint}`)}`, 1, 1));
+		const input = new Input();
+		input.onSubmit = (value) => {
+			const trimmed = value.trim();
+			if (mode.step === "url") {
+				if (!/^https?:\/\//.test(trimmed)) return;
+				this.setMode({ kind: "byok-compat", step: "model", url: trimmed, model: mode.model });
+			} else if (mode.step === "model") {
+				if (trimmed.length === 0) return;
+				this.setMode({ kind: "byok-compat", step: "key", url: mode.url, model: trimmed });
+			} else {
+				try {
+					this.store.save({
+						// Servers without auth still get a syntactically-valid
+						// bearer; Ollama / LM Studio ignore it entirely.
+						accessToken: trimmed.length > 0 ? trimmed : "none",
+						scopes: [],
+						source: "byok",
+						provider: "openai-compat",
+						baseUrl: mode.url.replace(/\/+$/, ""),
+						model: mode.model,
+					});
+					this.onDone();
+				} catch (err) {
+					this.setMode({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+				}
+			}
+		};
+		input.onEscape = () => {
+			// Step back one field; from the first field, back to the picker.
+			if (mode.step === "key")
+				this.setMode({ kind: "byok-compat", step: "model", url: mode.url, model: mode.model });
+			else if (mode.step === "model")
+				this.setMode({ kind: "byok-compat", step: "url", url: mode.url, model: mode.model });
+			else this.setMode("byok-provider");
+		};
+		this.keyInput = input;
+		this.addChild(input);
+		this.addChild(new Text(ansi.dim("Enter to continue · Esc to go back"), 1, 1));
+	}
+
 	private renderError(message: string): void {
 		this.addChild(new Text(ansi.bold(ansi.red("That didn't work")), 1, 0));
 		this.addChild(new Text(message, 1, 1));
@@ -264,7 +333,11 @@ export class FirstRunWizard extends Container {
 	private handleProviderPick(value: string): void {
 		const provider = PROVIDER_CHOICES.find((p) => p.id === value);
 		if (!provider) return;
-		this.setMode({ kind: "byok-key", provider });
+		if (provider.id === "openai-compat") {
+			this.setMode({ kind: "byok-compat", step: "url", url: "", model: "" });
+		} else {
+			this.setMode({ kind: "byok-key", provider });
+		}
 	}
 
 	private async runOAuth(): Promise<void> {
