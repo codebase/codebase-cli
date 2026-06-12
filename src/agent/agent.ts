@@ -59,6 +59,12 @@ export interface CreateAgentOptions {
 	/** When true, attempt to resume the previous session for this cwd. Default false. */
 	resume?: boolean;
 	/**
+	 * Resume a SPECIFIC session by id (from SessionStore.list()), e.g. via
+	 * the /resume picker. Takes precedence over `resume` and skips the
+	 * model-match check — the user chose this session deliberately.
+	 */
+	sessionId?: string;
+	/**
 	 * When true, every tool call that would prompt the user gets
 	 * auto-approved instead. Set this only when there's no human at
 	 * the terminal — `codebase run --auto-approve …`, bench harnesses,
@@ -202,7 +208,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const compaction = new CompactionEngine({ glue, modelId: model.id, contextWindow: model.contextWindow });
 	const compactionMonitor = new CompactionMonitor();
 	const sessions = new SessionStore({ cwd });
-	const resumed = opts.resume ? sessions.load(model.id) : null;
+	const resumed = opts.sessionId ? sessions.loadById(opts.sessionId) : opts.resume ? sessions.load(model.id) : null;
 
 	const backgroundShells = new BackgroundShellStore();
 	const monitors = new MonitorStore(backgroundShells);

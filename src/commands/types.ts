@@ -29,6 +29,13 @@ export interface CommandContext {
 	 * arrow-navigable overlay, and calls back into switchModel on Enter.
 	 */
 	openModelPicker: () => void;
+	/**
+	 * Swap the live conversation for a previously-saved session (by id from
+	 * SessionStore.list()). Aborts the current turn if active, rebuilds the
+	 * agent seeded with the resumed transcript, and replaces the on-screen
+	 * history.
+	 */
+	switchSession: (sessionId: string) => Promise<void>;
 }
 
 export interface CommandResult {

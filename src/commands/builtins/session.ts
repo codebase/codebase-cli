@@ -69,16 +69,51 @@ export const session: Command = {
 
 export const resume: Command = {
 	name: "resume",
-	description: "Resume a previous session (run with the --resume flag at startup).",
-	handler: (_args, ctx) => {
-		const cwd = ctx.bundle.toolContext.cwd;
-		ctx.emit(
-			"to resume, exit (Ctrl-C) and start with:\n  codebase --resume\n\n" +
-				`session files live at ~/.codebase/sessions/ keyed off this directory (${cwd}).`,
-		);
+	aliases: ["sessions"],
+	description: "List saved sessions for this project; /resume <n> swaps to one in place.",
+	handler: async (args, ctx) => {
+		const summaries = ctx.bundle.sessions.list();
+		const currentId = ctx.bundle.sessions.id;
+
+		if (!args.trim()) {
+			if (summaries.length === 0) {
+				ctx.emit("No saved sessions for this directory yet — they're written after every agent turn.");
+				return { handled: true };
+			}
+			ctx.emit("Saved sessions (newest first):");
+			summaries.forEach((s, i) => {
+				const marker = s.id === currentId ? "▸" : " ";
+				const title = s.title ?? "(untitled)";
+				const age = formatAge(Date.now() - s.updatedAt);
+				ctx.emit(`${marker} ${i + 1}. ${title} — ${age} · ${s.messageCount} messages · ${s.modelId}`);
+			});
+			ctx.emit("Run /resume <n> to swap the conversation in place (current session stays saved).");
+			return { handled: true };
+		}
+
+		const n = Number.parseInt(args.trim(), 10);
+		const picked = Number.isInteger(n) ? summaries[n - 1] : summaries.find((s) => s.id === args.trim());
+		if (!picked) {
+			ctx.emit(`No session "${args.trim()}". Run /resume to list them.`);
+			return { handled: true };
+		}
+		if (picked.id === currentId) {
+			ctx.emit("That's the current session.");
+			return { handled: true };
+		}
+		await ctx.switchSession(picked.id);
 		return { handled: true };
 	},
 };
+
+function formatAge(ms: number): string {
+	const minutes = Math.floor(ms / 60_000);
+	if (minutes < 1) return "just now";
+	if (minutes < 60) return `${minutes}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+	return `${Math.floor(hours / 24)}d ago`;
+}
 
 export const redo: Command = {
 	name: "redo",

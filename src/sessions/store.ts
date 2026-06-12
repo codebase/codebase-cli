@@ -1,11 +1,20 @@
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 
-export const SESSION_MAX_AGE_DAYS = 7;
+export const SESSION_MAX_AGE_DAYS = 30;
 export const SESSION_FORMAT_VERSION = 1;
 
 export interface SessionData {
@@ -18,113 +27,240 @@ export interface SessionData {
 	updatedAt: number;
 }
 
+export interface SessionSummary {
+	id: string;
+	title: string | null;
+	modelId: string;
+	messageCount: number;
+	updatedAt: number;
+}
+
 export interface SessionStoreOptions {
 	cwd: string;
 	dataRoot?: string;
 	maxAgeDays?: number;
+	/** Bind to an existing session id instead of minting a fresh one. */
+	sessionId?: string;
 }
 
 /**
- * Per-cwd session snapshot. Filename is keyed off sha256(cwd)[:8] so we
- * can find prior sessions for the same directory across cli launches.
+ * Per-project session storage: `~/.codebase/sessions/<cwd-hash>/<id>.json`,
+ * one file per session, so starting a new conversation never destroys a
+ * prior one. The store is bound to one session id — a fresh id by
+ * default; load()/loadById() adopt the resumed session's id so subsequent
+ * saves continue that session rather than forking it.
  *
- * load() returns null when no session exists, when the saved session
- * predates `maxAgeDays`, or when the saved model id doesn't match the
- * currently-resolved model — switching models invalidates compaction
- * summaries and tool histories so a fresh start is the safer default.
+ * The pre-multi-session layout was a single `<cwd-hash>.json`; it's
+ * migrated into the directory on first construction.
+ *
+ * load() (auto-resume) returns the newest valid session, requiring a
+ * model-id match — switching models invalidates compaction summaries so
+ * a fresh start is the safer default. loadById() is the explicit-pick
+ * path and skips the model check: the user chose it on purpose.
  */
 export class SessionStore {
 	private readonly cwd: string;
-	private readonly path: string;
+	private readonly dir: string;
 	private readonly maxAgeMs: number;
+	private sessionId: string;
 
 	constructor(options: SessionStoreOptions) {
 		this.cwd = options.cwd;
 		const dataRoot = options.dataRoot ?? join(homedir(), ".codebase");
 		const hash = createHash("sha256").update(this.cwd).digest("hex").slice(0, 8);
-		this.path = join(dataRoot, "sessions", `${hash}.json`);
+		this.dir = join(dataRoot, "sessions", hash);
 		this.maxAgeMs = (options.maxAgeDays ?? SESSION_MAX_AGE_DAYS) * 24 * 60 * 60 * 1000;
+		migrateLegacyFile(join(dataRoot, "sessions", `${hash}.json`), this.dir);
+		this.sessionId = options.sessionId ?? newSessionId();
+	}
+
+	/** The session this store reads/writes. Adopted from the resumed session on load. */
+	get id(): string {
+		return this.sessionId;
 	}
 
 	get filePath(): string {
-		return this.path;
+		return join(this.dir, `${this.sessionId}.json`);
 	}
 
+	/**
+	 * Auto-resume: newest session that matches the model and passes the
+	 * validity checks. Adopts that session's id on success.
+	 */
 	load(modelId: string): SessionData | null {
-		if (!existsSync(this.path)) return null;
+		for (const summary of this.list()) {
+			const data = this.read(summary.id);
+			if (!data) continue;
+			if (data.modelId !== modelId) continue;
+			this.sessionId = summary.id;
+			return data;
+		}
+		return null;
+	}
 
-		let raw: string;
-		try {
-			raw = readFileSync(this.path, "utf8");
-		} catch {
-			return null;
-		}
+	/**
+	 * Explicit resume of a chosen session. No model check — the user
+	 * picked it deliberately. Adopts the id on success.
+	 */
+	loadById(id: string): SessionData | null {
+		if (!SESSION_ID_PATTERN.test(id)) return null;
+		const data = this.read(id);
+		if (!data) return null;
+		this.sessionId = id;
+		return data;
+	}
 
-		let parsed: SessionData;
+	/**
+	 * Every resumable session for this project, newest first. Expired and
+	 * malformed files are pruned as a side effect.
+	 */
+	list(): SessionSummary[] {
+		let files: string[];
 		try {
-			parsed = JSON.parse(raw) as SessionData;
+			files = readdirSync(this.dir).filter((f) => f.endsWith(".json"));
 		} catch {
-			// Malformed: drop the file so we don't trip over it forever.
-			this.clear();
-			return null;
+			return [];
 		}
-
-		if (parsed.formatVersion !== SESSION_FORMAT_VERSION) return null;
-		if (parsed.workDir !== this.cwd) return null;
-		// If the project directory the session belongs to has been deleted /
-		// renamed since the save, refuse to resume rather than re-anchoring
-		// the session to a now-invalid path. The file stays on disk so a
-		// future fix can migrate it intentionally.
-		try {
-			if (!statSync(parsed.workDir).isDirectory()) return null;
-		} catch {
-			return null;
+		const out: SessionSummary[] = [];
+		for (const file of files) {
+			const path = join(this.dir, file);
+			const id = file.slice(0, -".json".length);
+			let parsed: SessionData;
+			try {
+				parsed = JSON.parse(readFileSync(path, "utf8")) as SessionData;
+			} catch {
+				tryUnlink(path); // malformed: drop so we don't trip over it forever
+				continue;
+			}
+			if (parsed.formatVersion !== SESSION_FORMAT_VERSION) continue;
+			if (parsed.workDir !== this.cwd) continue;
+			if (Date.now() - parsed.updatedAt > this.maxAgeMs) {
+				tryUnlink(path);
+				continue;
+			}
+			if (!Array.isArray(parsed.messages) || parsed.messages.length === 0) continue;
+			out.push({
+				id,
+				title: parsed.title,
+				modelId: parsed.modelId,
+				messageCount: parsed.messages.length,
+				updatedAt: parsed.updatedAt,
+			});
 		}
-		if (parsed.modelId !== modelId) return null;
-		if (Date.now() - parsed.updatedAt > this.maxAgeMs) {
-			this.clear();
-			return null;
-		}
-		if (!Array.isArray(parsed.messages) || parsed.messages.length === 0) return null;
-		return parsed;
+		out.sort((a, b) => b.updatedAt - a.updatedAt);
+		return out;
 	}
 
 	save(data: Omit<SessionData, "formatVersion" | "workDir" | "updatedAt">): void {
-		const dir = join(this.path, "..");
-		mkdirSync(dir, { recursive: true });
+		mkdirSync(this.dir, { recursive: true });
 		const payload: SessionData = {
 			formatVersion: SESSION_FORMAT_VERSION,
 			workDir: this.cwd,
 			updatedAt: Date.now(),
 			...data,
+			title: data.title ?? deriveTitle(data.messages),
 		};
-		const tmp = `${this.path}.${randomBytes(4).toString("hex")}.tmp`;
+		const tmp = `${this.filePath}.${randomBytes(4).toString("hex")}.tmp`;
 		try {
 			writeFileSync(tmp, JSON.stringify(payload, null, 2), { mode: 0o600 });
-			renameSync(tmp, this.path);
+			renameSync(tmp, this.filePath);
 		} catch (err) {
-			try {
-				unlinkSync(tmp);
-			} catch {
-				// best effort
-			}
+			tryUnlink(tmp);
 			throw err;
 		}
 	}
 
+	/** Delete the bound session's file. */
 	clear(): boolean {
-		if (!existsSync(this.path)) return false;
-		try {
-			unlinkSync(this.path);
-			return true;
-		} catch {
-			return false;
-		}
+		if (!existsSync(this.filePath)) return false;
+		return tryUnlink(this.filePath);
 	}
 
-	/** Modification time of the persisted session, or null if absent. */
+	/** Modification time of the bound session file, or null if absent. */
 	mtime(): number | null {
-		if (!existsSync(this.path)) return null;
-		return statSync(this.path).mtimeMs;
+		if (!existsSync(this.filePath)) return null;
+		return statSync(this.filePath).mtimeMs;
+	}
+
+	/** Read + validate one session file (everything except the model check). */
+	private read(id: string): SessionData | null {
+		const path = join(this.dir, `${id}.json`);
+		let parsed: SessionData;
+		try {
+			parsed = JSON.parse(readFileSync(path, "utf8")) as SessionData;
+		} catch {
+			return null;
+		}
+		if (parsed.formatVersion !== SESSION_FORMAT_VERSION) return null;
+		if (parsed.workDir !== this.cwd) return null;
+		// If the project directory the session belongs to has been deleted /
+		// renamed since the save, refuse to resume rather than re-anchoring
+		// the session to a now-invalid path.
+		try {
+			if (!statSync(parsed.workDir).isDirectory()) return null;
+		} catch {
+			return null;
+		}
+		if (Date.now() - parsed.updatedAt > this.maxAgeMs) {
+			tryUnlink(path);
+			return null;
+		}
+		if (!Array.isArray(parsed.messages) || parsed.messages.length === 0) return null;
+		return parsed;
+	}
+}
+
+const SESSION_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+function newSessionId(): string {
+	return `s-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
+}
+
+/** First user prompt, cleaned and clipped, as the session's display title. */
+function deriveTitle(messages: readonly AgentMessage[]): string | null {
+	for (const m of messages) {
+		if (m.role !== "user") continue;
+		const raw =
+			typeof m.content === "string"
+				? m.content
+				: Array.isArray(m.content)
+					? m.content
+							.filter(
+								(b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string",
+							)
+							.map((b) => b.text)
+							.join(" ")
+					: "";
+		const cleaned = raw
+			.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+			.replace(/\s+/g, " ")
+			.trim();
+		if (!cleaned) continue;
+		return cleaned.length > 64 ? `${cleaned.slice(0, 63)}…` : cleaned;
+	}
+	return null;
+}
+
+/** Move the pre-multi-session single file into the per-project directory. */
+function migrateLegacyFile(legacyPath: string, dir: string): void {
+	try {
+		if (!statSync(legacyPath).isFile()) return;
+	} catch {
+		return;
+	}
+	try {
+		mkdirSync(dir, { recursive: true });
+		renameSync(legacyPath, join(dir, `${newSessionId()}.json`));
+	} catch {
+		// Racing another instance or unwritable dir — leave the legacy file.
+	}
+}
+
+function tryUnlink(path: string): boolean {
+	try {
+		unlinkSync(path);
+		return true;
+	} catch {
+		return false;
 	}
 }

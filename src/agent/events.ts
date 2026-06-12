@@ -10,7 +10,9 @@ export type Action =
 	| { type: "error"; message: string }
 	| { type: "reset" }
 	/** Mid-session model swap. Keeps the transcript, refreshes model + clears agent-specific bits. */
-	| { type: "model-switched"; model: ChatState["model"] };
+	| { type: "model-switched"; model: ChatState["model"] }
+	/** /resume swap: replace the transcript with the resumed session's. */
+	| { type: "session-switched"; model: ChatState["model"]; messages: AgentMessage[] };
 
 export function initialState(model: ChatState["model"], messages: AgentMessage[] = []): ChatState {
 	return {
@@ -66,6 +68,9 @@ export function reducer(state: ChatState, action: Action): ChatState {
 
 		case "reset":
 			return initialState(state.model);
+
+		case "session-switched":
+			return initialState(action.model, action.messages);
 
 		case "model-switched":
 			return {

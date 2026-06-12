@@ -341,6 +341,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 				registry,
 				switchModel,
 				openModelPicker: () => setModelPickerOpen(true),
+				switchSession,
 			});
 			if (result.handled) return;
 		}
@@ -531,6 +532,27 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			// `bundle`, so swapping it re-runs that effect automatically.
 		} catch (err) {
 			appendStatus(`model switch failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	};
+
+	const switchSession = async (sessionId: string): Promise<void> => {
+		try {
+			if (bundle.agent.signal && !bundle.agent.signal.aborted) {
+				bundle.agent.abort();
+			}
+			bundle.mcp.dispose();
+			bundle.checkpoints.dispose();
+			const next = createAgent({ cwd: bundle.toolContext.cwd, resume: true, sessionId });
+			setBundle(next);
+			dispatch({
+				type: "session-switched",
+				model: { provider: next.model.provider, id: next.model.id, name: next.model.name },
+				messages: next.resumedMessages,
+			});
+			const when = next.resumedFrom ? new Date(next.resumedFrom.updatedAt).toLocaleString() : "unknown time";
+			appendStatus(`Resumed session from ${when} (${next.resumedMessages.length} messages).`);
+		} catch (err) {
+			appendStatus(`session switch failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	};
 

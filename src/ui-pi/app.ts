@@ -536,6 +536,7 @@ export class App extends Container {
 			openModelPicker: () => {
 				void this.openModelPicker();
 			},
+			switchSession: (sessionId) => this.switchSession(sessionId),
 		});
 		if (!result.handled) {
 			this.statusBar.note(`unknown command: ${text.split(/\s/)[0]}`);
@@ -617,64 +618,97 @@ export class App extends Container {
 				initialMessages: previousMessages,
 				resume: false,
 			});
-			this.bundle = next;
-			// Re-connect MCP on the fresh bundle so its tools are available
-			// on the new model too. Fire-and-forget; status notes surface as
-			// servers come up.
-			next
-				.connectMcp()
-				.then(() => this.tui?.requestRender())
-				.catch(() => undefined);
-			// Same async handler pattern as the constructor — needed so the
-			// event loop can yield between events, otherwise a burst of
-			// agent events drains the microtask queue and renders/spinners
-			// stall until the user presses a key.
-			this.unsubscribe = this.bundle.subscribe(async (event) => {
-				debugLog(`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`);
-				this.handleAgentEvent(event);
-			});
-			this.statusBar.setModelName(next.model.name);
+			this.adoptBundle(next);
 			this.statusBar.note(`Switched to ${next.model.name} (${next.model.provider}/${next.model.id}).`);
-			// Re-bind every bundle-scoped store: compaction monitor, tasks,
-			// and background shells all changed reference when createAgent
-			// produced a fresh bundle.
-			this.compactionBanner.rebind(next.compactionMonitor);
-			this.taskPanel.rebind(next.toolContext.tasks);
-			this.bgShellPanel.rebind(next.backgroundShells);
-			// Permissions + userQuery stores are also bundle-scoped, re-subscribe.
-			this.removePermSubscription?.();
-			this.removeUserQuerySubscription?.();
-			this.removePermSubscription = this.bundle.permissions.subscribe((req) => {
-				if (req) this.showPermissionOverlay(req);
-				else this.hidePermissionOverlay();
-				this.tui?.requestRender();
-			});
-			this.removeUserQuerySubscription = this.bundle.userQueries.subscribe((q) => {
-				if (q) this.showUserQueryOverlay(q);
-				else this.hideUserQueryOverlay();
-				this.tui?.requestRender();
-			});
-			// Re-bind the bg-shell exit notifier against the new bundle.
-			// Reset the prev-status tracker so a fresh bundle gets clean
-			// transitions instead of carrying state from the prior agent.
-			this.removeBgShellSubscription?.();
-			this.bgShellPrevStatus = new Map();
-			this.removeBgShellSubscription = this.bundle.backgroundShells.subscribe((shells) => {
-				for (const s of shells) {
-					const prev = this.bgShellPrevStatus.get(s.id);
-					this.bgShellPrevStatus.set(s.id, s.status);
-					if (prev !== "running" || s.status === "running") continue;
-					const summary =
-						s.status === "killed"
-							? `(killed${s.signal ? ` ${s.signal}` : ""})`
-							: `(exit code ${s.exitCode ?? "?"})`;
-					this.statusBar.note(`↪ Background shell ${s.id} ${summary}: ${s.command}`);
-				}
-				this.tui?.requestRender();
-			});
 		} catch (err) {
 			this.statusBar.note(`model switch failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
+	}
+
+	private async switchSession(sessionId: string): Promise<void> {
+		try {
+			if (this.bundle.agent.signal && !this.bundle.agent.signal.aborted) {
+				try {
+					this.bundle.agent.abort();
+				} catch {
+					// Already done; not a problem.
+				}
+			}
+			this.unsubscribe();
+			this.bundle.mcp.dispose();
+			this.bundle.checkpoints.dispose();
+			const next = createAgent({ cwd: this.bundle.toolContext.cwd, resume: true, sessionId });
+			this.adoptBundle(next);
+			// Replace the on-screen transcript with the resumed session's.
+			this.transcript.clear();
+			this.messages.length = 0;
+			this.messages.push(...next.resumedMessages);
+			for (const m of next.resumedMessages) this.transcript.appendMessage(m);
+			const when = next.resumedFrom ? new Date(next.resumedFrom.updatedAt).toLocaleString() : "unknown time";
+			this.statusBar.note(`Resumed session from ${when} (${next.resumedMessages.length} messages).`);
+			this.tui?.requestRender();
+		} catch (err) {
+			this.statusBar.note(`session switch failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	/**
+	 * Swap in a freshly-built bundle: reconnect MCP, re-subscribe agent
+	 * events, and re-bind every bundle-scoped store/panel. Shared by
+	 * /model and /resume swaps.
+	 */
+	private adoptBundle(next: AgentBundle): void {
+		this.bundle = next;
+		// Re-connect MCP on the fresh bundle so its tools are available
+		// again. Fire-and-forget; status notes surface as servers come up.
+		next
+			.connectMcp()
+			.then(() => this.tui?.requestRender())
+			.catch(() => undefined);
+		// Same async handler pattern as the constructor — needed so the
+		// event loop can yield between events, otherwise a burst of
+		// agent events drains the microtask queue and renders/spinners
+		// stall until the user presses a key.
+		this.unsubscribe = this.bundle.subscribe(async (event) => {
+			debugLog(`event=${event.type} tui=${!!this.tui} busy=${this.busy} spinnerTimer=${!!this.spinnerTimer}`);
+			this.handleAgentEvent(event);
+		});
+		this.statusBar.setModelName(next.model.name);
+		// Re-bind every bundle-scoped store: compaction monitor, tasks,
+		// and background shells all changed reference when createAgent
+		// produced a fresh bundle.
+		this.compactionBanner.rebind(next.compactionMonitor);
+		this.taskPanel.rebind(next.toolContext.tasks);
+		this.bgShellPanel.rebind(next.backgroundShells);
+		// Permissions + userQuery stores are also bundle-scoped, re-subscribe.
+		this.removePermSubscription?.();
+		this.removeUserQuerySubscription?.();
+		this.removePermSubscription = this.bundle.permissions.subscribe((req) => {
+			if (req) this.showPermissionOverlay(req);
+			else this.hidePermissionOverlay();
+			this.tui?.requestRender();
+		});
+		this.removeUserQuerySubscription = this.bundle.userQueries.subscribe((q) => {
+			if (q) this.showUserQueryOverlay(q);
+			else this.hideUserQueryOverlay();
+			this.tui?.requestRender();
+		});
+		// Re-bind the bg-shell exit notifier against the new bundle.
+		// Reset the prev-status tracker so a fresh bundle gets clean
+		// transitions instead of carrying state from the prior agent.
+		this.removeBgShellSubscription?.();
+		this.bgShellPrevStatus = new Map();
+		this.removeBgShellSubscription = this.bundle.backgroundShells.subscribe((shells) => {
+			for (const s of shells) {
+				const prev = this.bgShellPrevStatus.get(s.id);
+				this.bgShellPrevStatus.set(s.id, s.status);
+				if (prev !== "running" || s.status === "running") continue;
+				const summary =
+					s.status === "killed" ? `(killed${s.signal ? ` ${s.signal}` : ""})` : `(exit code ${s.exitCode ?? "?"})`;
+				this.statusBar.note(`↪ Background shell ${s.id} ${summary}: ${s.command}`);
+			}
+			this.tui?.requestRender();
+		});
 	}
 
 	private buildChatStateShadow(): ChatState {
