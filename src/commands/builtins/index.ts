@@ -3,6 +3,8 @@ import { agents } from "./agents.js";
 import { login, logout } from "./auth.js";
 import { copy } from "./copy.js";
 import { cost } from "./cost.js";
+import { doctor } from "./doctor.js";
+import { exportCmd } from "./export.js";
 import { context, debug, help, pwd, whoami } from "./info.js";
 import { init } from "./init.js";
 import { mcp } from "./mcp.js";
@@ -27,6 +29,8 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	outputStyleCmd,
 	whoami,
 	copy,
+	exportCmd,
+	doctor,
 	diff,
 	commit,
 	review,
