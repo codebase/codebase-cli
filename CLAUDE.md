@@ -179,15 +179,70 @@ A few load-bearing decisions you should know going in:
   See `src/compaction/`.
 - **Plain `npm i -g`** distribution. `tsc` only, no bundler.
 
-## Recognized project files
+## Recognized instruction files
 
-The CLI auto-loads these from the project root and injects them into
-the system prompt:
+Instruction files layer (lowest → highest specificity, all included):
 
-- `AGENTS.md`
-- `CLAUDE.md`
-- `CODEX.md`
-- `.cursorrules`
+1. **User** — first of `~/.codebase/AGENTS.md`, `~/.codebase/CLAUDE.md`
+2. **Project** — first of `AGENTS.md` / `CLAUDE.md` / `CODEX.md` /
+   `.cursorrules` at the cwd root
+3. **Rules** — every `.md` in `<cwd>/.codebase/rules/`, sorted by name
+4. **Local** — first of `AGENTS.local.md` / `CLAUDE.local.md`
+   (personal, gitignored overrides)
+
+Markdown layers support `@path` imports — `@./docs/api.md`,
+`@~/notes/style.md`, `@/abs/path.md` tokens inline the referenced file
+(recursive, cycle-safe, ignored inside fenced code blocks and when the
+path doesn't resolve to a readable text file).
+
+## Skills (custom slash commands)
+
+Markdown files in `~/.codebase/skills/` (user) or
+`<cwd>/.codebase/skills/` (project, wins on id clash) register as
+`/<id>` commands:
+
+```markdown
+---
+description: Refactor the named file for performance.
+---
+Profile and optimize $ARGUMENTS. Measure before and after.
+```
+
+`$ARGUMENTS` is replaced with whatever follows the command; without the
+placeholder, args are appended. Built-in commands always win on name
+collisions. `/skills` lists what's loaded.
+
+## Checkpointing + /rewind
+
+Every `write_file` / `edit_file` / `multi_edit` / `notebook_edit`
+snapshots the target's exact prior bytes before mutating (subagent edits
+included). `/rewind` lists the points; `/rewind <n>` restores every file
+touched at-or-after #n — overwrites get their old content back, created
+files are deleted. Conversation history is not rewound. Pre-image blobs
+live under `~/.codebase/checkpoints/<run>/`, removed on exit.
+
+## Subagent types
+
+`dispatch_agent` takes `agent_type`:
+
+- **explore** (default) — read-only investigator
+- **general** — can edit files, run shell, commit
+- **custom** — markdown in `~/.codebase/agents/*.md` or
+  `<cwd>/.codebase/agents/*.md` (project wins; builtins not overridable):
+
+```markdown
+---
+description: Reviews changed code for security issues.
+tools: read_file, grep, glob, git_diff
+---
+You are a security reviewer. Cite file:line for every finding.
+```
+
+Subagent tool calls go through the same plan-mode gate, permission
+prompts, and hooks as the main loop. `isolation: "worktree"` gives a
+subagent its own git worktree (auto-removed if left clean, kept and
+reported otherwise) so parallel writers can't collide. `/agents` lists
+the available types.
 
 ## Output styles
 
@@ -442,11 +497,13 @@ is reached. The background shell itself keeps running until
 ## MCP (Model Context Protocol)
 
 Connect external tool servers (filesystem, Postgres, git, fetch, …)
-without us writing each integration. v1 supports **stdio** servers;
-remote HTTP/SSE is a planned follow-up. No SDK dependency — the client
-is a hand-rolled newline-delimited JSON-RPC 2.0 stdio client
-(`src/mcp/`), consistent with our minimal-deps tenet and the
-app-server's existing JSON-RPC pattern.
+without us writing each integration. Two transports: **stdio**
+(spawned subprocess, newline-delimited JSON-RPC 2.0) and **remote
+Streamable HTTP** (JSON-RPC over POST with SSE-or-JSON responses,
+session-id continuity, OAuth 2.1 with dynamic client registration and
+silent refresh — per-server tokens persist 0600 at
+`~/.codebase/mcp-credentials.json`). No SDK dependency — both clients
+are hand-rolled (`src/mcp/`), consistent with our minimal-deps tenet.
 
 Configure in `~/.codebase/mcp.json` (user) or `<cwd>/.codebase/mcp.json`
 (project, wins on name clash) — the de-facto `mcpServers` schema so
@@ -463,10 +520,18 @@ existing Claude Desktop / Cursor configs port over:
       "command": "uvx",
       "args": ["mcp-server-postgres"],
       "env": { "DATABASE_URL": "postgres://…" }
+    },
+    "remote": {
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
     }
   }
 }
 ```
+
+Remote servers with static auth use `headers`; servers that gate on
+OAuth self-authorize on first connect (browser flow; the URL is printed
+for headless sessions) and re-auth automatically on a 401.
 
 Servers connect after launch (async subprocess spawn + handshake);
 their tools splice into the live agent namespaced as
@@ -478,6 +543,5 @@ permission prompts. Lifecycle: connected on mount, re-connected on a
 
 ## In-flight features
 
-- **Skills**: bundled + platform-fetched skills work; local
-  user skills (`~/.codebase/skills/*.md`) coming.
-- **MCP remote transport**: HTTP/SSE servers + OAuth — stdio ships now.
+- **Platform skills**: OAuth-fetched skills from codebase.foundation —
+  the loader exists; wiring is gated on a stable endpoint contract.
