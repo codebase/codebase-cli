@@ -1,0 +1,39 @@
+name: Promote dist-tag
+
+# Flip the npm `latest` dist-tag to an already-published version without
+# cutting a new release: push a tag named promote-latest-v<version>, e.g.
+#
+#   git tag promote-latest-v2.0.0-pre.67 && git push origin promote-latest-v2.0.0-pre.67
+#
+# Uses the same NPM_TOKEN as release.yml. The version must already exist
+# on the registry — this never publishes, only re-points the tag.
+
+on:
+  push:
+    tags:
+      - "promote-latest-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Point latest at the tagged version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org/"
+
+      - name: Verify the version exists on npm
+        run: |
+          VERSION="${GITHUB_REF_NAME#promote-latest-v}"
+          npm view "codebase-cli@$VERSION" version
+
+      - name: Re-point latest
+        run: |
+          VERSION="${GITHUB_REF_NAME#promote-latest-v}"
+          npm dist-tag add "codebase-cli@$VERSION" latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
