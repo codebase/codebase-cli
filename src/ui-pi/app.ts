@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
+import { generateSuggestion } from "../agent/prompt-suggestion.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
@@ -32,6 +33,7 @@ import { HistorySearchOverlay } from "./history-search-overlay.js";
 import { buildMessageBlocks, MessageView } from "./message-view.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
 import { PermissionOverlay } from "./permission-overlay.js";
+import { SuggestionLine } from "./suggestion-line.js";
 import { TaskPanel } from "./task-panel.js";
 import { ansi, editorTheme, roleColor } from "./theme.js";
 import { LiveToolPanel } from "./tool-panel-live.js";
@@ -93,6 +95,10 @@ export class App extends Container {
 	/** Tracks bg-shell status transitions so we only notify the model once per exit. */
 	private bgShellPrevStatus = new Map<string, string>();
 	private removeBgShellSubscription: (() => void) | undefined;
+	/** Ghost prompt suggestion shown above the editor when the agent is idle. */
+	private readonly suggestionLine = new SuggestionLine();
+	private suggestionTimer: NodeJS.Timeout | undefined;
+	private suggestionAbort: AbortController | undefined;
 
 	constructor() {
 		super();
@@ -138,6 +144,7 @@ export class App extends Container {
 		this.addChild(this.contextWarning);
 		this.addChild(this.liveToolPanel);
 		this.addChild(this.bgShellPanel);
+		this.addChild(this.suggestionLine);
 		this.addChild(this.statusBar);
 
 		// Async handler so the event loop can yield between events — pi-tui's
@@ -313,7 +320,53 @@ export class App extends Container {
 		return this.exitPromise;
 	}
 
+	/**
+	 * Forecast the user's next prompt once the agent settles. 500ms
+	 * debounce lets idle stabilize; any new activity cancels the in-flight
+	 * call so a stale suggestion can't surface mid-turn. Same generator
+	 * and env opt-out as the ink UI.
+	 */
+	private scheduleSuggestion(): void {
+		this.cancelSuggestion();
+		if (process.env.CODEBASE_NO_SUGGESTIONS === "1") return;
+		if (this.busy || this.messages.length < 2) return;
+		const ac = new AbortController();
+		this.suggestionAbort = ac;
+		this.suggestionTimer = setTimeout(() => {
+			void generateSuggestion(this.bundle, { signal: ac.signal })
+				.then((text) => {
+					if (ac.signal.aborted || !text || this.busy) return;
+					this.suggestionLine.set(text);
+					this.tui?.requestRender();
+				})
+				.catch(() => undefined);
+		}, 500);
+	}
+
+	private cancelSuggestion(): void {
+		if (this.suggestionTimer) clearTimeout(this.suggestionTimer);
+		this.suggestionTimer = undefined;
+		this.suggestionAbort?.abort();
+		this.suggestionAbort = undefined;
+		if (this.suggestionLine.get()) {
+			this.suggestionLine.set(undefined);
+			this.tui?.requestRender();
+		}
+	}
+
 	private handleGlobalInput(data: string): { consume?: boolean } | undefined {
+		// Ghost suggestion: Tab on an empty editor accepts it; any other
+		// keystroke dismisses it (and still reaches the editor).
+		const ghost = this.suggestionLine.get();
+		if (ghost) {
+			if (data === "\t" && this.inputBar && this.inputBar.getText().length === 0) {
+				this.cancelSuggestion();
+				this.inputBar.setText(ghost);
+				this.tui?.requestRender();
+				return { consume: true };
+			}
+			this.cancelSuggestion();
+		}
 		// Ctrl-C: first press aborts the agent if busy + arms a 1s exit
 		// window; second press within that window exits. We mark consume
 		// only when we want to suppress the keystroke from reaching the
@@ -853,6 +906,7 @@ export class App extends Container {
 		debugLog(`event=${event.type}`);
 		switch (event.type) {
 			case "agent_start":
+				this.cancelSuggestion();
 				this.busy = true;
 				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
@@ -949,6 +1003,7 @@ export class App extends Container {
 				break;
 			case "agent_end":
 				this.busy = false;
+				this.scheduleSuggestion();
 				this.status = "idle";
 				this.statusBar.setStatus("idle");
 				this.stopRateSampling();

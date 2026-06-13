@@ -82,6 +82,22 @@ const PROVIDER_ITEMS = PROVIDER_CHOICES.map((p) => ({
 	description: p.hint,
 }));
 
+/**
+ * Input that renders bullets instead of the typed value — API keys
+ * shouldn't sit on screen in plaintext while the user pastes them.
+ * Editing state (cursor, undo, kill ring) is inherited; only the
+ * rendering differs.
+ */
+class MaskedInput extends Input {
+	override render(width: number): string[] {
+		const prompt = "> ";
+		const len = [...this.getValue()].length;
+		const max = Math.max(0, width - prompt.length - 1);
+		const masked = "•".repeat(Math.min(len, max));
+		return [`${prompt}${masked}${this.focused ? "▎" : ""}`];
+	}
+}
+
 type WizardMode =
 	| "menu"
 	| "oauth-running"
@@ -258,11 +274,7 @@ export class FirstRunWizard extends Container {
 				0,
 			),
 		);
-		const input = new Input();
-		// Hide the key as it's typed — Input doesn't have a masked mode, so
-		// we hook setValue/getValue: pi-tui's Input doesn't expose a mask
-		// API today, so we fall back to plain echo. Users will need to
-		// trust their screen for the seconds it takes to paste.
+		const input = new MaskedInput();
 		input.onSubmit = (value) => {
 			const trimmed = value.trim();
 			if (trimmed.length === 0) return;
@@ -360,7 +372,7 @@ export class FirstRunWizard extends Container {
 		if (mode.url) this.addChild(new Text(ansi.dim(`  url: ${mode.url}`), 1, 0));
 		if (mode.model) this.addChild(new Text(ansi.dim(`  model: ${mode.model}`), 1, 0));
 		this.addChild(new Text(`${ansi.bold(prompt.title)}${ansi.dim(`  — ${prompt.hint}`)}`, 1, 1));
-		const input = new Input();
+		const input = mode.step === "key" ? new MaskedInput() : new Input();
 		input.onSubmit = (value) => {
 			const trimmed = value.trim();
 			if (mode.step === "url") {
