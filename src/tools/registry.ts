@@ -19,6 +19,7 @@ import { createMonitorStop } from "./monitor-stop.js";
 import { createMultiEdit } from "./multi-edit.js";
 import { createNotebookEdit } from "./notebook-edit.js";
 import { createPlanModeTools } from "./plan-mode.js";
+import { createPresentCopy } from "./present-copy.js";
 import { createReadFile } from "./read-file.js";
 import { createShell } from "./shell.js";
 import { createShellKill } from "./shell-kill.js";
@@ -59,6 +60,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createEnterWorktree(ctx),
 		createExitWorktree(ctx),
 		createAskUser(ctx),
+		createPresentCopy(),
 		...createPlanModeTools(ctx),
 		createWebFetch(ctx),
 		createWebSearch(ctx),

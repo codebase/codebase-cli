@@ -119,6 +119,9 @@ const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
 	"read_memory",
 	// `config` is read-only.
 	"config",
+	// present_copy only surfaces a click-to-copy box in the UI — no fs,
+	// shell, or network. Prompting for it would be pure friction.
+	"present_copy",
 ]);
 
 export interface PermissionStoreOptions {
