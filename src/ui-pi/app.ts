@@ -1,6 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import {
 	type AutocompleteItem,
 	CombinedAutocompleteProvider,
@@ -24,6 +25,7 @@ import { runPlanFlow } from "../plan/run-flow.js";
 import type { ChatState, ToolExecution } from "../types.js";
 import { EMPTY_USAGE } from "../types.js";
 import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js";
+import { type ClipboardImage, readClipboardImage } from "../ui/clipboard-image.js";
 import { HistoryStore } from "../ui/history-store.js";
 import { notifyTurnComplete } from "../ui/notify.js";
 import { runShellEscape } from "../ui/shell-escape.js";
@@ -109,6 +111,8 @@ export class App extends Container {
 	/** Keyboard copy mode: registry of transcript copy boxes + the Ctrl-O picker. */
 	private readonly copyRegistry = new CopyRegistry();
 	private copyPickerOverlay: { handle: OverlayHandle; component: CopyPickerOverlay } | undefined;
+	/** Images pulled off the clipboard with Ctrl-V, attached to the next prompt. */
+	private pendingImages: ClipboardImage[] = [];
 
 	constructor() {
 		super();
@@ -369,6 +373,23 @@ export class App extends Container {
 		this.tui?.requestRender();
 	}
 
+	/** Pull an image off the clipboard and stage it for the next prompt. */
+	private async attachClipboardImage(): Promise<void> {
+		try {
+			const image = await readClipboardImage();
+			if (!image) {
+				this.statusBar.note("No image on the clipboard (copy one first; needs pngpaste / wl-paste / xclip).");
+			} else {
+				this.pendingImages.push(image);
+				const kb = Math.round((image.data.length * 3) / 4 / 1024);
+				this.statusBar.note(`📎 image attached (${kb} KB) — send a message to include it.`);
+			}
+		} catch {
+			this.statusBar.note("Couldn't read the clipboard image.");
+		}
+		this.tui?.requestRender();
+	}
+
 	/** Dynamic terminal title: cwd basename + a ● marker while a turn runs. */
 	private setTitle(working: boolean): void {
 		const dir = basename(this.bundle.toolContext.cwd) || "codebase";
@@ -421,6 +442,12 @@ export class App extends Container {
 			!this.historySearchOverlay
 		) {
 			this.showCopyPickerOverlay();
+			return { consume: true };
+		}
+		// Ctrl-V attaches an image from the system clipboard to the next
+		// prompt (text paste arrives via bracketed paste, not Ctrl-V).
+		if (data === "\x16" && this.inputBar) {
+			void this.attachClipboardImage();
 			return { consume: true };
 		}
 		// Ghost suggestion: Tab on an empty editor accepts it; any other
@@ -534,7 +561,8 @@ export class App extends Container {
 
 	private async handleSubmitInner(text: string): Promise<void> {
 		const trimmed = text.trim();
-		if (!trimmed) return;
+		// Allow an image-only submit (Ctrl-V then Enter with no text).
+		if (!trimmed && this.pendingImages.length === 0) return;
 
 		// Slash commands and `!cmd` shell escapes bypass the agent and the
 		// type-ahead queue. They run immediately so the user never has to
@@ -558,6 +586,10 @@ export class App extends Container {
 		// Claude-Code "type while it works" behavior. The message also lands
 		// in the transcript so the user sees what they steered with.
 		if (this.busy) {
+			if (!trimmed) {
+				this.statusBar.note("Finish the current turn before sending an image.");
+				return;
+			}
 			const userMsg: AgentMessage = { role: "user", content: trimmed, timestamp: Date.now() };
 			this.messages.push(userMsg);
 			this.transcript.appendUserMessage(trimmed);
@@ -585,10 +617,12 @@ export class App extends Container {
 			this.statusBar.note(`Attached: ${attachments.map((a) => a.relPath).join(", ")}`);
 		}
 
-		const userMsg: AgentMessage = { role: "user", content: trimmed, timestamp: Date.now() };
+		const imageCount = this.pendingImages.length;
+		const display = trimmed || (imageCount > 0 ? `📎 ${imageCount} image${imageCount === 1 ? "" : "s"}` : "");
+		const userMsg: AgentMessage = { role: "user", content: display, timestamp: Date.now() };
 		this.messages.push(userMsg);
-		this.transcript.appendUserMessage(trimmed);
-		this.persistHistory(trimmed);
+		this.transcript.appendUserMessage(display);
+		if (trimmed) this.persistHistory(trimmed);
 
 		// Glue-router classification: plan-style requests run through the
 		// plan flow (Q&A → reviewable plan → agent); everything else
@@ -631,8 +665,11 @@ export class App extends Container {
 		// stderr as a status-bar note. A real error (agent throws before
 		// reaching agent_start) surfaces as an ErrorCard — otherwise the
 		// user just sees their prompt land with no response.
+		// Attach + clear any clipboard images staged with Ctrl-V.
+		const images = this.pendingImages.length > 0 ? this.pendingImages : undefined;
+		this.pendingImages = [];
 		this.bundle
-			.submitUserPrompt(promptText)
+			.submitUserPrompt(promptText, images)
 			.then((result) => {
 				if (!result.submitted && result.reason) {
 					this.statusBar.note(`Prompt blocked by hook: ${result.reason}`);

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import { defaultOAuthConfig } from "../auth/cli.js";
 import { CredentialsStore } from "../auth/credentials.js";
 import { TokenManager } from "../auth/token-manager.js";
@@ -124,7 +124,10 @@ export interface AgentBundle {
 	 * veto. Callers that originate prompts from real user input should use
 	 * this instead of `agent.prompt()` directly.
 	 */
-	submitUserPrompt: (text: string) => Promise<{ submitted: boolean; reason?: string; error?: string }>;
+	submitUserPrompt: (
+		text: string,
+		images?: ImageContent[],
+	) => Promise<{ submitted: boolean; reason?: string; error?: string }>;
 	/**
 	 * Set when `--resume` actually loaded a prior session, with its
 	 * timestamp + message count so the welcome banner can say
@@ -467,7 +470,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	 * accepted the prompt. The agent's own turn lifecycle still emits
 	 * events on bundle.subscribe.
 	 */
-	const submitUserPrompt = async (text: string): Promise<{ submitted: boolean; reason?: string; error?: string }> => {
+	const submitUserPrompt = async (
+		text: string,
+		images?: ImageContent[],
+	): Promise<{ submitted: boolean; reason?: string; error?: string }> => {
 		const outcome = await hooks.dispatch("UserPromptSubmit", {
 			event: "UserPromptSubmit",
 			workingDir: cwd,
@@ -481,7 +487,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		// callers don't await us — they subscribe to bundle.subscribe for the
 		// streaming events independent of this resolution.
 		try {
-			await agent.prompt(text);
+			await agent.prompt(text, images && images.length > 0 ? images : undefined);
 		} catch (e) {
 			// Throws that fire BEFORE agent_start (auth misconfigured, model
 			// rejected, network refused at the SDK boundary) never produce an
