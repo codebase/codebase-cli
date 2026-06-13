@@ -2,6 +2,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type Component, Markdown, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ToolExecution } from "../types.js";
 import { type DiffHunk, type DiffInfo, diffSummary } from "../ui/diff-summary.js";
+import { splitMarkdownSegments } from "../ui/markdown-split.js";
 import { truncateOutput } from "../ui/output-truncate.js";
 import { displayPath } from "../ui/paths.js";
 import {
@@ -13,6 +14,8 @@ import {
 	toolActionPast,
 	truncate,
 } from "../ui/tool-labels.js";
+import { CopyBox } from "./copy-box.js";
+import type { CopyRegistry } from "./copy-targets.js";
 import { ansi, markdownTheme } from "./theme.js";
 
 const wrap = (text: string, width: number) => wrapTextWithAnsi(text, width);
@@ -218,12 +221,23 @@ const bgGreen = (text: string): string => `\x1b[42m${text}\x1b[49m`;
  * Pulled out so the streaming-message swap and the final-message append
  * both produce structurally identical output.
  */
+export interface CopyBoxOptions {
+	/** When set (and not streaming), code blocks + present_copy become clickable CopyBoxes. */
+	registry?: CopyRegistry;
+	/** Stable per-message prefix so a box keeps its id across re-renders. */
+	keyPrefix?: string;
+	/** Don't build CopyBoxes mid-stream — content churns until the turn settles. */
+	streaming?: boolean;
+}
+
 export function buildMessageBlocks(
 	message: AgentMessage,
 	tools: ReadonlyMap<string, ToolExecution>,
 	role: string,
+	copy: CopyBoxOptions = {},
 ): Component[] {
 	const out: Component[] = [];
+	const copyable = copy.registry !== undefined && !copy.streaming;
 	if (typeof message.content === "string") {
 		if (message.content) out.push(new PlainText(message.content));
 		return out;
@@ -234,6 +248,9 @@ export function buildMessageBlocks(
 	// in full red since the user needs the whole failure to debug.
 	if (role === "toolResult") {
 		const m = message as { toolName?: string; isError?: boolean; content: unknown[] };
+		// present_copy already rendered its box from the assistant toolCall;
+		// suppress the redundant ack row here.
+		if (m.toolName === "present_copy") return out;
 		const text = message.content
 			.map((block) => {
 				if (typeof block === "object" && block !== null) {
@@ -283,10 +300,32 @@ export function buildMessageBlocks(
 		switch (block.type) {
 			case "text": {
 				if (typeof block.text !== "string") break;
-				if (role === "assistant") {
-					out.push(new Markdown(block.text, 0, 0, markdownTheme));
-				} else {
+				if (role !== "assistant") {
 					out.push(new PlainText(block.text));
+					break;
+				}
+				// Split assistant prose from fenced code so each code block
+				// becomes its own click-to-copy box; prose keeps markdown
+				// rendering. During streaming, render the whole thing as
+				// markdown to avoid box churn until the turn settles.
+				if (copyable && copy.registry) {
+					const segments = splitMarkdownSegments(block.text);
+					segments.forEach((seg, s) => {
+						if (seg.type === "code" && seg.text.trim()) {
+							out.push(
+								new CopyBox(
+									copy.registry as CopyRegistry,
+									`${copy.keyPrefix}:b${i}:s${s}`,
+									seg.lang || "code",
+									seg.text,
+								),
+							);
+						} else {
+							out.push(new Markdown(seg.text, 0, 0, markdownTheme));
+						}
+					});
+				} else {
+					out.push(new Markdown(block.text, 0, 0, markdownTheme));
 				}
 				break;
 			}
@@ -297,6 +336,15 @@ export function buildMessageBlocks(
 			}
 			case "toolCall": {
 				if (typeof block.name !== "string" || typeof block.id !== "string") break;
+				// present_copy renders as a click-to-copy box instead of a
+				// tool-call line — the args carry the payload directly.
+				if (block.name === "present_copy" && copyable && copy.registry) {
+					const a = (block.arguments ?? {}) as { label?: string; content?: string };
+					if (typeof a.content === "string" && a.content) {
+						out.push(new CopyBox(copy.registry, `${copy.keyPrefix}:b${i}`, a.label || "copy", a.content));
+						break;
+					}
+				}
 				out.push(new ToolCallLine(block.id, block.name, block.arguments, tools));
 				break;
 			}

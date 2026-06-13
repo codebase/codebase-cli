@@ -15,6 +15,7 @@ import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent
 import { generateSuggestion } from "../agent/prompt-suggestion.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
+import { copyToClipboard } from "../clipboard/copy.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { buildSkillCommands } from "../commands/skill-commands.js";
@@ -29,9 +30,11 @@ import { pickNextVerb, THINKING_VERBS } from "../ui/thinking-verbs.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
 import { ContextWarning, ErrorCard } from "./banners.js";
 import { CompactionBanner } from "./compaction-banner.js";
+import { CopyRegistry, hitTest, scanAndStrip } from "./copy-targets.js";
 import { HistorySearchOverlay } from "./history-search-overlay.js";
-import { buildMessageBlocks, MessageView } from "./message-view.js";
+import { buildMessageBlocks, type CopyBoxOptions, MessageView } from "./message-view.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
+import { isLeftClick, isMouseSequence, parseMouseEvent } from "./mouse.js";
 import { PermissionOverlay } from "./permission-overlay.js";
 import { SuggestionLine } from "./suggestion-line.js";
 import { TaskPanel } from "./task-panel.js";
@@ -99,6 +102,11 @@ export class App extends Container {
 	private readonly suggestionLine = new SuggestionLine();
 	private suggestionTimer: NodeJS.Timeout | undefined;
 	private suggestionAbort: AbortController | undefined;
+	/** Click-to-copy: id→clean-text registry + the last frame's line→box map. */
+	private readonly copyRegistry = new CopyRegistry();
+	private copyLineToId = new Map<number, number>();
+	private lastRenderedLines = 0;
+	private mouseEnabled = false;
 
 	constructor() {
 		super();
@@ -112,7 +120,7 @@ export class App extends Container {
 		if (this.bundle.resumedMessages.length > 0) this.envInjected = true;
 		this.messages.push(...this.bundle.resumedMessages);
 
-		this.transcript = new TranscriptView(this.bundle.resumedMessages, this.tools);
+		this.transcript = new TranscriptView(this.bundle.resumedMessages, this.tools, this.copyRegistry);
 		// Async store subscribers need to schedule a TUI render after every
 		// state change — pi-tui only paints on input events or explicit
 		// requestRender, never automatically on child invalidate.
@@ -194,6 +202,7 @@ export class App extends Container {
 		this.addChild(editor);
 		tui.setFocus(editor);
 		this.removeInputListener = tui.addInputListener((data) => this.handleGlobalInput(data));
+		this.enableMouse();
 		// Permission + UserQuery requests arrive asynchronously from tool
 		// execution. Show the overlay when one lands; dismiss when answered.
 		// Pi-tui needs an explicit requestRender after async state changes
@@ -321,6 +330,71 @@ export class App extends Container {
 	}
 
 	/**
+	 * Root render. pi-tui composes our whole column here; we scan it for the
+	 * zero-width copy-box sentinels (recording which logical line belongs to
+	 * which box), strip them so the terminal never sees them, and return the
+	 * clean lines. This is also the only place we learn the column's total
+	 * height, which the click handler needs to map a viewport row back to a
+	 * logical line.
+	 */
+	override render(width: number): string[] {
+		const composed = super.render(width);
+		const { clean, lineToId } = scanAndStrip(composed);
+		this.copyLineToId = lineToId;
+		this.lastRenderedLines = clean.length;
+		return clean;
+	}
+
+	/**
+	 * Turn on SGR mouse reporting so clicks reach us. Cost the user opted
+	 * into: plain wheel-scroll and drag-select now route to the app — hold
+	 * Shift for the terminal's native behavior. Disabled on dispose.
+	 */
+	private enableMouse(): void {
+		if (this.mouseEnabled || process.env.CODEBASE_NO_MOUSE === "1") return;
+		this.mouseEnabled = true;
+		process.stdout.write("\x1b[?1000h\x1b[?1006h");
+		// Belt-and-suspenders: if the process is killed before dispose() runs,
+		// still restore the terminal so it isn't left in mouse-reporting mode.
+		process.once("exit", () => {
+			if (this.mouseEnabled) process.stdout.write("\x1b[?1000l\x1b[?1006l");
+		});
+	}
+
+	private disableMouse(): void {
+		if (!this.mouseEnabled) return;
+		this.mouseEnabled = false;
+		process.stdout.write("\x1b[?1000l\x1b[?1006l");
+	}
+
+	/**
+	 * Resolve a left-click to the copy box under it and push that box's
+	 * clean text to the clipboard via OSC 52 (so it works over SSH too).
+	 * Returns true when a box was hit (so the caller consumes the event).
+	 */
+	private handleMouseClick(row: number): boolean {
+		// Don't copy out from under an open overlay — its own input owns clicks.
+		if (this.permissionOverlay || this.userQueryOverlay || this.modelPickerOverlay || this.historySearchOverlay) {
+			return false;
+		}
+		const height = process.stdout.rows ?? 24;
+		const id = hitTest(this.copyLineToId, row, this.lastRenderedLines, height);
+		if (id === null) return false;
+		const text = this.copyRegistry.get(id);
+		if (!text) return false;
+		void copyToClipboard(text)
+			.then((res) => {
+				this.statusBar.note(`⎘ copied ${res.bytes} bytes via ${res.method}`);
+				this.tui?.requestRender();
+			})
+			.catch((err) => {
+				this.statusBar.note(`copy failed: ${err instanceof Error ? err.message : String(err)}`);
+				this.tui?.requestRender();
+			});
+		return true;
+	}
+
+	/**
 	 * Forecast the user's next prompt once the agent settles. 500ms
 	 * debounce lets idle stabilize; any new activity cancels the in-flight
 	 * call so a stale suggestion can't surface mid-turn. Same generator
@@ -355,6 +429,14 @@ export class App extends Container {
 	}
 
 	private handleGlobalInput(data: string): { consume?: boolean } | undefined {
+		// Mouse events: a plain left-click on a copy box copies it; every
+		// other mouse sequence (release, drag, wheel, shift-click) is
+		// swallowed so its raw bytes never leak into the editor as text.
+		if (isMouseSequence(data)) {
+			const event = parseMouseEvent(data);
+			if (event && isLeftClick(event)) this.handleMouseClick(event.row);
+			return { consume: true };
+		}
 		// Ghost suggestion: Tab on an empty editor accepts it; any other
 		// keystroke dismisses it (and still reaches the editor).
 		const ghost = this.suggestionLine.get();
@@ -1041,6 +1123,8 @@ export class App extends Container {
 	}
 
 	dispose(): void {
+		this.disableMouse();
+		this.cancelSuggestion();
 		this.removeInputListener?.();
 		this.removePermSubscription?.();
 		this.removeUserQuerySubscription?.();
@@ -1240,25 +1324,33 @@ class TranscriptView extends Container {
 	private streamingView: MessageView | undefined;
 	private streamingMessage: AgentMessage | undefined;
 	private readonly tools: ReadonlyMap<string, ToolExecution>;
+	private readonly registry: CopyRegistry;
+	/** Monotonic, so each finalized message gets a stable CopyBox key namespace. */
+	private msgCounter = 0;
 
-	constructor(initialMessages: AgentMessage[], tools: ReadonlyMap<string, ToolExecution>) {
+	constructor(initialMessages: AgentMessage[], tools: ReadonlyMap<string, ToolExecution>, registry: CopyRegistry) {
 		super();
 		this.tools = tools;
+		this.registry = registry;
 		this.history = new Container();
 		this.addChild(this.history);
 		for (const m of initialMessages) {
-			this.history.addChild(buildMessageView(m, this.tools, false));
+			this.history.addChild(buildMessageView(m, this.tools, false, this.copyOpts()));
 		}
+	}
+
+	private copyOpts(): CopyBoxOptions {
+		return { registry: this.registry, keyPrefix: `msg-${this.msgCounter++}` };
 	}
 
 	appendUserMessage(text: string): void {
 		const msg = { role: "user" as const, content: text, timestamp: Date.now() } as AgentMessage;
-		this.history.addChild(buildMessageView(msg, this.tools, false));
+		this.history.addChild(buildMessageView(msg, this.tools, false, this.copyOpts()));
 		this.history.invalidate();
 	}
 
 	appendMessage(message: AgentMessage): void {
-		this.history.addChild(buildMessageView(message, this.tools, false));
+		this.history.addChild(buildMessageView(message, this.tools, false, this.copyOpts()));
 		this.history.invalidate();
 	}
 
@@ -1272,7 +1364,7 @@ class TranscriptView extends Container {
 			// Same streaming turn — rebuild content blocks in place so the
 			// pi-tui diff renderer only touches changed lines.
 			this.streamingMessage = message;
-			this.streamingView.setBlocks(buildMessageBlocks(message, this.tools, message.role));
+			this.streamingView.setBlocks(buildMessageBlocks(message, this.tools, message.role, { streaming: true }));
 			this.streamingView.invalidate();
 			this.invalidate();
 			return;
@@ -1282,7 +1374,7 @@ class TranscriptView extends Container {
 		}
 		if (!message) return;
 		this.streamingMessage = message;
-		this.streamingView = buildMessageView(message, this.tools, true);
+		this.streamingView = buildMessageView(message, this.tools, true, { streaming: true });
 		this.addChild(this.streamingView);
 		this.invalidate();
 	}
@@ -1308,11 +1400,12 @@ function buildMessageView(
 	message: AgentMessage,
 	tools: ReadonlyMap<string, ToolExecution>,
 	streaming: boolean,
+	copy: CopyBoxOptions = {},
 ): MessageView {
 	const role = (message.role as string) ?? "system";
 	const label = role === "user" ? "you" : role === "assistant" ? "codebase" : role === "toolResult" ? "tool" : role;
 	const accent = roleColor[role as keyof typeof roleColor] ?? ((s: string) => s);
-	const blocks = buildMessageBlocks(message, tools, role);
+	const blocks = buildMessageBlocks(message, tools, role, copy);
 	return new MessageView({ accent, label, streaming, blocks });
 }
 
