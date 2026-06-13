@@ -119,16 +119,17 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	// back to the login wizard. A network failure here is silent — the
 	// wizard path catches it downstream.
 	await ensureFreshCredentials();
-	if (process.env.CODEBASE_PI_TUI === "1") {
-		// Opt-in pi-tui render path — differential renderer, no React.
-		// During the migration this is feature-gated; the ink path stays
-		// default until parity is verified.
+	// pi-tui (differential renderer, no React) is the default. It has the
+	// full feature set plus click-free copy mode, dynamic title, and
+	// smoother streaming on long transcripts. CODEBASE_REACT_TUI=1 falls
+	// back to the legacy ink path during the deprecation window.
+	if (process.env.CODEBASE_REACT_TUI !== "1") {
 		const { runPiTuiApp } = await import("./ui-pi/runtime.js");
 		installTerminalRestoreHandlers();
 		await runPiTuiApp();
 		process.exit(0);
 	}
-	// Default ink/React path. Disable ink's default ctrl-c handling — ink
+	// Legacy ink/React path. Disable ink's default ctrl-c handling — ink
 	// unmounts on ctrl-c but doesn't exit the process — leaves the user
 	// staring at a frozen terminal. We handle ctrl-c ourselves.
 	const instance = render(<App />, { exitOnCtrlC: false });

@@ -4,7 +4,8 @@ import { App } from "./app.js";
 import { FirstRunWizard } from "./first-run-wizard.js";
 
 /**
- * Entry point for the pi-tui render path (CODEBASE_PI_TUI=1). Mirrors
+ * Entry point for the pi-tui render path (the default; CODEBASE_REACT_TUI=1
+ * falls back to legacy ink). Mirrors
  * `render(<App />)` from cli.tsx's ink path but constructs a pi-tui
  * TUI with our root `App` Container instead. Returns when the App
  * resolves its exit promise.
