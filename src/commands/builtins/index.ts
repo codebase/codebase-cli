@@ -4,6 +4,7 @@ import { login, logout } from "./auth.js";
 import { copy } from "./copy.js";
 import { cost } from "./cost.js";
 import { doctor } from "./doctor.js";
+import { effortCmd } from "./effort.js";
 import { exportCmd } from "./export.js";
 import { context, debug, help, pwd, whoami } from "./info.js";
 import { init } from "./init.js";
@@ -26,6 +27,7 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	cost,
 	modelCmd,
 	modelsCmd,
+	effortCmd,
 	outputStyleCmd,
 	whoami,
 	copy,

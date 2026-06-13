@@ -30,6 +30,7 @@ import { TaskStore } from "../tools/task-store.js";
 import type { ToolContext } from "../tools/types.js";
 import { UserQueryStore } from "../user-queries/store.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
+import { resolveEffort } from "./effort.js";
 import { buildProjectFilesAddendum } from "./project-files.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
@@ -315,12 +316,14 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		buildMemoryAddendum(memory) +
 		buildOutputStyleAddendum(persistedConfig, cwd);
 
+	const effort = resolveEffort(persistedConfig.effort());
 	const agent = new Agent({
 		initialState: {
 			model,
 			systemPrompt: fullSystemPrompt,
 			tools,
 			messages: opts.initialMessages ?? resumed?.messages ?? [],
+			...(effort && { thinkingLevel: effort }),
 		},
 		getApiKey: () => apiKey,
 		transformContext: async (messages, signal) => {

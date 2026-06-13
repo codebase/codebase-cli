@@ -23,6 +23,7 @@ import { HistoryStore } from "./history-store.js";
 import { Input, type InputHandle } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { type ModelOption, ModelPicker } from "./ModelPicker.js";
+import { notifyTurnComplete } from "./notify.js";
 import { Permission } from "./Permission.js";
 import { Status } from "./Status.js";
 import { runShellEscape } from "./shell-escape.js";
@@ -171,6 +172,21 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	}, [state.messages, persistedHistory]);
 
 	useCoalescedAgentEvents(bundle, dispatch);
+
+	// Turn-completion notification: ring the bell / OS-notify when a turn
+	// that ran a while finishes, so the user can look away during long runs.
+	useEffect(() => {
+		let startedAt = 0;
+		return bundle.subscribe((event) => {
+			if (event.type === "agent_start") startedAt = Date.now();
+			else if (event.type === "agent_end") {
+				notifyTurnComplete({
+					elapsedMs: startedAt ? Date.now() - startedAt : 0,
+					summary: firstAssistantLine(event.messages),
+				});
+			}
+		});
+	}, [bundle]);
 
 	useEffect(() => {
 		return bundle.permissions.subscribe((req) => setPermRequest(req));
@@ -693,6 +709,18 @@ function extractUserText(content: unknown): string {
 		.filter((b: { type?: string }) => b?.type === "text")
 		.map((b: { text?: string }) => b.text ?? "")
 		.join("");
+}
+
+/** First non-empty line of the most recent assistant message, for the completion notification. */
+function firstAssistantLine(messages: readonly { role: string; content: unknown }[]): string | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "assistant") continue;
+		const text = typeof m.content === "string" ? m.content : extractUserText(m.content);
+		const line = text.split("\n").find((l) => l.trim().length > 0);
+		if (line) return line;
+	}
+	return undefined;
 }
 
 function ExitOnCtrlC({ onExit }: { onExit: () => void }) {

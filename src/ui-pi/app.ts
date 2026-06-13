@@ -25,7 +25,9 @@ import type { ChatState, ToolExecution } from "../types.js";
 import { EMPTY_USAGE } from "../types.js";
 import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js";
 import { HistoryStore } from "../ui/history-store.js";
+import { notifyTurnComplete } from "../ui/notify.js";
 import { runShellEscape } from "../ui/shell-escape.js";
+import { setTerminalTitle } from "../ui/terminal-title.js";
 import { pickNextVerb, THINKING_VERBS } from "../ui/thinking-verbs.js";
 import { BackgroundShellPanel } from "./background-shell-panel.js";
 import { ContextWarning, ErrorCard } from "./banners.js";
@@ -86,6 +88,8 @@ export class App extends Container {
 	private queuedPrompts: string[] = [];
 	/** Count of assistant messages emitted during the current agent turn. Reset on agent_start. */
 	private assistantMessagesThisTurn = 0;
+	/** Epoch ms when the current turn began — drives the completion notification. */
+	private turnStartedAt = 0;
 	/** Has the env reminder been prepended to a turn this session yet? */
 	private envInjected = false;
 	/** Last reported turn usage from pi-ai — feeds the ctx-bar via estimateContextTokens. */
@@ -200,6 +204,7 @@ export class App extends Container {
 		this.addChild(editor);
 		tui.setFocus(editor);
 		this.removeInputListener = tui.addInputListener((data) => this.handleGlobalInput(data));
+		this.setTitle(false);
 		// Permission + UserQuery requests arrive asynchronously from tool
 		// execution. Show the overlay when one lands; dismiss when answered.
 		// Pi-tui needs an explicit requestRender after async state changes
@@ -362,6 +367,12 @@ export class App extends Container {
 		this.copyPickerOverlay = undefined;
 		if (this.inputBar) this.tui?.setFocus(this.inputBar);
 		this.tui?.requestRender();
+	}
+
+	/** Dynamic terminal title: cwd basename + a ● marker while a turn runs. */
+	private setTitle(working: boolean): void {
+		const dir = basename(this.bundle.toolContext.cwd) || "codebase";
+		setTerminalTitle(working ? `● codebase · ${dir}` : `codebase · ${dir}`);
 	}
 
 	/**
@@ -965,6 +976,8 @@ export class App extends Container {
 			case "agent_start":
 				this.cancelSuggestion();
 				this.busy = true;
+				this.turnStartedAt = Date.now();
+				this.setTitle(true);
 				this.status = "thinking";
 				this.statusBar.setStatus("thinking");
 				this.startSpinners();
@@ -1065,6 +1078,13 @@ export class App extends Container {
 				this.statusBar.setStatus("idle");
 				this.stopRateSampling();
 				this.stopSpinners();
+				this.setTitle(false);
+				// Ring the bell / OS-notify if this turn ran long enough that
+				// the user may have looked away. Quick turns stay silent.
+				notifyTurnComplete({
+					elapsedMs: this.turnStartedAt ? Date.now() - this.turnStartedAt : 0,
+					summary: lastAssistantText(this.messages),
+				});
 				// errorMessage lives on the agent state, not the event payload.
 				// Surface an error card when the turn finished badly; the next
 				// successful turn hides it again.
@@ -1394,6 +1414,28 @@ function buildMessageView(
  * `streaming` toggles the "…" suffix on the role label and uses the
  * present-tense verb form for tool calls.
  */
+/** First line of the most recent assistant text, for the completion notification. */
+function lastAssistantText(messages: readonly AgentMessage[]): string | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "assistant") continue;
+		const text =
+			typeof m.content === "string"
+				? m.content
+				: Array.isArray(m.content)
+					? m.content
+							.filter(
+								(b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string",
+							)
+							.map((b) => b.text)
+							.join(" ")
+					: "";
+		const firstLine = text.split("\n").find((l) => l.trim().length > 0);
+		if (firstLine) return firstLine;
+	}
+	return undefined;
+}
+
 function mergeUsage(a: typeof EMPTY_USAGE, b: typeof EMPTY_USAGE): typeof EMPTY_USAGE {
 	return {
 		input: a.input + b.input,

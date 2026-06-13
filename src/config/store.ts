@@ -96,6 +96,26 @@ export class ConfigStore {
 		this.invalidate();
 	}
 
+	/** The persisted reasoning-effort level, if one is set. */
+	effort(): string | undefined {
+		const v = this.load().effort;
+		return typeof v === "string" && v.trim() ? v.trim() : undefined;
+	}
+
+	/** Persist the reasoning-effort level at the user layer. Pass null to clear. */
+	setEffort(level: string | null): void {
+		const existing = readLayer(this.userPath) ?? { ...EMPTY_CONFIG };
+		const next: Config = { ...existing };
+		if (level === null) {
+			delete next.effort;
+		} else {
+			next.effort = level;
+		}
+		mkdirSync(dirname(this.userPath), { recursive: true });
+		writeFileSync(this.userPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o644 });
+		this.invalidate();
+	}
+
 	/**
 	 * Persist a model preference at the *user* layer (`~/.codebase/config.json`).
 	 * Pass `null` to clear. Reads-then-writes the user file so unrelated

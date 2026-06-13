@@ -41,6 +41,13 @@ export interface Config {
 	 */
 	outputStyle?: string;
 
+	/**
+	 * Reasoning effort for models that support it: off | minimal | low |
+	 * medium | high | xhigh. Written by /effort; read at agent start and
+	 * mutated live mid-session.
+	 */
+	effort?: string;
+
 	/** Forward-compatibility: unknown keys are preserved on load. */
 	[key: string]: unknown;
 }
