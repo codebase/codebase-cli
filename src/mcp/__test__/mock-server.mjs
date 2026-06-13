@@ -23,7 +23,7 @@ rl.on("line", (line) => {
 			id: msg.id,
 			result: {
 				protocolVersion: "2025-06-18",
-				capabilities: { tools: {} },
+				capabilities: { tools: {}, resources: {} },
 				serverInfo: { name: "mock", version: "0" },
 			},
 		});
@@ -61,6 +61,23 @@ rl.on("line", (line) => {
 		} else {
 			send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `unknown tool: ${name}` } });
 		}
+		return;
+	}
+	if (msg.method === "resources/list") {
+		send({
+			jsonrpc: "2.0",
+			id: msg.id,
+			result: { resources: [{ uri: "mock://greeting", name: "greeting", mimeType: "text/plain" }] },
+		});
+		return;
+	}
+	if (msg.method === "resources/read") {
+		const uri = msg.params?.uri;
+		send({
+			jsonrpc: "2.0",
+			id: msg.id,
+			result: { contents: [{ uri, mimeType: "text/plain", text: "hello from mock" }] },
+		});
 		return;
 	}
 	// Unknown method → error response.

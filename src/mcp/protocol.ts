@@ -54,6 +54,27 @@ export interface McpCallToolResult {
 	[key: string]: unknown;
 }
 
+/** A resource as described by a server's resources/list response. */
+export interface McpResourceDescriptor {
+	uri: string;
+	name?: string;
+	description?: string;
+	mimeType?: string;
+}
+
+/** One content chunk of a resources/read result — text or base64 blob. */
+export interface McpResourceContent {
+	uri?: string;
+	mimeType?: string;
+	text?: string;
+	blob?: string;
+}
+
+export interface McpReadResourceResult {
+	contents?: McpResourceContent[];
+	[key: string]: unknown;
+}
+
 /** Parse one line of stdio output into a JSON-RPC message, or null if unparseable. */
 export function parseRpcLine(line: string): JsonRpcResponse | JsonRpcNotification | null {
 	const trimmed = line.trim();

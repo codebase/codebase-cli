@@ -13,6 +13,7 @@ import { createEnterWorktree, createExitWorktree } from "./git/worktree.js";
 import { createGlob } from "./glob.js";
 import { createGrep } from "./grep.js";
 import { createListFiles } from "./list-files.js";
+import { createMcpResourceTools } from "./mcp-resources.js";
 import { createMemoryTools } from "./memory-tools.js";
 import { createMonitor } from "./monitor.js";
 import { createMonitorStop } from "./monitor-stop.js";
@@ -67,6 +68,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createDispatchAgent(ctx),
 		...createTaskTools(ctx),
 		...createMemoryTools(ctx),
+		...createMcpResourceTools(ctx),
 		createConfig(ctx),
 	];
 	// Two cross-cutting wrappers:

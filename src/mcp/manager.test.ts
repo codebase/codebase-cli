@@ -80,6 +80,19 @@ describe("McpManager (against the mock server)", () => {
 		expect(manager.status()).toEqual([]);
 	});
 
+	it("aggregates resources and reads one by server + uri", async () => {
+		writeConfig({ demo: { command: process.execPath, args: [MOCK] } });
+		manager = new McpManager();
+		await manager.connectAll({ home, cwd });
+
+		const resources = manager.resources();
+		expect(resources).toHaveLength(1);
+		expect(resources[0]).toMatchObject({ server: "demo", descriptor: { uri: "mock://greeting", name: "greeting" } });
+
+		const read = await manager.readResource("demo", "mock://greeting");
+		expect(read.contents?.[0]).toMatchObject({ text: "hello from mock" });
+	});
+
 	it("connects a remote (url) server over HTTP and bridges its tools", async () => {
 		const server = await startHttpMock();
 		try {

@@ -515,6 +515,9 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			},
 		},
 	});
+	// Back the list_mcp_resources / read_mcp_resource tools. Assigned now
+	// (after the manager exists); resources populate once connectMcp runs.
+	toolContext.mcp = mcp;
 	const connectMcp = async (): Promise<readonly McpServerStatus[]> => {
 		await mcp.connectAll({ cwd });
 		const mcpTools = mcp.tools();

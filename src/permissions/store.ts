@@ -122,6 +122,9 @@ const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
 	// present_copy only surfaces a click-to-copy box in the UI — no fs,
 	// shell, or network. Prompting for it would be pure friction.
 	"present_copy",
+	// MCP resource reads are read-only fetches from already-trusted servers.
+	"list_mcp_resources",
+	"read_mcp_resource",
 ]);
 
 export interface PermissionStoreOptions {

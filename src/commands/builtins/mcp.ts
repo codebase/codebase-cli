@@ -47,6 +47,11 @@ export const mcp: Command = {
 			ctx.emit("Tools:");
 			for (const t of tools) ctx.emit(`  ${t.name}`);
 		}
+		const resources = ctx.bundle.mcp.resources();
+		if (resources.length > 0) {
+			ctx.emit("Resources (read via read_mcp_resource):");
+			for (const r of resources) ctx.emit(`  ${r.server} :: ${r.descriptor.uri}`);
+		}
 		return { handled: true };
 	},
 };

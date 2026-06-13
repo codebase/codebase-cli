@@ -2,6 +2,7 @@ import type { Agent, AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
 import type { CheckpointStore } from "../checkpoint/store.js";
 import type { HookManager } from "../hooks/manager.js";
+import type { McpManager } from "../mcp/manager.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { PlanModeStore } from "../plan/store.js";
 import type { SubagentDefinition } from "../subagents/definitions.js";
@@ -37,6 +38,12 @@ export interface ToolContext {
 	 * by dispatch_agent. Optional so the test harness can omit it.
 	 */
 	subagentTypes?: readonly SubagentDefinition[];
+	/**
+	 * Connected MCP manager — backs the list_mcp_resources /
+	 * read_mcp_resource tools. Assigned after the manager is built (it
+	 * connects async); undefined in the test harness.
+	 */
+	mcp?: McpManager;
 	/**
 	 * User-defined hooks. Tools that care about lifecycle events (e.g.
 	 * dispatch_agent → SubagentStart/Stop) reach into this. Optional so

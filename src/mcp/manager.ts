@@ -5,6 +5,7 @@ import { HttpMcpClient } from "./http-client.js";
 import type { AuthorizeDeps } from "./oauth/flow.js";
 import { McpOAuthProvider } from "./oauth/provider.js";
 import { McpOAuthStore } from "./oauth/store.js";
+import type { McpReadResourceResult, McpResourceDescriptor } from "./protocol.js";
 import { StdioMcpClient } from "./stdio-client.js";
 import { mcpToAgentTool } from "./to-agent-tool.js";
 
@@ -13,6 +14,12 @@ export interface McpServerStatus {
 	connected: boolean;
 	toolCount: number;
 	error?: string;
+}
+
+/** A resource plus the server that exposes it. */
+export interface McpResourceRef {
+	server: string;
+	descriptor: McpResourceDescriptor;
 }
 
 export interface McpManagerOptions {
@@ -34,8 +41,10 @@ export interface McpManagerOptions {
  */
 export class McpManager {
 	private readonly clients: McpClient[] = [];
+	private readonly clientsByName = new Map<string, McpClient>();
 	private readonly statuses: McpServerStatus[] = [];
 	private readonly toolList: AgentTool<any>[] = [];
+	private readonly resourceList: McpResourceRef[] = [];
 	private readonly oauthStore: McpOAuthStore;
 	private readonly authDeps: AuthorizeDeps;
 
@@ -59,9 +68,14 @@ export class McpManager {
 					await client.connect();
 					const descriptors = await client.listTools();
 					this.clients.push(client);
+					this.clientsByName.set(name, client);
 					for (const desc of descriptors) {
 						this.toolList.push(mcpToAgentTool(name, client, desc));
 					}
+					// Resources are best-effort — a server without the capability
+					// returns [], and a failure here never blocks its tools.
+					const resources = await client.listResources().catch(() => []);
+					for (const r of resources) this.resourceList.push({ server: name, descriptor: r });
 					this.statuses.push({ name, connected: true, toolCount: descriptors.length });
 				} catch (err) {
 					client.close();
@@ -84,6 +98,18 @@ export class McpManager {
 	/** Per-server connection status, for `/mcp` and diagnostics. */
 	status(): readonly McpServerStatus[] {
 		return this.statuses;
+	}
+
+	/** Every resource discovered across connected servers. */
+	resources(): readonly McpResourceRef[] {
+		return this.resourceList;
+	}
+
+	/** Read a resource by server name + URI. Throws if the server isn't connected. */
+	async readResource(server: string, uri: string): Promise<McpReadResourceResult> {
+		const client = this.clientsByName.get(server);
+		if (!client) throw new Error(`MCP server "${server}" is not connected`);
+		return client.readResource(uri);
 	}
 
 	/** Terminate every server connection. Idempotent. */

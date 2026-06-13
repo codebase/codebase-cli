@@ -5,6 +5,8 @@ import {
 	type JsonRpcResponse,
 	MCP_PROTOCOL_VERSION,
 	type McpCallToolResult,
+	type McpReadResourceResult,
+	type McpResourceDescriptor,
 	type McpToolDescriptor,
 	parseRpcLine,
 } from "./protocol.js";
@@ -65,6 +67,21 @@ export class HttpMcpClient implements McpClient {
 	async callTool(name: string, args: unknown): Promise<McpCallToolResult> {
 		const res = await this.request("tools/call", { name, arguments: args ?? {} });
 		return (res.result as McpCallToolResult) ?? {};
+	}
+
+	async listResources(): Promise<McpResourceDescriptor[]> {
+		try {
+			const res = await this.request("resources/list", {});
+			const result = res.result as { resources?: McpResourceDescriptor[] } | undefined;
+			return Array.isArray(result?.resources) ? result.resources : [];
+		} catch {
+			return [];
+		}
+	}
+
+	async readResource(uri: string): Promise<McpReadResourceResult> {
+		const res = await this.request("resources/read", { uri });
+		return (res.result as McpReadResourceResult) ?? {};
 	}
 
 	close(): void {

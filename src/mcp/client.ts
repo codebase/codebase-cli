@@ -1,4 +1,4 @@
-import type { McpCallToolResult, McpToolDescriptor } from "./protocol.js";
+import type { McpCallToolResult, McpReadResourceResult, McpResourceDescriptor, McpToolDescriptor } from "./protocol.js";
 
 /** What every MCP client speaks to, regardless of transport (stdio | http). */
 export const CLIENT_INFO = { name: "codebase-cli", version: "1" } as const;
@@ -19,6 +19,10 @@ export interface McpClient {
 	listTools(): Promise<McpToolDescriptor[]>;
 	/** Invoke a tool by name with arguments. */
 	callTool(name: string, args: unknown): Promise<McpCallToolResult>;
+	/** List the server's resources. Returns [] when the server has no resources capability. */
+	listResources(): Promise<McpResourceDescriptor[]>;
+	/** Read one resource by URI. */
+	readResource(uri: string): Promise<McpReadResourceResult>;
 	/** Tear down the transport and reject any in-flight requests. */
 	close(): void;
 }
