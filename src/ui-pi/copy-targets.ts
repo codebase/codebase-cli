@@ -1,111 +1,41 @@
 /**
- * Click-to-copy plumbing for the pi-tui transcript.
+ * Registry of the transcript's copy boxes for keyboard-driven copy mode.
  *
- * pi-tui exposes no component→screen-row map, and it renders on the normal
- * screen (content scrolls into terminal scrollback), so we locate copy
- * boxes ourselves with an invisible position channel:
- *
- *   1. Each CopyBox prefixes every one of its rendered lines with a
- *      SENTINEL encoding its numeric id, built from Unicode Tag
- *      characters (U+E0020–U+E007F). Those are Default_Ignorable, which
- *      pi-tui's width calc treats as zero-width — so the sentinel never
- *      shifts layout.
- *   2. App.render() calls super.render() to get the whole composed column,
- *      scans each line for a sentinel (recording id → line index), strips
- *      every sentinel, and returns the clean lines. The terminal never
- *      sees a sentinel.
- *   3. On a click, we map the viewport row to a logical line (the column
- *      is bottom-pinned during active use) and look up which id owns it.
- *
- * The CopyRegistry holds id → clean copyable text, written when a box is
- * created and read when a click lands.
+ * Each CopyBox registers its label + exact clean text under a stable key
+ * (so re-renders don't duplicate it). Ctrl-O opens a picker over the most
+ * recent entries; selecting one pushes its text to the clipboard via OSC
+ * 52 — clean, unwrapped, works over SSH, and never touches the mouse, so
+ * native select + scroll stay intact.
  */
 
-const TAG_BASE = 0xe0000;
-const SENT_OPEN = String.fromCodePoint(TAG_BASE + 0x7b); // tag '{'
-const SENT_CLOSE = String.fromCodePoint(TAG_BASE + 0x7d); // tag '}'
-const SENTINEL_RE = /\u{E007B}([\u{E0030}-\u{E0039}]+)\u{E007D}/u;
-const SENTINEL_RE_G = /\u{E007B}[\u{E0030}-\u{E0039}]+\u{E007D}/gu;
-
-/** Build the zero-width sentinel that marks a line as belonging to box `id`. */
-export function encodeSentinel(id: number): string {
-	let digits = "";
-	for (const ch of String(id)) digits += String.fromCodePoint(TAG_BASE + ch.charCodeAt(0));
-	return `${SENT_OPEN}${digits}${SENT_CLOSE}`;
+export interface CopyEntry {
+	id: number;
+	label: string;
+	text: string;
 }
 
-/** Decode the id from a single line, or null if it carries no sentinel. */
-export function decodeSentinel(line: string): number | null {
-	const m = SENTINEL_RE.exec(line);
-	if (!m) return null;
-	let ascii = "";
-	for (const ch of m[1]) ascii += String.fromCharCode((ch.codePointAt(0) as number) - TAG_BASE);
-	const id = Number.parseInt(ascii, 10);
-	return Number.isFinite(id) ? id : null;
-}
-
-export interface ScanResult {
-	/** Lines with all sentinels stripped — safe to hand to the terminal. */
-	clean: string[];
-	/** Logical line index → box id, for every line that carried a sentinel. */
-	lineToId: Map<number, number>;
-}
-
-/** Record each line's owning box id, then strip sentinels from every line. */
-export function scanAndStrip(lines: readonly string[]): ScanResult {
-	const lineToId = new Map<number, number>();
-	const clean: string[] = [];
-	for (let i = 0; i < lines.length; i++) {
-		const id = decodeSentinel(lines[i]);
-		if (id !== null) lineToId.set(i, id);
-		clean.push(lines[i].includes(SENT_OPEN) ? lines[i].replace(SENTINEL_RE_G, "") : lines[i]);
-	}
-	return { clean, lineToId };
-}
-
-/**
- * Map a 1-based viewport row to a 0-based logical line in the rendered
- * column. During active use the column is pinned to the bottom of the
- * viewport: the last `height` logical lines are visible. When the whole
- * column fits on screen, it's top-anchored.
- */
-export function viewportRowToLogical(row: number, totalLines: number, height: number): number {
-	const firstVisible = Math.max(0, totalLines - height);
-	return firstVisible + (row - 1);
-}
-
-/** Resolve a click at viewport `row` to the box id under it, or null. */
-export function hitTest(
-	lineToId: ReadonlyMap<number, number>,
-	row: number,
-	totalLines: number,
-	height: number,
-): number | null {
-	const logical = viewportRowToLogical(row, totalLines, height);
-	return lineToId.get(logical) ?? null;
-}
-
-/** Holds the clean copyable text for each live copy box, keyed by id. */
 export class CopyRegistry {
-	private readonly texts = new Map<number, string>();
+	private readonly entries = new Map<number, CopyEntry>();
+	private readonly keyToId = new Map<string, number>();
 	private nextId = 1;
 
-	/** Reserve a stable id for a box keyed by a caller-supplied dedupe key. */
-	private readonly keyToId = new Map<string, number>();
-
-	idFor(key: string): number {
-		const existing = this.keyToId.get(key);
-		if (existing !== undefined) return existing;
-		const id = this.nextId++;
-		this.keyToId.set(key, id);
+	/** Record (or refresh) a box's copyable text under a stable dedupe key. */
+	register(key: string, label: string, text: string): number {
+		let id = this.keyToId.get(key);
+		if (id === undefined) {
+			id = this.nextId++;
+			this.keyToId.set(key, id);
+		}
+		this.entries.set(id, { id, label, text });
 		return id;
 	}
 
-	set(id: number, text: string): void {
-		this.texts.set(id, text);
+	get(id: number): CopyEntry | undefined {
+		return this.entries.get(id);
 	}
 
-	get(id: number): string | undefined {
-		return this.texts.get(id);
+	/** All entries in registration order (oldest first). */
+	list(): CopyEntry[] {
+		return [...this.entries.values()].sort((a, b) => a.id - b.id);
 	}
 }
