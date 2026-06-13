@@ -12,6 +12,7 @@ import { mcp } from "./mcp.js";
 import { memory } from "./memory.js";
 import { modelCmd, modelsCmd } from "./model.js";
 import { outputStyleCmd } from "./output-style.js";
+import { permissions } from "./permissions.js";
 import { projects } from "./projects.js";
 import { rewind } from "./rewind.js";
 import { commit, diff, review } from "./scm.js";
@@ -40,6 +41,7 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	mcp,
 	skills,
 	agents,
+	permissions,
 	context,
 	login,
 	logout,

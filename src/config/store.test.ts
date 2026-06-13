@@ -183,6 +183,52 @@ describe("ConfigStore — model preference persistence", () => {
 	});
 });
 
+describe("ConfigStore — permission rule mutators", () => {
+	let home: string;
+	let cwd: string;
+
+	beforeEach(() => {
+		home = mkdtempSync(join(tmpdir(), "cfg-perm-home-"));
+		cwd = mkdtempSync(join(tmpdir(), "cfg-perm-cwd-"));
+	});
+	afterEach(() => {
+		rmSync(home, { recursive: true, force: true });
+		rmSync(cwd, { recursive: true, force: true });
+	});
+
+	it("adds allow + deny rules and reads them back", () => {
+		const a = new ConfigStore({ home, cwd });
+		expect(a.addPermission("allow", "shell:git status*")).toBe(true);
+		expect(a.addPermission("deny", "shell:git push*")).toBe(true);
+		const b = new ConfigStore({ home, cwd });
+		expect(b.allowPatterns()).toContain("shell:git status*");
+		expect(b.denyPatterns()).toContain("shell:git push*");
+	});
+
+	it("is idempotent — adding an existing rule returns false", () => {
+		const store = new ConfigStore({ home, cwd });
+		expect(store.addPermission("allow", "read_file")).toBe(true);
+		expect(store.addPermission("allow", "read_file")).toBe(false);
+		expect(store.allowPatterns().filter((p) => p === "read_file")).toHaveLength(1);
+	});
+
+	it("removes a rule from both lists", () => {
+		const store = new ConfigStore({ home, cwd });
+		store.addPermission("allow", "edit_file");
+		expect(store.removePermission("edit_file")).toBe(true);
+		expect(store.removePermission("edit_file")).toBe(false);
+		expect(store.allowPatterns()).not.toContain("edit_file");
+	});
+
+	it("preserves unrelated fields when mutating permissions", () => {
+		new ConfigStore({ home, cwd }).setPreferredModel({ modelId: "x" });
+		new ConfigStore({ home, cwd }).addPermission("allow", "glob");
+		const store = new ConfigStore({ home, cwd });
+		expect(store.preferredModel()).toEqual({ modelId: "x" });
+		expect(store.allowPatterns()).toContain("glob");
+	});
+});
+
 describe("ConfigStore — output-style persistence", () => {
 	let home: string;
 	let cwd: string;

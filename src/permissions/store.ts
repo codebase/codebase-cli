@@ -183,14 +183,28 @@ export class PermissionStore {
 	}> = [];
 	private readonly listeners = new Set<(req: PermissionRequest | undefined) => void>();
 	private counter = 0;
-	private readonly matchAllow: (toolName: string, args: unknown) => boolean;
-	private readonly matchDeny: (toolName: string, args: unknown) => boolean;
+	private matchAllow: (toolName: string, args: unknown) => boolean;
+	private matchDeny: (toolName: string, args: unknown) => boolean;
 	private readonly autoApprove: boolean;
 
 	constructor(options: PermissionStoreOptions = {}) {
 		this.matchAllow = compileMatcher(options.allowPatterns ?? []);
 		this.matchDeny = compileMatcher(options.denyPatterns ?? []);
 		this.autoApprove = options.autoApprove ?? false;
+	}
+
+	/** Recompile the allow/deny matchers from new patterns (e.g. after /permissions edits). */
+	setRules(allowPatterns: readonly string[], denyPatterns: readonly string[]): void {
+		this.matchAllow = compileMatcher(allowPatterns);
+		this.matchDeny = compileMatcher(denyPatterns);
+	}
+
+	/** Session-scoped trusts granted via the permission prompt, for display. */
+	listTrusted(): { tools: string[]; shellPrefixes: string[] } {
+		return {
+			tools: [...this.trustedTools].sort(),
+			shellPrefixes: [...this.trustedShellPrefixes].sort(),
+		};
 	}
 
 	async evaluate(toolName: string, args: unknown): Promise<Decision> {

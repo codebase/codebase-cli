@@ -134,6 +134,45 @@ export class ConfigStore {
 		writeFileSync(this.userPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o644 });
 		this.invalidate();
 	}
+
+	/**
+	 * Add a permission pattern to the *user* layer's allow/deny list.
+	 * Returns false if it was already present (no write). Patterns from
+	 * project/local layers are visible via allowPatterns()/denyPatterns()
+	 * but can only be edited by hand — this only touches the user file.
+	 */
+	addPermission(kind: "allow" | "deny", pattern: string): boolean {
+		const existing = readLayer(this.userPath) ?? { ...EMPTY_CONFIG };
+		const perms = { ...(existing.permissions ?? {}) };
+		const list = [...(perms[kind] ?? [])];
+		if (list.includes(pattern)) return false;
+		list.push(pattern);
+		perms[kind] = list;
+		this.writeUser({ ...existing, permissions: perms });
+		return true;
+	}
+
+	/** Remove a pattern from the user layer's allow AND deny lists. Returns true if anything changed. */
+	removePermission(pattern: string): boolean {
+		const existing = readLayer(this.userPath) ?? { ...EMPTY_CONFIG };
+		const perms = { ...(existing.permissions ?? {}) };
+		let changed = false;
+		for (const kind of ["allow", "deny"] as const) {
+			const list = perms[kind] ?? [];
+			if (list.includes(pattern)) {
+				perms[kind] = list.filter((p) => p !== pattern);
+				changed = true;
+			}
+		}
+		if (changed) this.writeUser({ ...existing, permissions: perms });
+		return changed;
+	}
+
+	private writeUser(next: Config): void {
+		mkdirSync(dirname(this.userPath), { recursive: true });
+		writeFileSync(this.userPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o644 });
+		this.invalidate();
+	}
 }
 
 export class ConfigError extends Error {
