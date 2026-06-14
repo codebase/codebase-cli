@@ -12,6 +12,10 @@ export const help: Command = {
 		lines.push("  @path      inline a file's contents into the next prompt");
 		lines.push("  ↑/↓        recall prior prompts (at line start)");
 		lines.push("  \\<Enter>   insert a newline instead of submitting");
+		lines.push("  Ctrl-G     compose the current prompt in $EDITOR");
+		lines.push("  Ctrl-O     copy a block from the transcript");
+		lines.push("  Ctrl-R     reverse-search prior prompts");
+		lines.push("  Ctrl-V     paste an image from the clipboard");
 		lines.push("  Ctrl-C     cancel turn (busy) · twice to exit (idle)");
 		lines.push("");
 		lines.push("Slash commands:");

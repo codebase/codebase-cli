@@ -28,6 +28,7 @@ import type { ChatState, ToolExecution } from "../types.js";
 import { EMPTY_USAGE } from "../types.js";
 import { buildAttachmentPrompt, collectAttachments } from "../ui/attachments.js";
 import { type ClipboardImage, readClipboardImage } from "../ui/clipboard-image.js";
+import { editInExternalEditor } from "../ui/external-editor.js";
 import { HistoryStore } from "../ui/history-store.js";
 import { notifyTurnComplete } from "../ui/notify.js";
 import { runShellEscape } from "../ui/shell-escape.js";
@@ -462,6 +463,20 @@ export class App extends Container {
 			void this.attachClipboardImage();
 			return { consume: true };
 		}
+		// Ctrl-G hands the current input buffer to $EDITOR for composing a
+		// long / multi-line prompt, then drops the result back in the editor.
+		if (
+			data === "\x07" &&
+			this.inputBar &&
+			!this.copyPickerOverlay &&
+			!this.permissionOverlay &&
+			!this.userQueryOverlay &&
+			!this.modelPickerOverlay &&
+			!this.historySearchOverlay
+		) {
+			this.composeInExternalEditor();
+			return { consume: true };
+		}
 		// Ghost suggestion: Tab on an empty editor accepts it; any other
 		// keystroke dismisses it (and still reaches the editor).
 		const ghost = this.suggestionLine.get();
@@ -519,6 +534,19 @@ export class App extends Container {
 			return { consume: true };
 		}
 		return undefined;
+	}
+
+	private composeInExternalEditor(): void {
+		if (!this.inputBar) return;
+		const edited = editInExternalEditor(this.inputBar.getText(), {
+			suspend: () => this.tui?.stop(),
+			resume: () => {
+				this.tui?.start();
+				this.tui?.requestRender(true);
+			},
+		});
+		if (edited !== null) this.inputBar.setText(edited);
+		this.tui?.requestRender(true);
 	}
 
 	private showHistorySearchOverlay(): void {
