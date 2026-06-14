@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { type Static, type TSchema, Type } from "typebox";
@@ -9,7 +7,6 @@ import { createEditFile } from "./edit-file.js";
 import { FileStateCache } from "./file-state-cache.js";
 import { createGitCommit } from "./git/commit.js";
 import { createGitDiff } from "./git/diff.js";
-import { runGit } from "./git/git-helpers.js";
 import { createGitLog } from "./git/log.js";
 import { createGitStatus } from "./git/status.js";
 import { createGlob } from "./glob.js";
@@ -22,6 +19,7 @@ import { createShell } from "./shell.js";
 import { createShellKill } from "./shell-kill.js";
 import { createShellOutput } from "./shell-output.js";
 import { createSshExec } from "./ssh-exec.js";
+import { createSubagentWorktree, type SubagentWorktree, settleWorktree } from "./subagent-worktree.js";
 import { createGetTask, createListTasks } from "./tasks.js";
 import type { ToolContext } from "./types.js";
 import { createWebFetch } from "./web-fetch.js";
@@ -301,50 +299,6 @@ function subagentSystemPrompt(def: SubagentDefinition, task: string, cwd: string
 		task,
 	);
 	return lines.join("\n");
-}
-
-interface SubagentWorktree {
-	name: string;
-	path: string;
-	branch: string;
-	baseSha: string;
-	kept: boolean;
-}
-
-async function createSubagentWorktree(cwd: string, signal?: AbortSignal): Promise<SubagentWorktree> {
-	const rootRes = await runGit(["rev-parse", "--show-toplevel"], cwd, signal);
-	if (rootRes.exitCode !== 0) {
-		throw new Error('isolation: "worktree" requires a git repository.');
-	}
-	const root = rootRes.stdout.trim();
-	const base = await runGit(["rev-parse", "HEAD"], root, signal);
-	if (base.exitCode !== 0) {
-		throw new Error("worktree isolation needs at least one commit (git rev-parse HEAD failed).");
-	}
-	const name = `sub-${randomBytes(4).toString("hex")}`;
-	const path = join(root, ".worktrees", name);
-	const branch = `subagent/${name}`;
-	const add = await runGit(["worktree", "add", "-b", branch, path], root, signal);
-	if (add.exitCode !== 0) {
-		throw new Error(add.stderr.trim() || `git worktree add exited ${add.exitCode}`);
-	}
-	return { name, path, branch, baseSha: base.stdout.trim(), kept: false };
-}
-
-/** Remove the worktree if the subagent left it pristine. Returns true when kept. */
-async function settleWorktree(cwd: string, worktree: SubagentWorktree): Promise<boolean> {
-	try {
-		const status = await runGit(["status", "--porcelain"], worktree.path);
-		const head = await runGit(["rev-parse", "HEAD"], worktree.path);
-		const dirty = status.exitCode !== 0 || status.stdout.trim().length > 0;
-		const committed = head.exitCode !== 0 || head.stdout.trim() !== worktree.baseSha;
-		if (dirty || committed) return true;
-		await runGit(["worktree", "remove", worktree.path], cwd);
-		await runGit(["branch", "-D", worktree.branch], cwd);
-		return false;
-	} catch {
-		return true;
-	}
 }
 
 function extractAssistantText(message: { content?: { type: string; text?: string }[] } | unknown): string {
