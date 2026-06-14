@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { type Static, type TSchema, Type } from "typebox";
-import { EXPLORE_TOOLS, type SubagentDefinition } from "../subagents/definitions.js";
+import { EXPLORE_TOOLS, GENERAL_TOOLS, type SubagentDefinition } from "../subagents/definitions.js";
 import { capToolResult } from "./cap-tool-result.js";
 import { createEditFile } from "./edit-file.js";
 import { FileStateCache } from "./file-state-cache.js";
@@ -273,6 +273,16 @@ function buildSubagentTools(ctx: ToolContext, def: SubagentDefinition): AgentToo
 		tools.push(capToolResult(withCheckpoint(factory(ctx), ctx)));
 	}
 	return tools;
+}
+
+/** The full write-capable toolset, rooted at `ctx.cwd`. Used by /tournament contestants. */
+export function buildContestantTools(ctx: ToolContext): AgentTool<TSchema>[] {
+	return buildSubagentTools(ctx, {
+		name: "general",
+		description: "",
+		source: "builtin",
+		tools: GENERAL_TOOLS,
+	});
 }
 
 function subagentSystemPrompt(def: SubagentDefinition, task: string, cwd: string): string {

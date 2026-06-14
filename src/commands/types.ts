@@ -43,6 +43,12 @@ export interface CommandContext {
 	 * overlay — callers fall back to the file-checkpoint list.
 	 */
 	openRewindPicker?: () => void;
+	/**
+	 * Run a /tournament: race `count` agents on `task` in isolated
+	 * worktrees, judge them, and open the merge picker (pi-tui only).
+	 * Undefined on UIs without it.
+	 */
+	runTournament?: (task: string, count: number) => void;
 }
 
 export interface CommandResult {

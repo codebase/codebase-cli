@@ -18,6 +18,7 @@ import { rewind } from "./rewind.js";
 import { commit, diff, review } from "./scm.js";
 import { clear, compact, exit, fresh, redo, rename, resume, session, tag } from "./session.js";
 import { skills } from "./skills.js";
+import { tournament } from "./tournament.js";
 
 export const BUILTIN_COMMANDS: readonly Command[] = [
 	help,
@@ -53,6 +54,7 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	pwd,
 	redo,
 	rewind,
+	tournament,
 	debug,
 	exit,
 ];

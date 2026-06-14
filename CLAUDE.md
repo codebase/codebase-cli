@@ -274,6 +274,22 @@ subagent its own git worktree (auto-removed if left clean, kept and
 reported otherwise) so parallel writers can't collide. `/agents` lists
 the available types.
 
+## Tournaments (`/tournament`)
+
+`/tournament [n] <task>` (default n=3, max 5) races N agents on the same
+build task and lets you merge the winner. Called mid-build: it snapshots
+the **working tree** — tracked + untracked, via a scratch index so your
+real index is untouched (`src/agent/wip-snapshot.ts`) — and branches
+every contestant from that, so in-progress work is preserved. Each
+contestant is a general agent in its own worktree, runs to completion +
+verifies, and its diff is scored by a cheap-model judge
+(`src/agent/tournament.ts`). A results overlay shows the ranking with the
+judge's pick preselected; **you** choose (overriding the judge if you
+want). The winner's diff is applied to your tree (`git apply`), the
+losers' worktrees are discarded, and a hidden note tells the agent what
+landed. pi-tui only; the core is provider-agnostic and unit-tested with
+injected runner + judge.
+
 ## Output styles
 
 Reshape how the agent writes its answers (terse / explanatory /

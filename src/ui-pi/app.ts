@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import {
@@ -17,6 +17,16 @@ import { listRewindPoints, type RewindPoint, truncateBefore } from "../agent/con
 import { generateSuggestion } from "../agent/prompt-suggestion.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
+import {
+	type BranchSpec,
+	cleanupTournament,
+	mergeWinner,
+	runTournament,
+	type TournamentOutcome,
+	type TournamentProgress,
+} from "../agent/tournament.js";
+import { createContestantRunner, defaultContestantPrompt } from "../agent/tournament-runner.js";
+import { snapshotWorkingTree } from "../agent/wip-snapshot.js";
 import { copyToClipboard } from "../clipboard/copy.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { buildMcpPromptCommands } from "../commands/mcp-prompt-commands.js";
@@ -49,6 +59,7 @@ import { SuggestionLine } from "./suggestion-line.js";
 import { TaskPanel } from "./task-panel.js";
 import { ansi, editorTheme, roleColor } from "./theme.js";
 import { LiveToolPanel } from "./tool-panel-live.js";
+import { TournamentOverlay } from "./tournament-overlay.js";
 import { UserQueryOverlay } from "./user-query-overlay.js";
 import { WelcomeBanner } from "./welcome.js";
 
@@ -84,6 +95,9 @@ export class App extends Container {
 	private modelPickerOverlay: { handle: OverlayHandle; component: ModelPickerOverlay } | undefined;
 	private historySearchOverlay: { handle: OverlayHandle; component: HistorySearchOverlay } | undefined;
 	private rewindOverlay: { handle: OverlayHandle; component: RewindOverlay } | undefined;
+	private tournamentOverlay: { handle: OverlayHandle; component: TournamentOverlay } | undefined;
+	private tournamentRunning = false;
+	private tournamentAbort: AbortController | undefined;
 	private removePermSubscription: (() => void) | undefined;
 	private removeUserQuerySubscription: (() => void) | undefined;
 	private tui: TUI | undefined;
@@ -471,7 +485,8 @@ export class App extends Container {
 			!this.userQueryOverlay &&
 			!this.modelPickerOverlay &&
 			!this.historySearchOverlay &&
-			!this.rewindOverlay
+			!this.rewindOverlay &&
+			!this.tournamentOverlay
 		) {
 			this.showCopyPickerOverlay();
 			return { consume: true };
@@ -492,7 +507,8 @@ export class App extends Container {
 			!this.userQueryOverlay &&
 			!this.modelPickerOverlay &&
 			!this.historySearchOverlay &&
-			!this.rewindOverlay
+			!this.rewindOverlay &&
+			!this.tournamentOverlay
 		) {
 			this.composeInExternalEditor();
 			return { consume: true };
@@ -549,7 +565,8 @@ export class App extends Container {
 			!this.permissionOverlay &&
 			!this.userQueryOverlay &&
 			!this.modelPickerOverlay &&
-			!this.rewindOverlay
+			!this.rewindOverlay &&
+			!this.tournamentOverlay
 		) {
 			this.showHistorySearchOverlay();
 			return { consume: true };
@@ -639,6 +656,148 @@ export class App extends Container {
 		}
 		this.statusBar.note(`↺ rewound ${dropped} message${dropped === 1 ? "" : "s"}${fileNote}.`);
 		this.tui?.requestRender();
+	}
+
+	/**
+	 * Run a /tournament: snapshot the working tree, race `count` general
+	 * agents on `task` in isolated worktrees, then open the results picker so
+	 * the user can merge a winner. Heavy + long-running, so it's gated
+	 * against the agent being busy or another tournament already going.
+	 */
+	private async startTournament(task: string, count: number): Promise<void> {
+		if (!this.tui) return;
+		if (this.busy || this.tournamentRunning) {
+			this.statusBar.note("can't start a tournament while the agent (or another tournament) is running.");
+			return;
+		}
+		this.tournamentRunning = true;
+		this.tournamentAbort = new AbortController();
+		const cwd = this.bundle.toolContext.cwd;
+		try {
+			const snap = await snapshotWorkingTree(cwd, this.tournamentAbort.signal);
+			const branches: BranchSpec[] = Array.from({ length: count }, (_, i) => ({
+				id: String.fromCharCode(65 + i), // A, B, C…
+			}));
+			const status = new Map<string, string>(branches.map((b) => [b.id, "queued"]));
+			const renderStatus = () => {
+				const parts = branches.map((b) => `${b.id}:${status.get(b.id)}`);
+				this.statusBar.note(`🏁 tournament — ${parts.join("  ")}`);
+				this.tui?.requestRender();
+			};
+			renderStatus();
+
+			const runContestant = createContestantRunner(this.bundle.toolContext, defaultContestantPrompt);
+			const onProgress = (e: TournamentProgress) => {
+				if (e.type === "branch_start") status.set(e.id, "working…");
+				else if (e.type === "branch_tool") status.set(e.id, e.tool);
+				else if (e.type === "branch_done") status.set(e.id, e.error ? "failed" : `done (${e.filesChanged})`);
+				else if (e.type === "judging") this.statusBar.note("🏁 tournament — judging attempts…");
+				if (e.type !== "judging") renderStatus();
+			};
+
+			const outcome = await runTournament({
+				task,
+				cwd,
+				baseSha: snap.sha,
+				branches,
+				runContestant,
+				judge: this.bundle.glue,
+				signal: this.tournamentAbort.signal,
+				onProgress,
+			});
+			this.statusBar.note("");
+			this.showTournamentOverlay(outcome, snap.sha, task);
+		} catch (err) {
+			this.statusBar.note(`tournament failed: ${err instanceof Error ? err.message : String(err)}`);
+			this.tournamentRunning = false;
+		}
+	}
+
+	private showTournamentOverlay(outcome: TournamentOutcome, baseSha: string, task: string): void {
+		if (!this.tui) {
+			this.tournamentRunning = false;
+			return;
+		}
+		const component = new TournamentOverlay(
+			outcome,
+			(branchId) => {
+				this.hideTournamentOverlay();
+				void this.applyTournamentPick(outcome, baseSha, task, branchId);
+			},
+			() => {
+				this.hideTournamentOverlay();
+				void this.discardTournament(outcome);
+			},
+		);
+		const handle = this.tui.showOverlay(component, { anchor: "center", width: "80%", minWidth: 60 });
+		this.tui.setFocus(component.getFocusTarget());
+		this.tournamentOverlay = { handle, component };
+	}
+
+	private hideTournamentOverlay(): void {
+		if (!this.tournamentOverlay) return;
+		this.tournamentOverlay.handle.hide();
+		this.tournamentOverlay = undefined;
+		if (this.inputBar) this.tui?.setFocus(this.inputBar);
+		this.tui?.requestRender();
+	}
+
+	private async applyTournamentPick(
+		outcome: TournamentOutcome,
+		baseSha: string,
+		task: string,
+		branchId: string,
+	): Promise<void> {
+		const cwd = this.bundle.toolContext.cwd;
+		const winner = outcome.branches.find((b) => b.id === branchId);
+		try {
+			if (!winner || winner.error || winner.filesChanged.length === 0) {
+				this.statusBar.note(`attempt ${branchId} has nothing to merge.`);
+				return;
+			}
+			const result = await mergeWinner(cwd, baseSha, winner);
+			if (!result.applied) {
+				this.statusBar.note(
+					`couldn't auto-merge attempt ${branchId}: ${result.error}. Its worktree is kept at ${winner.worktree?.path}.`,
+				);
+				// Don't discard the winner's worktree — user may merge by hand.
+				const losers = outcome.branches.filter((b) => b.id !== branchId);
+				await cleanupTournament(cwd, losers);
+				return;
+			}
+			for (const rel of winner.filesChanged) {
+				this.bundle.toolContext.fileStateCache.invalidate(isAbsolute(rel) ? rel : resolvePath(cwd, rel));
+			}
+			// Tell the agent what landed so the conversation reflects the new files.
+			this.injectTournamentNote(task, winner.id, winner.filesChanged);
+			this.statusBar.note(
+				`✓ merged attempt ${branchId} — ${winner.filesChanged.length} file${winner.filesChanged.length === 1 ? "" : "s"} changed.`,
+			);
+			await cleanupTournament(cwd, outcome.branches);
+		} finally {
+			this.tournamentRunning = false;
+			this.tui?.requestRender();
+		}
+	}
+
+	private async discardTournament(outcome: TournamentOutcome): Promise<void> {
+		try {
+			await cleanupTournament(this.bundle.toolContext.cwd, outcome.branches);
+			this.statusBar.note("tournament discarded — nothing merged.");
+		} finally {
+			this.tournamentRunning = false;
+			this.tui?.requestRender();
+		}
+	}
+
+	/** Append a hidden context note so the next turn knows what the tournament merged. */
+	private injectTournamentNote(task: string, branchId: string, files: string[]): void {
+		const note =
+			`<system-reminder>A /tournament just merged attempt ${branchId} for the task "${task}". ` +
+			`Files changed: ${files.join(", ")}. These edits are now in the working tree.</system-reminder>`;
+		const msg = { role: "user" as const, content: note, timestamp: Date.now() } as AgentMessage;
+		this.messages.push(msg);
+		this.bundle.agent.state.messages = [...this.bundle.agent.state.messages, msg];
 	}
 
 	private composeInExternalEditor(): void {
@@ -898,6 +1057,9 @@ export class App extends Container {
 			},
 			switchSession: (sessionId) => this.switchSession(sessionId),
 			openRewindPicker: () => this.showRewindOverlay(),
+			runTournament: (task, count) => {
+				void this.startTournament(task, count);
+			},
 		});
 		if (!result.handled) {
 			this.statusBar.note(`unknown command: ${text.split(/\s/)[0]}`);
@@ -1324,6 +1486,8 @@ export class App extends Container {
 		this.hideUserQueryOverlay();
 		this.hideModelPicker();
 		this.hideRewindOverlay();
+		this.hideTournamentOverlay();
+		this.tournamentAbort?.abort();
 		this.stopRateSampling();
 		this.stopSpinners();
 		this.statusBar.dispose();
