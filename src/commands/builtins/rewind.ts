@@ -1,22 +1,28 @@
 import type { Command } from "../types.js";
 
 /**
- * /rewind — restore files to their state before a prior agent edit.
+ * /rewind — roll back the conversation and/or files.
  *
- * No args: list this session's rewind points (every file mutation, newest
- * first). With a checkpoint number: restore every file touched at or after
- * that point to its pre-image — overwritten files get their old bytes
- * back, files the agent created are deleted. Conversation history is NOT
- * rewound; the next message should tell the agent what was restored.
+ * No args: open the interactive picker (pi-tui) to rewind the conversation
+ * to before a prior prompt, restoring files edited since to match. On UIs
+ * without the picker, falls back to listing file checkpoints. With a
+ * checkpoint number: restore every file touched at or after that point to
+ * its pre-image — overwritten files get their old bytes back, files the
+ * agent created are deleted (conversation untouched in this mode).
  */
 export const rewind: Command = {
 	name: "rewind",
 	aliases: ["checkpoint"],
-	description: "Restore files to their state before a prior agent edit. /rewind <n> applies.",
+	description: "Rewind the conversation (and files) to a prior prompt. /rewind <n> restores files only.",
 	mutates: true,
 	handler: (args, ctx) => {
 		const store = ctx.bundle.checkpoints;
 		const entries = store.list();
+
+		if (!args.trim() && ctx.openRewindPicker) {
+			ctx.openRewindPicker();
+			return { handled: true };
+		}
 
 		if (!args.trim()) {
 			if (entries.length === 0) {

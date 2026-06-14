@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
+import { listRewindPoints, type RewindPoint, truncateBefore } from "../agent/conversation-rewind.js";
 import { generateSuggestion } from "../agent/prompt-suggestion.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
@@ -43,6 +44,7 @@ import { HistorySearchOverlay } from "./history-search-overlay.js";
 import { buildMessageBlocks, type CopyBoxOptions, MessageView } from "./message-view.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
 import { PermissionOverlay } from "./permission-overlay.js";
+import { RewindOverlay } from "./rewind-overlay.js";
 import { SuggestionLine } from "./suggestion-line.js";
 import { TaskPanel } from "./task-panel.js";
 import { ansi, editorTheme, roleColor } from "./theme.js";
@@ -81,6 +83,7 @@ export class App extends Container {
 	private userQueryOverlay: { handle: OverlayHandle; component: UserQueryOverlay } | undefined;
 	private modelPickerOverlay: { handle: OverlayHandle; component: ModelPickerOverlay } | undefined;
 	private historySearchOverlay: { handle: OverlayHandle; component: HistorySearchOverlay } | undefined;
+	private rewindOverlay: { handle: OverlayHandle; component: RewindOverlay } | undefined;
 	private removePermSubscription: (() => void) | undefined;
 	private removeUserQuerySubscription: (() => void) | undefined;
 	private tui: TUI | undefined;
@@ -467,7 +470,8 @@ export class App extends Container {
 			!this.permissionOverlay &&
 			!this.userQueryOverlay &&
 			!this.modelPickerOverlay &&
-			!this.historySearchOverlay
+			!this.historySearchOverlay &&
+			!this.rewindOverlay
 		) {
 			this.showCopyPickerOverlay();
 			return { consume: true };
@@ -487,7 +491,8 @@ export class App extends Container {
 			!this.permissionOverlay &&
 			!this.userQueryOverlay &&
 			!this.modelPickerOverlay &&
-			!this.historySearchOverlay
+			!this.historySearchOverlay &&
+			!this.rewindOverlay
 		) {
 			this.composeInExternalEditor();
 			return { consume: true };
@@ -543,7 +548,8 @@ export class App extends Container {
 			!this.historySearchOverlay &&
 			!this.permissionOverlay &&
 			!this.userQueryOverlay &&
-			!this.modelPickerOverlay
+			!this.modelPickerOverlay &&
+			!this.rewindOverlay
 		) {
 			this.showHistorySearchOverlay();
 			return { consume: true };
@@ -569,6 +575,70 @@ export class App extends Container {
 				this.tui?.requestRender();
 			})
 			.catch(() => undefined);
+	}
+
+	private showRewindOverlay(): void {
+		if (!this.tui || !this.inputBar) return;
+		if (this.busy) {
+			this.statusBar.note("can't rewind mid-turn — press Ctrl-C to stop the agent first.");
+			return;
+		}
+		const points = listRewindPoints(this.messages);
+		if (points.length === 0) {
+			this.statusBar.note("nothing to rewind to yet — no prior prompts this session.");
+			return;
+		}
+		this.hideRewindOverlay();
+		const component = new RewindOverlay(
+			points,
+			(point) => {
+				this.hideRewindOverlay();
+				this.performConversationRewind(point);
+			},
+			() => this.hideRewindOverlay(),
+		);
+		const handle = this.tui.showOverlay(component, { anchor: "center", width: "70%", minWidth: 50 });
+		this.tui.setFocus(component.getFocusTarget());
+		this.rewindOverlay = { handle, component };
+	}
+
+	private hideRewindOverlay(): void {
+		if (!this.rewindOverlay) return;
+		this.rewindOverlay.handle.hide();
+		this.rewindOverlay = undefined;
+		if (this.inputBar) this.tui?.setFocus(this.inputBar);
+		this.tui?.requestRender();
+	}
+
+	/**
+	 * Drop the chosen prompt and everything after it from both the on-screen
+	 * transcript and the agent's context, then restore any files edited
+	 * since that prompt to their prior state. The conversation resumes as if
+	 * the rewound turns never happened.
+	 */
+	private performConversationRewind(point: RewindPoint): void {
+		const truncated = truncateBefore(this.messages, point.index);
+		const dropped = this.messages.length - truncated.length;
+		this.messages.length = 0;
+		this.messages.push(...truncated);
+		this.bundle.agent.state.messages = [...truncated];
+		this.transcript.clear();
+		for (const m of truncated) this.transcript.appendMessage(m);
+
+		// Restore files mutated at or after the rewound prompt.
+		let fileNote = "";
+		const seq = this.bundle.checkpoints.firstSeqAtOrAfter(point.timestamp);
+		if (seq !== undefined) {
+			const result = this.bundle.checkpoints.rewindTo(seq);
+			for (const f of [...result.restored, ...result.deleted]) {
+				this.bundle.toolContext.fileStateCache.invalidate(f.path);
+			}
+			const restored = result.restored.length + result.deleted.length;
+			if (restored > 0) fileNote = ` · restored ${restored} file${restored === 1 ? "" : "s"}`;
+			if (result.skipped.length > 0) fileNote += ` (${result.skipped.length} skipped)`;
+		}
+		this.statusBar.note(`↺ rewound ${dropped} message${dropped === 1 ? "" : "s"}${fileNote}.`);
+		this.tui?.requestRender();
 	}
 
 	private composeInExternalEditor(): void {
@@ -827,6 +897,7 @@ export class App extends Container {
 				void this.openModelPicker();
 			},
 			switchSession: (sessionId) => this.switchSession(sessionId),
+			openRewindPicker: () => this.showRewindOverlay(),
 		});
 		if (!result.handled) {
 			this.statusBar.note(`unknown command: ${text.split(/\s/)[0]}`);
@@ -1252,6 +1323,7 @@ export class App extends Container {
 		this.hidePermissionOverlay();
 		this.hideUserQueryOverlay();
 		this.hideModelPicker();
+		this.hideRewindOverlay();
 		this.stopRateSampling();
 		this.stopSpinners();
 		this.statusBar.dispose();

@@ -231,10 +231,18 @@ collisions. `/skills` lists what's loaded.
 
 Every `write_file` / `edit_file` / `multi_edit` / `notebook_edit`
 snapshots the target's exact prior bytes before mutating (subagent edits
-included). `/rewind` lists the points; `/rewind <n>` restores every file
-touched at-or-after #n — overwrites get their old content back, created
-files are deleted. Conversation history is not rewound. Pre-image blobs
-live under `~/.codebase/checkpoints/<run>/`, removed on exit.
+included). Two ways to roll back:
+
+- **`/rewind`** (no args, pi-tui) opens an interactive picker of prior
+  user prompts; choosing one rewinds the *conversation* to before that
+  prompt AND restores every file edited since to match — the turns
+  un-happen. On UIs without the picker it falls back to the file list.
+- **`/rewind <n>`** restores every file touched at-or-after checkpoint #n
+  (overwrites get their old content back, created files are deleted) and
+  leaves the conversation untouched — precision file-only undo.
+
+Pre-image blobs live under `~/.codebase/checkpoints/<run>/`, removed on
+exit.
 
 ## Subagent types
 

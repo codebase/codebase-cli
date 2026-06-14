@@ -128,6 +128,18 @@ export class CheckpointStore {
 	}
 
 	/**
+	 * The seq of the earliest entry recorded at or after `timestamp`, or
+	 * undefined if no edit happened since then. Lets a conversation rewind
+	 * to a prior prompt restore the files that changed after it.
+	 */
+	firstSeqAtOrAfter(timestamp: number): number | undefined {
+		for (const entry of this.entries) {
+			if (entry.timestamp >= timestamp) return entry.seq;
+		}
+		return undefined;
+	}
+
+	/**
 	 * Restore every file to its state just before entry `seq`. For each
 	 * path touched at-or-after seq, the OLDEST pre-image in that range
 	 * wins (it's the closest to the target point in time). Undone entries

@@ -34,6 +34,18 @@ describe("CheckpointStore", () => {
 		expect(entries[1]).toMatchObject({ seq: 2, display: "b.ts", existed: false });
 	});
 
+	it("firstSeqAtOrAfter finds the earliest entry at or after a timestamp", () => {
+		writeFileSync(file("a.ts"), "v1");
+		const seq1 = store.record("edit_file", file("a.ts")) as number;
+		const t1 = store.list()[0].timestamp;
+		writeFileSync(file("b.ts"), "v1");
+		store.record("edit_file", file("b.ts"));
+		// At-or-before the first edit → the first seq; after everything → undefined.
+		expect(store.firstSeqAtOrAfter(t1)).toBe(seq1);
+		expect(store.firstSeqAtOrAfter(0)).toBe(seq1);
+		expect(store.firstSeqAtOrAfter(Number.MAX_SAFE_INTEGER)).toBeUndefined();
+	});
+
 	it("rewind restores an overwritten file's exact prior bytes", () => {
 		writeFileSync(file("a.ts"), "original content");
 		const seq = store.record("edit_file", file("a.ts"));

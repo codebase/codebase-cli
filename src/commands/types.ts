@@ -36,6 +36,13 @@ export interface CommandContext {
 	 * history.
 	 */
 	switchSession: (sessionId: string) => Promise<void>;
+	/**
+	 * Open the interactive conversation-rewind picker (pi-tui only). Each
+	 * entry is a prior user prompt; selecting one rolls the transcript and
+	 * matching file edits back to before it. Undefined on UIs without the
+	 * overlay — callers fall back to the file-checkpoint list.
+	 */
+	openRewindPicker?: () => void;
 }
 
 export interface CommandResult {
