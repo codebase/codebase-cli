@@ -51,13 +51,13 @@ import { CompactionBanner } from "./compaction-banner.js";
 import { CopyPickerOverlay } from "./copy-picker-overlay.js";
 import { CopyRegistry } from "./copy-targets.js";
 import { HistorySearchOverlay } from "./history-search-overlay.js";
-import { buildMessageBlocks, type CopyBoxOptions, MessageView } from "./message-view.js";
+import { buildMessageBlocks, type CopyBoxOptions, type MessageKind, MessageView } from "./message-view.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
 import { PermissionOverlay } from "./permission-overlay.js";
 import { RewindOverlay } from "./rewind-overlay.js";
 import { SuggestionLine } from "./suggestion-line.js";
 import { TaskPanel } from "./task-panel.js";
-import { ansi, editorTheme, roleColor } from "./theme.js";
+import { ansi, editorTheme } from "./theme.js";
 import { LiveToolPanel } from "./tool-panel-live.js";
 import { TournamentOverlay } from "./tournament-overlay.js";
 import { UserQueryOverlay } from "./user-query-overlay.js";
@@ -1779,10 +1779,10 @@ function buildMessageView(
 	copy: CopyBoxOptions = {},
 ): MessageView {
 	const role = (message.role as string) ?? "system";
-	const label = role === "user" ? "you" : role === "assistant" ? "codebase" : role === "toolResult" ? "tool" : role;
-	const accent = roleColor[role as keyof typeof roleColor] ?? ((s: string) => s);
+	const kind: MessageKind =
+		role === "user" ? "user" : role === "toolResult" ? "tool" : role === "assistant" ? "assistant" : "system";
 	const blocks = buildMessageBlocks(message, tools, role, copy);
-	return new MessageView({ accent, label, streaming, blocks });
+	return new MessageView({ kind, streaming, blocks });
 }
 
 /**

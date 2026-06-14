@@ -20,27 +20,24 @@ import { ansi, markdownTheme } from "./theme.js";
 
 const wrap = (text: string, width: number) => wrapTextWithAnsi(text, width);
 
+export type MessageKind = "user" | "assistant" | "tool" | "system";
+
 /**
- * Single transcript row with a colored "│ " gutter on every line, role-
- * colored bold label header, then content blocks underneath. Mirrors
- * ink-era Message.tsx — the vertical accent gutter is the strongest
- * visual signal in the chat surface, so the pi-tui path needs it too.
+ * A transcript turn. The speaker is conveyed by *treatment*, not a text
+ * label: the user's words sit behind a solid accent bar (a quoted "card"),
+ * everything the agent produces — prose, tool calls, results — flows as
+ * open, indented text. No "you:" / "codebase:" headers, so consecutive
+ * agent turns read as one continuous voice instead of a stutter of labels.
  *
- * Content blocks are stored as pi-tui Components; the gutter is added
- * here at render time by wrapping every child line with the accent
- * prefix. This means Markdown / Text / ToolCallLine all keep their
- * normal line output and we don't have to know their internals.
+ * Every block keeps its own line output; we only prepend the per-line
+ * prefix here, so Markdown / Text / ToolCallLine stay oblivious.
  */
 export class MessageView implements Component {
-	private readonly accent: (text: string) => string;
-	private readonly label: string;
-	private readonly streaming: boolean;
+	private readonly kind: MessageKind;
 	private blocks: Component[];
 
-	constructor(opts: { accent: (s: string) => string; label: string; streaming: boolean; blocks: Component[] }) {
-		this.accent = opts.accent;
-		this.label = opts.label;
-		this.streaming = opts.streaming;
+	constructor(opts: { kind: MessageKind; streaming?: boolean; blocks: Component[] }) {
+		this.kind = opts.kind;
 		this.blocks = opts.blocks;
 	}
 
@@ -49,13 +46,13 @@ export class MessageView implements Component {
 	}
 
 	render(width: number): string[] {
+		// User turns get a bold accent bar; agent/tool/system turns get a
+		// flat 2-col indent. Both consume 2 columns, so content reflows the same.
+		const prefix = this.kind === "user" ? `${ansi.bold(ansi.cyan("▌"))} ` : "  ";
 		const innerWidth = Math.max(20, width - 2);
-		const gutter = this.accent("│ ");
 		const out: string[] = [];
-		out.push(`${gutter}${this.accent(ansi.bold(this.label))}${this.streaming ? ansi.dim(" …") : ""}`);
 		for (const block of this.blocks) {
-			const childLines = block.render(innerWidth);
-			for (const line of childLines) out.push(`${gutter}${line}`);
+			for (const line of block.render(innerWidth)) out.push(`${prefix}${line}`);
 		}
 		out.push("");
 		return out;
@@ -90,14 +87,17 @@ export class ToolCallLine implements Component {
 		if (status === "running") {
 			const frame = SPINNER_FRAMES[Math.floor(Date.now() / 90) % SPINNER_FRAMES.length];
 			const label = toolActionLabel(this.name, this.args);
-			return wrap(`${frame} ${label}…`, width).map((l) => ansi.magenta(l));
+			return wrap(`${frame} ${label}…`, width).map((l) => ansi.cyan(l));
 		}
 
+		// Completed tools recede into dim narrative so the eye stays on the
+		// agent's prose; only the status glyph keeps a touch of color.
 		const isError = status === "error";
-		const glyph = isError ? "✗" : "✓";
-		const color = isError ? ansi.red : ansi.magenta;
+		const glyph = isError ? ansi.red("✗") : ansi.green("✓");
+		const color = isError ? ansi.red : ansi.dim;
 		const past = toolActionPast(this.name, this.args);
-		const lines = wrap(`${glyph} ${past}`, width).map((l) => color(l));
+		const wrapped = wrap(past, Math.max(10, width - 2));
+		const lines = wrapped.map((l, idx) => (idx === 0 ? `${glyph} ${color(l)}` : `  ${color(l)}`));
 
 		// Diff summary for edits — indented under the tool-call line so
 		// the read flows top-to-bottom: "what just happened" then "what
@@ -139,18 +139,20 @@ export class CollapsedReadGroup implements Component {
 		const doneCount = statuses.filter((s) => s !== "running").length;
 
 		const glyph = anyRunning
-			? SPINNER_FRAMES[Math.floor(Date.now() / 90) % SPINNER_FRAMES.length]
+			? ansi.cyan(SPINNER_FRAMES[Math.floor(Date.now() / 90) % SPINNER_FRAMES.length])
 			: anyError
-				? "✗"
-				: "✓";
-		const color = anyError ? ansi.red : ansi.magenta;
+				? ansi.red("✗")
+				: ansi.green("✓");
+		const color = anyError ? ansi.red : anyRunning ? ansi.cyan : ansi.dim;
 		const verb = anyRunning ? presentVerbForReadTool(this.toolName) : pastVerbForReadTool(this.toolName);
 		const noun = nounForReadTool(this.toolName, this.calls.length);
 		const header = anyRunning
-			? `${glyph} ${verb} ${doneCount} of ${this.calls.length} ${noun}…`
-			: `${glyph} ${verb} ${this.calls.length} ${noun}`;
+			? `${verb} ${doneCount} of ${this.calls.length} ${noun}…`
+			: `${verb} ${this.calls.length} ${noun}`;
 
-		const lines = wrap(header, width).map((l) => color(l));
+		const lines = wrap(header, Math.max(10, width - 2)).map((l, idx) =>
+			idx === 0 ? `${glyph} ${color(l)}` : `  ${color(l)}`,
+		);
 		const pathWidth = Math.max(20, width - 6);
 		for (const c of this.calls) {
 			const a = (c.args ?? {}) as Record<string, unknown>;
