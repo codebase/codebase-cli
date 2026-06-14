@@ -111,6 +111,11 @@ slash commands: `/effort <off…xhigh>` (reasoning level), `/permissions`
 (view/edit allow-deny rules), `/resume` (multi-session picker),
 `/export`, `/doctor`, `/skills`, `/agents`.
 
+Input prefixes: `/cmd` slash command, `!cmd` shell escape, `@path` file
+attach, `#note` quick-add memory (`#feedback: …` to pick the bucket).
+MCP servers contribute tools, resources (`read_mcp_resource`), and
+prompts (`/mcp__<server>__<name>` commands).
+
 ### Unrestricted mode (trust-the-developer escape hatches)
 
 By default the agent has three soft guards. Each one has an opt-out
