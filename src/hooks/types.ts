@@ -1,9 +1,11 @@
 export type HookEvent =
 	| "PreToolUse"
 	| "PostToolUse"
+	| "PostToolUseFailure"
 	| "PostEdit"
 	| "UserPromptSubmit"
 	| "SessionStart"
+	| "SessionEnd"
 	| "Stop"
 	| "PreCompact"
 	| "PostCompact"
@@ -62,6 +64,14 @@ export interface HookEventContext {
 	// Stop-specific:
 	/** Stop — the agent's final message text (last assistant message), if any. */
 	finalMessage?: string;
+
+	// PostToolUseFailure-specific:
+	/** PostToolUseFailure — the error message from the failed tool call. */
+	toolError?: string;
+
+	// SessionEnd-specific:
+	/** SessionEnd — why the session ended ("exit" | "new" | "switch"). */
+	endReason?: string;
 }
 
 export interface HookResult {

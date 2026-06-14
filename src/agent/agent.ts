@@ -252,18 +252,41 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		return undefined;
 	};
 
-	const dispatchPostToolHooks = async (toolName: string, args: unknown, signal?: AbortSignal): Promise<void> => {
+	const dispatchPostToolHooks = async (
+		toolName: string,
+		args: unknown,
+		failure: { isError: boolean; error?: string } = { isError: false },
+		signal?: AbortSignal,
+	): Promise<void> => {
 		const filePath = (args as { path?: string } | undefined)?.path;
 		await hooks.dispatch(
 			"PostToolUse",
 			{ event: "PostToolUse", toolName, toolArgs: args, filePath, workingDir: cwd },
 			signal,
 		);
+		// PostToolUseFailure fires only when the tool errored — lets hooks
+		// react to failures (notify, log, roll back) without filtering every
+		// PostToolUse for an error flag they can't otherwise see.
+		if (failure.isError) {
+			await hooks.dispatch(
+				"PostToolUseFailure",
+				{
+					event: "PostToolUseFailure",
+					toolName,
+					toolArgs: args,
+					filePath,
+					toolError: failure.error,
+					workingDir: cwd,
+				},
+				signal,
+			);
+		}
 		// PostEdit fires for write-family tools so hooks can run formatters
 		// / linters / commit-on-save scripts targeted specifically at file
 		// mutations (instead of having to filter inside a generic
-		// PostToolUse handler).
-		if (filePath && WRITE_TOOL_NAMES.has(toolName)) {
+		// PostToolUse handler). Skip it on a failed write — there's nothing
+		// to format.
+		if (!failure.isError && filePath && WRITE_TOOL_NAMES.has(toolName)) {
 			await hooks.dispatch(
 				"PostEdit",
 				{ event: "PostEdit", toolName, toolArgs: args, filePath, workingDir: cwd },
@@ -290,7 +313,12 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 				getApiKey,
 				beforeToolCall: (ctx, signal) => guardToolCall(ctx.toolCall.name, ctx.args, signal),
 				afterToolCall: async (ctx, signal) => {
-					await dispatchPostToolHooks(ctx.toolCall.name, ctx.args, signal);
+					await dispatchPostToolHooks(
+						ctx.toolCall.name,
+						ctx.args,
+						{ isError: ctx.isError, error: ctx.isError ? toolResultText(ctx.result) : undefined },
+						signal,
+					);
 					return undefined;
 				},
 			}),
@@ -373,7 +401,12 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		},
 		beforeToolCall: (ctx, signal) => guardToolCall(ctx.toolCall.name, ctx.args, signal),
 		afterToolCall: async (ctx, signal) => {
-			await dispatchPostToolHooks(ctx.toolCall.name, ctx.args, signal);
+			await dispatchPostToolHooks(
+				ctx.toolCall.name,
+				ctx.args,
+				{ isError: ctx.isError, error: ctx.isError ? toolResultText(ctx.result) : undefined },
+				signal,
+			);
 			const filePath = (ctx.args as { path?: string } | undefined)?.path;
 
 			// After a write/edit tool, run language checkers on the affected file
@@ -573,6 +606,16 @@ function buildOutputStyleAddendum(config: ConfigStore, cwd: string): string {
 }
 
 /** Extract the trailing assistant text content from an array of messages. */
+/** Flatten a tool result's text blocks into a single string for hook payloads. */
+function toolResultText(result: { content: readonly { type: string }[] }): string | undefined {
+	const text = result.content
+		.filter((b): b is { type: "text"; text: string } => b.type === "text")
+		.map((b) => b.text)
+		.join("\n")
+		.trim();
+	return text || undefined;
+}
+
 function lastAssistantText(messages: AgentMessage[]): string | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i];

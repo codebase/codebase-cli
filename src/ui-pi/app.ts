@@ -349,6 +349,21 @@ export class App extends Container {
 	}
 
 	/**
+	 * Fire the SessionEnd hook once, as the CLI is shutting down. Awaited by
+	 * the runtime before teardown so blocking cleanup hooks (commit-on-exit,
+	 * flush-metrics) get to run; per-hook timeouts bound the wait.
+	 */
+	async fireSessionEnd(reason: string): Promise<void> {
+		await this.bundle.hooks
+			.dispatch("SessionEnd", {
+				event: "SessionEnd",
+				workingDir: this.bundle.toolContext.cwd,
+				endReason: reason,
+			})
+			.catch(() => undefined);
+	}
+
+	/**
 	 * Ctrl-O copy mode: open a picker over the transcript's copy boxes
 	 * (newest first). Selecting one pushes its exact text to the clipboard
 	 * via OSC 52 — clean, unwrapped, works over SSH, no mouse capture so

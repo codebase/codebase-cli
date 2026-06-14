@@ -65,6 +65,9 @@ export async function runPiTuiApp(): Promise<void> {
 	try {
 		await app.waitForExit();
 	} finally {
+		// Fire SessionEnd while the bundle is still alive (before dispose
+		// tears down MCP / hooks state). Bounded by per-hook timeouts.
+		await app.fireSessionEnd("exit").catch(() => undefined);
 		try {
 			app.dispose();
 		} catch {

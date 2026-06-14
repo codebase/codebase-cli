@@ -322,12 +322,16 @@ on stdin so shell hooks can `jq` whatever fields they care about.
 ```
 PreToolUse        before any tool runs — exit 2 to block the call
 PostToolUse       after any tool returns — non-blocking observer
+PostToolUseFailure after a tool returns an error — payload includes
+                  .toolError; fires in addition to PostToolUse
 PostEdit          after a write_file / edit_file / multi_edit /
                   notebook_edit succeeds — formatter / linter / commit
-                  hooks live here
+                  hooks live here (skipped when the write failed)
 UserPromptSubmit  before a user-initiated prompt reaches the agent —
                   exit 2 to refuse the submit (e.g. block secrets)
 SessionStart      once per agent boot
+SessionEnd        once as the CLI shuts down — payload includes
+                  .endReason; awaited so blocking cleanup hooks run
 Stop              after the agent settles a turn — payload includes
                   the final assistant text in .finalMessage
 PreCompact        before the compaction engine runs
@@ -371,8 +375,10 @@ default — only an actual exit-2 blocks.
   toolName?: string,             // tool events
   toolArgs?: unknown,            // tool events
   filePath?: string,             // tool events that operate on a file
+  toolError?: string,            // PostToolUseFailure
   userPrompt?: string,           // UserPromptSubmit
   finalMessage?: string,         // Stop
+  endReason?: string,            // SessionEnd
   messageCount?: number,         // Pre/PostCompact
   collapsedMessageCount?: number,// PostCompact
   truncatedTokens?: number,      // PostCompact
