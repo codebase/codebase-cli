@@ -69,13 +69,15 @@ export class WelcomeBanner implements Component {
 		}
 		this.infoRows = info;
 
+		const key = (k: string, label: string) => `${ansi.cyan(k)} ${ansi.dim(label)}`;
 		this.hintRows = [
 			"",
-			ansi.dim("Ask me to read code, edit files, run commands, or anything in between."),
-			ansi.dim(
-				`${ansi.cyan("/")} commands · ${ansi.cyan("!")}shell · ${ansi.cyan("↑↓")} history · ${ansi.cyan("Tab")} complete · ${ansi.cyan("\\")}+Enter newline`,
+			ansi.dim("Ask me to read code, edit files, or run commands — anything in between."),
+			"",
+			[key("/", "commands"), key("!", "shell"), key("@", "file"), key("#", "memory")].join(ansi.dim("   ")),
+			[key("↑↓", "history"), key("⌃G", "$EDITOR"), key("\\↵", "newline"), key("⌃C", "stop · twice exits")].join(
+				ansi.dim("   "),
 			),
-			ansi.dim("Ctrl-C twice to exit."),
 			"",
 		];
 	}

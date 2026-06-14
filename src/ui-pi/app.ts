@@ -1656,10 +1656,10 @@ class StatusBar extends Container {
 		const bar = ctxBar(this.ctxPercent);
 		const ctxText = colorByThreshold(`${bar} ${this.ctxPercent}%`, this.ctxPercent);
 		const tokPart = this.tokRate !== undefined ? ` · ${this.tokRate} tok/s` : "";
-		const right = ansi.dim(
-			`${this.modelName} · ${this.cwdLabel} · ctx ${ctxText}${tokPart} · $${formatCost(this.cost)}`,
-		);
-		return `${throb}${statusLabel}    ${right}`;
+		// Model name reads at default brightness as the anchor; the rest of
+		// the meta recedes to dim so the line is glanceable, not a wall.
+		const meta = ansi.dim(`${this.cwdLabel} · ctx ${ctxText}${tokPart} · $${formatCost(this.cost)}`);
+		return `${throb}${statusLabel}    ${this.modelName}  ${meta}`;
 	}
 }
 
