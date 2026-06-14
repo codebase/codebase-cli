@@ -537,6 +537,13 @@ export class App extends Container {
 				return { consume: true };
 			}
 			this.exitArmedAt = now;
+			// A running tournament owns the first Ctrl-C: cancel the race
+			// (its contestants get the abort signal) instead of exiting.
+			if (this.tournamentRunning) {
+				this.statusBar.note("cancelling tournament…");
+				this.tournamentAbort?.abort();
+				return { consume: true };
+			}
 			if (this.busy) {
 				try {
 					this.bundle.agent.abort();
@@ -706,10 +713,22 @@ export class App extends Container {
 				signal: this.tournamentAbort.signal,
 				onProgress,
 			});
+			// Cancelled mid-race: tear down the worktrees, skip the picker.
+			if (this.tournamentAbort.signal.aborted) {
+				await cleanupTournament(cwd, outcome.branches);
+				this.statusBar.note("tournament cancelled — nothing merged.");
+				this.tournamentRunning = false;
+				return;
+			}
 			this.statusBar.note("");
 			this.showTournamentOverlay(outcome, snap.sha, task);
 		} catch (err) {
-			this.statusBar.note(`tournament failed: ${err instanceof Error ? err.message : String(err)}`);
+			const cancelled = this.tournamentAbort?.signal.aborted;
+			this.statusBar.note(
+				cancelled
+					? "tournament cancelled — nothing merged."
+					: `tournament failed: ${err instanceof Error ? err.message : String(err)}`,
+			);
 			this.tournamentRunning = false;
 		}
 	}
