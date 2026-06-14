@@ -85,7 +85,8 @@ export const resume: Command = {
 				const marker = s.id === currentId ? "▸" : " ";
 				const title = s.title ?? "(untitled)";
 				const age = formatAge(Date.now() - s.updatedAt);
-				ctx.emit(`${marker} ${i + 1}. ${title} — ${age} · ${s.messageCount} messages · ${s.modelId}`);
+				const tags = s.tags.length ? ` [${s.tags.join(", ")}]` : "";
+				ctx.emit(`${marker} ${i + 1}. ${title}${tags} — ${age} · ${s.messageCount} messages · ${s.modelId}`);
 			});
 			ctx.emit("Run /resume <n> to swap the conversation in place (current session stays saved).");
 			return { handled: true };
@@ -102,6 +103,63 @@ export const resume: Command = {
 			return { handled: true };
 		}
 		await ctx.switchSession(picked.id);
+		return { handled: true };
+	},
+};
+
+export const rename: Command = {
+	name: "rename",
+	description: "Set a title for the current session (replaces the auto-derived one).",
+	handler: (args, ctx) => {
+		const title = args.trim();
+		if (!title) {
+			const current = ctx.bundle.sessions.list().find((s) => s.id === ctx.bundle.sessions.id);
+			ctx.emit(
+				current?.title
+					? `Current title: ${current.title}. Run /rename <new title> to change it.`
+					: "Usage: /rename <title>",
+			);
+			return { handled: true };
+		}
+		ctx.bundle.sessions.rename(title);
+		ctx.emit(`Session renamed to "${title}".`);
+		return { handled: true };
+	},
+};
+
+export const tag: Command = {
+	name: "tag",
+	description: "Tag the current session (space/comma-separated); /tag with no args lists tags.",
+	handler: (args, ctx) => {
+		const current = ctx.bundle.sessions.list().find((s) => s.id === ctx.bundle.sessions.id);
+		if (!args.trim()) {
+			const tags = current?.tags ?? [];
+			ctx.emit(tags.length ? `Tags: ${tags.join(", ")}` : "No tags yet. Run /tag <tag …> to add some.");
+			return { handled: true };
+		}
+		// `+foo` / `-foo` add/remove against the existing set; a bare list replaces it.
+		const tokens = args
+			.split(/[\s,]+/)
+			.map((t) => t.trim())
+			.filter(Boolean);
+		const incremental = tokens.some((t) => t.startsWith("+") || t.startsWith("-"));
+		let next: string[];
+		if (incremental) {
+			next = [...(current?.tags ?? [])];
+			for (const t of tokens) {
+				if (t.startsWith("-")) {
+					const name = t.slice(1);
+					next = next.filter((x) => x !== name);
+				} else {
+					const name = t.startsWith("+") ? t.slice(1) : t;
+					if (name && !next.includes(name)) next.push(name);
+				}
+			}
+		} else {
+			next = [...new Set(tokens)];
+		}
+		ctx.bundle.sessions.setTags(next);
+		ctx.emit(next.length ? `Tags: ${next.join(", ")}` : "Tags cleared.");
 		return { handled: true };
 	},
 };

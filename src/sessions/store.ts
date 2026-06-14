@@ -22,6 +22,7 @@ export interface SessionData {
 	workDir: string;
 	modelId: string;
 	title: string | null;
+	tags?: string[];
 	messages: AgentMessage[];
 	usage: Usage;
 	updatedAt: number;
@@ -30,6 +31,7 @@ export interface SessionData {
 export interface SessionSummary {
 	id: string;
 	title: string | null;
+	tags: string[];
 	modelId: string;
 	messageCount: number;
 	updatedAt: number;
@@ -63,6 +65,12 @@ export class SessionStore {
 	private readonly dir: string;
 	private readonly maxAgeMs: number;
 	private sessionId: string;
+	/**
+	 * User-set title/tags (via /rename, /tag) that must survive the agent's
+	 * periodic save — which passes only the resumed title and never tags.
+	 * Seeded from the adopted session on resume; applied in save().
+	 */
+	private readonly overrides: { title?: string | null; tags?: string[] } = {};
 
 	constructor(options: SessionStoreOptions) {
 		this.cwd = options.cwd;
@@ -93,6 +101,7 @@ export class SessionStore {
 			if (!data) continue;
 			if (data.modelId !== modelId) continue;
 			this.sessionId = summary.id;
+			this.seedOverrides(data);
 			return data;
 		}
 		return null;
@@ -107,6 +116,7 @@ export class SessionStore {
 		const data = this.read(id);
 		if (!data) return null;
 		this.sessionId = id;
+		this.seedOverrides(data);
 		return data;
 	}
 
@@ -142,6 +152,7 @@ export class SessionStore {
 			out.push({
 				id,
 				title: parsed.title,
+				tags: Array.isArray(parsed.tags) ? parsed.tags : [],
 				modelId: parsed.modelId,
 				messageCount: parsed.messages.length,
 				updatedAt: parsed.updatedAt,
@@ -158,8 +169,47 @@ export class SessionStore {
 			workDir: this.cwd,
 			updatedAt: Date.now(),
 			...data,
-			title: data.title ?? deriveTitle(data.messages),
+			title: this.overrides.title !== undefined ? this.overrides.title : (data.title ?? deriveTitle(data.messages)),
+			tags: this.overrides.tags ?? data.tags ?? [],
 		};
+		this.writeAtomic(payload);
+	}
+
+	/** Set the bound session's display title (via /rename). Persists immediately. */
+	rename(title: string): void {
+		this.overrides.title = title;
+		this.patchFile();
+	}
+
+	/** Replace the bound session's tags (via /tag). Persists immediately. */
+	setTags(tags: string[]): void {
+		this.overrides.tags = tags;
+		this.patchFile();
+	}
+
+	/** Carry an adopted session's title/tags forward so periodic saves keep them. */
+	private seedOverrides(data: SessionData): void {
+		this.overrides.title = data.title;
+		this.overrides.tags = Array.isArray(data.tags) ? data.tags : [];
+	}
+
+	/** Rewrite the already-saved file with current overrides; no-op before the first save. */
+	private patchFile(): void {
+		if (!existsSync(this.filePath)) return;
+		let parsed: SessionData;
+		try {
+			parsed = JSON.parse(readFileSync(this.filePath, "utf8")) as SessionData;
+		} catch {
+			return;
+		}
+		if (this.overrides.title !== undefined) parsed.title = this.overrides.title;
+		if (this.overrides.tags !== undefined) parsed.tags = this.overrides.tags;
+		parsed.updatedAt = Date.now();
+		this.writeAtomic(parsed);
+	}
+
+	private writeAtomic(payload: SessionData): void {
+		mkdirSync(this.dir, { recursive: true });
 		const tmp = `${this.filePath}.${randomBytes(4).toString("hex")}.tmp`;
 		try {
 			writeFileSync(tmp, JSON.stringify(payload, null, 2), { mode: 0o600 });

@@ -16,7 +16,7 @@ import { permissions } from "./permissions.js";
 import { projects } from "./projects.js";
 import { rewind } from "./rewind.js";
 import { commit, diff, review } from "./scm.js";
-import { clear, compact, exit, fresh, redo, resume, session } from "./session.js";
+import { clear, compact, exit, fresh, redo, rename, resume, session, tag } from "./session.js";
 import { skills } from "./skills.js";
 
 export const BUILTIN_COMMANDS: readonly Command[] = [
@@ -25,6 +25,8 @@ export const BUILTIN_COMMANDS: readonly Command[] = [
 	fresh,
 	compact,
 	session,
+	rename,
+	tag,
 	cost,
 	modelCmd,
 	modelsCmd,

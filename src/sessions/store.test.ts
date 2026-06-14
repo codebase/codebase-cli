@@ -162,6 +162,39 @@ describe("SessionStore", () => {
 			expect(store.list()[0].title).toBe("fix the flaky login test in auth.spec.ts");
 		});
 
+		it("rename overrides the title and survives a periodic save", () => {
+			save(store, "m", null);
+			store.rename("my custom title");
+			expect(store.list()[0].title).toBe("my custom title");
+			// A later agent-driven save passes the stale resumed title (here
+			// null) — the override must win so the rename isn't clobbered.
+			store.save({ modelId: "m", title: null, messages: [userMessage("hi")], usage: EMPTY_USAGE });
+			expect(store.list()[0].title).toBe("my custom title");
+		});
+
+		it("setTags persists and survives a periodic save that omits tags", () => {
+			save(store, "m", "t");
+			store.setTags(["wip", "auth"]);
+			expect(store.list()[0].tags).toEqual(["wip", "auth"]);
+			store.save({ modelId: "m", title: "t", messages: [userMessage("hi")], usage: EMPTY_USAGE });
+			expect(store.list()[0].tags).toEqual(["wip", "auth"]);
+		});
+
+		it("loadById seeds tag overrides so they carry into the next save", () => {
+			save(store, "m", "t");
+			store.setTags(["keep"]);
+			const id = store.id;
+			const reopened = new SessionStore({ cwd, dataRoot });
+			expect(reopened.loadById(id)?.tags).toEqual(["keep"]);
+			reopened.save({ modelId: "m", title: "t", messages: [userMessage("hi")], usage: EMPTY_USAGE });
+			expect(reopened.list()[0].tags).toEqual(["keep"]);
+		});
+
+		it("summaries default tags to an empty array for legacy files", () => {
+			save(store, "m", "t");
+			expect(store.list()[0].tags).toEqual([]);
+		});
+
 		it("migrates the legacy single-file layout into the directory", () => {
 			const legacy = new SessionStore({ cwd, dataRoot });
 			save(legacy, "m", "old conversation");
