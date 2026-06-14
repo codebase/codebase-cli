@@ -15,11 +15,18 @@ export const agents: Command = {
 		ctx.emit("Subagent types:");
 		for (const t of types) {
 			const desc = t.description ? ` — ${t.description}` : "";
-			ctx.emit(`  ${t.name}${desc} (${t.source}, ${t.tools.length} tools)`);
+			const extras = [
+				t.model ? `model ${t.model}` : null,
+				t.effort ? `effort ${t.effort}` : null,
+				t.maxTurns ? `${t.maxTurns} turns` : null,
+			].filter(Boolean);
+			const extraStr = extras.length ? `, ${extras.join(", ")}` : "";
+			ctx.emit(`  ${t.name}${desc} (${t.source}, ${t.tools.length} tools${extraStr})`);
 		}
 		ctx.emit(
 			`Define custom types as markdown in ${join(homedir(), ".codebase", "agents")}/<name>.md ` +
-				"(or <project>/.codebase/agents/): frontmatter `description:` + `tools:`, body = role prompt.",
+				"(or <project>/.codebase/agents/): frontmatter `description:`, `tools:`, optional " +
+				"`model:` / `effort:` / `max_turns:`; body = role prompt.",
 		);
 		return { handled: true };
 	},

@@ -30,7 +30,7 @@ import { TaskStore } from "../tools/task-store.js";
 import type { ToolContext } from "../tools/types.js";
 import { UserQueryStore } from "../user-queries/store.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
-import { resolveEffort } from "./effort.js";
+import { type Effort, resolveEffort } from "./effort.js";
 import { buildProjectFilesAddendum } from "./project-files.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
@@ -307,9 +307,18 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		monitors,
 		checkpoints,
 		subagentTypes: loadSubagentDefinitions({ cwd }),
-		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools }) =>
+		spawnSubagent: ({ systemPrompt: subPrompt, tools: subTools, model: modelId, thinkingLevel }) =>
 			new Agent({
-				initialState: { model, systemPrompt: subPrompt, tools: subTools },
+				initialState: {
+					// A per-agent model id reuses the parent's routing (provider,
+					// baseUrl, key) and only swaps the id — works for proxy and
+					// same-provider BYOK. Cross-provider would need its own key, so
+					// it's deliberately out of scope.
+					model: modelId ? { ...model, id: modelId } : model,
+					systemPrompt: subPrompt,
+					tools: subTools,
+					...(thinkingLevel && { thinkingLevel: thinkingLevel as Effort }),
+				},
 				getApiKey,
 				beforeToolCall: (ctx, signal) => guardToolCall(ctx.toolCall.name, ctx.args, signal),
 				afterToolCall: async (ctx, signal) => {

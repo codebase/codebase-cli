@@ -66,6 +66,46 @@ describe("dispatch_agent", () => {
 		expect(result.details.maxTurnsReached).toBe(false);
 	});
 
+	it("passes a custom type's model/effort to spawnSubagent and uses its max_turns default", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("list_files", {})]),
+			fauxAssistantMessage([fauxToolCall("list_files", {})]),
+			fauxAssistantMessage("done"),
+		]);
+		let captured: { model?: string; thinkingLevel?: string } | undefined;
+		const base = makeCtx(faux);
+		const spyCtx: ToolContext = {
+			...base,
+			subagentTypes: [
+				{
+					name: "triage",
+					description: "fast",
+					source: "project",
+					tools: ["list_files"],
+					model: "fast-model",
+					effort: "high",
+					maxTurns: 1,
+				},
+			],
+			spawnSubagent: (config) => {
+				captured = { model: config.model, thinkingLevel: config.thinkingLevel };
+				return base.spawnSubagent(config);
+			},
+		};
+
+		const result = await createDispatchAgent(spyCtx).execute(
+			"call",
+			{ task: "go", agent_type: "triage" },
+			undefined,
+			undefined,
+		);
+
+		expect(captured?.model).toBe("fast-model");
+		expect(captured?.thinkingLevel).toBe("high");
+		// maxTurns:1 from the def should cap the run without a per-call override.
+		expect(result.details.maxTurnsReached).toBe(true);
+	});
+
 	it("stops at max_turns and surfaces the partial result", async () => {
 		// Each turn loops because the assistant emits a read-only tool call.
 		// list_files is in the subagent's tool set and will succeed against process.cwd().

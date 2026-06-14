@@ -90,4 +90,31 @@ describe("loadSubagentDefinitions", () => {
 		const defs = loadSubagentDefinitions({ home, cwd });
 		expect(defs).toHaveLength(2); // just the builtins
 	});
+
+	it("parses model / effort / max_turns frontmatter overrides", () => {
+		writeAgent(
+			cwd,
+			"triage",
+			"---\ndescription: fast triage\nmodel: fast-model\neffort: high\nmax_turns: 40\n---\nrole",
+		);
+		const def = loadSubagentDefinitions({ home, cwd }).find((d) => d.name === "triage");
+		expect(def?.model).toBe("fast-model");
+		expect(def?.effort).toBe("high");
+		expect(def?.maxTurns).toBe(40);
+	});
+
+	it("ignores an invalid effort and out-of-range max_turns", () => {
+		writeAgent(cwd, "bad", "---\ndescription: x\neffort: ludicrous\nmax_turns: 999\n---\nrole");
+		const def = loadSubagentDefinitions({ home, cwd }).find((d) => d.name === "bad");
+		expect(def?.effort).toBeUndefined();
+		expect(def?.maxTurns).toBeUndefined();
+	});
+
+	it("leaves overrides undefined when frontmatter omits them", () => {
+		writeAgent(cwd, "plain", "---\ndescription: x\n---\nrole");
+		const def = loadSubagentDefinitions({ home, cwd }).find((d) => d.name === "plain");
+		expect(def?.model).toBeUndefined();
+		expect(def?.effort).toBeUndefined();
+		expect(def?.maxTurns).toBeUndefined();
+	});
 });

@@ -62,6 +62,10 @@ export interface ToolContext {
 export interface SpawnSubagentConfig {
 	systemPrompt: string;
 	tools: AgentTool<TSchema>[];
+	/** Route this subagent through a different model id (same provider/proxy). */
+	model?: string;
+	/** Reasoning level for the subagent's turns (pi-agent-core ThinkingLevel). */
+	thinkingLevel?: string;
 }
 
 /** A tool definition + its dependency context. Builders return one of these. */

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type Effort, resolveEffort } from "../agent/effort.js";
 import { parseMarkdownWithFrontmatter } from "../config/frontmatter.js";
 
 /**
@@ -12,6 +13,9 @@ import { parseMarkdownWithFrontmatter } from "../config/frontmatter.js";
  *   ---
  *   description: Reviews changed code for security issues.
  *   tools: read_file, grep, glob, git_diff
+ *   model: claude-haiku-4-5-20251001
+ *   effort: high
+ *   max_turns: 40
  *   ---
  *   You are a security reviewer. Hunt for injection, authz bypasses,
  *   secrets in code. Cite file:line for every finding.
@@ -19,7 +23,10 @@ import { parseMarkdownWithFrontmatter } from "../config/frontmatter.js";
  * The body becomes the agent's role prompt. `tools` (optional) narrows
  * the toolset; names must come from the subagent-allowed set — anything
  * else is dropped with a stderr note. Omitting `tools` grants the
- * general set. Built-in names can't be overridden.
+ * general set. Built-in names can't be overridden. `model` / `effort` /
+ * `max_turns` are optional per-agent overrides (model routes through the
+ * parent's provider/proxy with a swapped id; a per-call max_turns still
+ * wins over the frontmatter default).
  */
 
 export interface SubagentDefinition {
@@ -30,6 +37,16 @@ export interface SubagentDefinition {
 	tools: readonly string[];
 	/** Role prompt appended to the subagent system prompt (custom types). */
 	prompt?: string;
+	/**
+	 * Per-agent overrides from frontmatter, all optional:
+	 * - `model`: route this agent through a different model id (same
+	 *   provider / proxy as the parent — e.g. a cheap fast model for triage).
+	 * - `effort`: reasoning level for this agent's turns.
+	 * - `maxTurns`: default turn cap (a per-call max_turns still wins).
+	 */
+	model?: string;
+	effort?: Effort;
+	maxTurns?: number;
 }
 
 /** Read-only investigation set — the classic dispatch_agent toolkit. */
@@ -146,7 +163,27 @@ function parseAgentFile(filename: string, raw: string, source: "user" | "project
 		source,
 		tools: parseToolList(name, frontmatter.tools),
 		prompt: body.trim() || undefined,
+		model: typeof frontmatter.model === "string" && frontmatter.model.trim() ? frontmatter.model.trim() : undefined,
+		effort: parseEffort(name, frontmatter.effort),
+		maxTurns: parseMaxTurns(name, frontmatter.max_turns ?? frontmatter.maxTurns),
 	};
+}
+
+function parseEffort(agent: string, value: unknown): Effort | undefined {
+	if (value === undefined) return undefined;
+	const effort = resolveEffort(String(value));
+	if (!effort) process.stderr.write(`[agents] "${agent}": effort "${value}" is not a valid level — ignored.\n`);
+	return effort;
+}
+
+function parseMaxTurns(agent: string, value: unknown): number | undefined {
+	if (value === undefined) return undefined;
+	const n = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+	if (!Number.isInteger(n) || n < 1 || n > 50) {
+		process.stderr.write(`[agents] "${agent}": max_turns "${value}" must be an integer 1–50 — ignored.\n`);
+		return undefined;
+	}
+	return n;
 }
 
 function parseToolList(agent: string, value: string | readonly string[] | undefined): readonly string[] {

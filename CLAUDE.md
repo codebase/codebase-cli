@@ -248,9 +248,16 @@ live under `~/.codebase/checkpoints/<run>/`, removed on exit.
 ---
 description: Reviews changed code for security issues.
 tools: read_file, grep, glob, git_diff
+model: claude-haiku-4-5-20251001   # optional, same provider/proxy
+effort: high                       # optional reasoning level
+max_turns: 40                      # optional default cap (per-call wins)
 ---
 You are a security reviewer. Cite file:line for every finding.
 ```
+
+`model` / `effort` / `max_turns` are optional per-agent overrides.
+`model` swaps the id while reusing the parent's provider, proxy, and
+key (cross-provider is out of scope — it would need its own credential).
 
 Subagent tool calls go through the same plan-mode gate, permission
 prompts, and hooks as the main loop. `isolation: "worktree"` gives a

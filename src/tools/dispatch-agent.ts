@@ -129,7 +129,7 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 				const known = types.map((t) => t.name).join(", ");
 				throw new Error(`unknown agent_type "${params.agent_type}". Available: ${known}.`);
 			}
-			const maxTurns = params.max_turns ?? DEFAULT_MAX_TURNS;
+			const maxTurns = params.max_turns ?? def.maxTurns ?? DEFAULT_MAX_TURNS;
 			let turns = 0;
 			let maxTurnsReached = false;
 			const toolsUsed: string[] = [];
@@ -160,6 +160,8 @@ export function createDispatchAgent(ctx: ToolContext): AgentTool<typeof Params, 
 			const subagent = ctx.spawnSubagent({
 				systemPrompt: subagentSystemPrompt(def, params.task, runCtx.cwd),
 				tools: buildSubagentTools(runCtx, def),
+				model: def.model,
+				thinkingLevel: def.effort,
 			});
 
 			const onParentAbort = () => subagent.abort();
