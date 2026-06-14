@@ -44,11 +44,13 @@ export interface CommandContext {
 	 */
 	openRewindPicker?: () => void;
 	/**
-	 * Run a /tournament: race `count` agents on `task` in isolated
-	 * worktrees, judge them, and open the merge picker (pi-tui only).
-	 * Undefined on UIs without it.
+	 * Run a /tournament: race agents on `task` in isolated worktrees, judge
+	 * them, and open the merge picker (pi-tui only). `models`, when given,
+	 * runs one contestant per model id (same provider/proxy as the parent);
+	 * otherwise `count` copies of the current model race. Undefined on UIs
+	 * without it.
 	 */
-	runTournament?: (task: string, count: number) => void;
+	runTournament?: (task: string, opts: { count: number; models?: string[] }) => void;
 }
 
 export interface CommandResult {

@@ -659,12 +659,13 @@ export class App extends Container {
 	}
 
 	/**
-	 * Run a /tournament: snapshot the working tree, race `count` general
-	 * agents on `task` in isolated worktrees, then open the results picker so
-	 * the user can merge a winner. Heavy + long-running, so it's gated
-	 * against the agent being busy or another tournament already going.
+	 * Run a /tournament: snapshot the working tree, race general agents on
+	 * `task` in isolated worktrees, then open the results picker so the user
+	 * can merge a winner. With `opts.models`, one contestant runs per model
+	 * id; otherwise `opts.count` copies of the current model race. Heavy +
+	 * long-running, so it's gated against the agent or another tournament.
 	 */
-	private async startTournament(task: string, count: number): Promise<void> {
+	private async startTournament(task: string, opts: { count: number; models?: string[] }): Promise<void> {
 		if (!this.tui) return;
 		if (this.busy || this.tournamentRunning) {
 			this.statusBar.note("can't start a tournament while the agent (or another tournament) is running.");
@@ -675,12 +676,12 @@ export class App extends Container {
 		const cwd = this.bundle.toolContext.cwd;
 		try {
 			const snap = await snapshotWorkingTree(cwd, this.tournamentAbort.signal);
-			const branches: BranchSpec[] = Array.from({ length: count }, (_, i) => ({
-				id: String.fromCharCode(65 + i), // A, B, C…
-			}));
+			const branches: BranchSpec[] = opts.models
+				? opts.models.map((model, i) => ({ id: String.fromCharCode(65 + i), model }))
+				: Array.from({ length: opts.count }, (_, i) => ({ id: String.fromCharCode(65 + i) }));
 			const status = new Map<string, string>(branches.map((b) => [b.id, "queued"]));
 			const renderStatus = () => {
-				const parts = branches.map((b) => `${b.id}:${status.get(b.id)}`);
+				const parts = branches.map((b) => `${b.id}${b.model ? `(${b.model})` : ""}:${status.get(b.id)}`);
 				this.statusBar.note(`🏁 tournament — ${parts.join("  ")}`);
 				this.tui?.requestRender();
 			};
@@ -1057,8 +1058,8 @@ export class App extends Container {
 			},
 			switchSession: (sessionId) => this.switchSession(sessionId),
 			openRewindPicker: () => this.showRewindOverlay(),
-			runTournament: (task, count) => {
-				void this.startTournament(task, count);
+			runTournament: (task, opts) => {
+				void this.startTournament(task, opts);
 			},
 		});
 		if (!result.handled) {

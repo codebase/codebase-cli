@@ -277,7 +277,10 @@ the available types.
 ## Tournaments (`/tournament`)
 
 `/tournament [n] <task>` (default n=3, max 5) races N agents on the same
-build task and lets you merge the winner. Called mid-build: it snapshots
+build task and lets you merge the winner. `--models opus,sonnet,haiku
+<task>` instead runs one contestant per model id (same provider/proxy as
+the parent, via per-agent model id-cloning) — race models head-to-head on
+your actual codebase. Called mid-build: it snapshots
 the **working tree** — tracked + untracked, via a scratch index so your
 real index is untouched (`src/agent/wip-snapshot.ts`) — and branches
 every contestant from that, so in-progress work is preserved. Each
