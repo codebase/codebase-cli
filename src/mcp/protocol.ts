@@ -75,6 +75,25 @@ export interface McpReadResourceResult {
 	[key: string]: unknown;
 }
 
+/** A prompt as described by a server's prompts/list response. */
+export interface McpPromptDescriptor {
+	name: string;
+	description?: string;
+	arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+}
+
+/** One message of a prompts/get result. Content is text or a content-block array. */
+export interface McpPromptMessage {
+	role: string;
+	content: string | McpContentBlock | McpContentBlock[];
+}
+
+export interface McpGetPromptResult {
+	description?: string;
+	messages?: McpPromptMessage[];
+	[key: string]: unknown;
+}
+
 /** Parse one line of stdio output into a JSON-RPC message, or null if unparseable. */
 export function parseRpcLine(line: string): JsonRpcResponse | JsonRpcNotification | null {
 	const trimmed = line.trim();

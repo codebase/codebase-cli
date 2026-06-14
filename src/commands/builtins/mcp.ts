@@ -52,6 +52,11 @@ export const mcp: Command = {
 			ctx.emit("Resources (read via read_mcp_resource):");
 			for (const r of resources) ctx.emit(`  ${r.server} :: ${r.descriptor.uri}`);
 		}
+		const prompts = ctx.bundle.mcp.prompts();
+		if (prompts.length > 0) {
+			ctx.emit("Prompts (run as slash commands):");
+			for (const p of prompts) ctx.emit(`  /mcp__${p.server}__${p.descriptor.name}`);
+		}
 		return { handled: true };
 	},
 };

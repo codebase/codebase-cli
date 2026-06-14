@@ -93,6 +93,19 @@ describe("McpManager (against the mock server)", () => {
 		expect(read.contents?.[0]).toMatchObject({ text: "hello from mock" });
 	});
 
+	it("aggregates prompts and expands one with arguments", async () => {
+		writeConfig({ demo: { command: process.execPath, args: [MOCK] } });
+		manager = new McpManager();
+		await manager.connectAll({ home, cwd });
+
+		const prompts = manager.prompts();
+		expect(prompts).toHaveLength(1);
+		expect(prompts[0]).toMatchObject({ server: "demo", descriptor: { name: "greet" } });
+
+		const got = await manager.getPrompt("demo", "greet", { who: "Ada" });
+		expect(got.messages?.[0]).toMatchObject({ role: "user", content: { text: "Say hello to Ada." } });
+	});
+
 	it("connects a remote (url) server over HTTP and bridges its tools", async () => {
 		const server = await startHttpMock();
 		try {

@@ -6,9 +6,11 @@ import { initialState, reducer } from "../agent/events.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
+import { buildMcpPromptCommands } from "../commands/mcp-prompt-commands.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { buildSkillCommands } from "../commands/skill-commands.js";
 import { ConfigStore } from "../config/store.js";
+import { quickAddMemory } from "../memory/quick-add.js";
 import type { PermissionRequest } from "../permissions/store.js";
 import { runPlanFlow } from "../plan/run-flow.js";
 import type { Task } from "../tools/task-store.js";
@@ -218,6 +220,15 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 					if (s.connected) appendStatus(`⚙ MCP ${s.name}: ${s.toolCount} tool${s.toolCount === 1 ? "" : "s"}`);
 					else appendStatus(`⚙ MCP ${s.name}: failed — ${s.error ?? "unknown"}`);
 				}
+				// Register MCP prompts as /mcp__server__name commands.
+				const promptCmds = buildMcpPromptCommands(bundle.mcp.prompts(), bundle.mcp, registry);
+				if (promptCmds.length > 0) {
+					registry.registerAll(promptCmds);
+					setCommandsVersion((v) => v + 1);
+					appendStatus(
+						`⚙ MCP: ${promptCmds.length} prompt command${promptCmds.length === 1 ? "" : "s"} registered`,
+					);
+				}
 			})
 			.catch(() => undefined);
 		return () => {
@@ -225,7 +236,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			bundle.mcp.dispose();
 			bundle.checkpoints.dispose();
 		};
-	}, [bundle, appendStatus]);
+	}, [bundle, appendStatus, registry]);
 
 	// SIGTERM any background shells still running when the process exits.
 	// Without this, dev servers / watchers spawned via background mode
@@ -317,7 +328,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		// of dropping or interrupting. Slash commands and `!cmd` shell
 		// escapes bypass the queue — they don't talk to the agent, so they
 		// can run alongside whatever the agent is doing.
-		if (busy && !text.startsWith("/") && !text.startsWith("!")) {
+		if (busy && !text.startsWith("/") && !text.startsWith("!") && !text.startsWith("#")) {
 			// Steer the live turn rather than just queueing for after it. The
 			// running agent loop drains the steering queue between tool
 			// batches, so a mid-turn correction/addition reaches the model
@@ -342,6 +353,17 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		// up in the model's context.
 		if (text.startsWith("!") && text.length > 1) {
 			await runShellEscape(text.slice(1), bundle.toolContext.cwd, appendStatus);
+			return;
+		}
+
+		// `# note` quick-adds a memory without spending an agent turn.
+		if (text.startsWith("#") && text.length > 1) {
+			try {
+				const rec = quickAddMemory(bundle.memory, text);
+				appendStatus(`📌 saved ${rec.type} memory: ${rec.name}`);
+			} catch (err) {
+				appendStatus(`couldn't save memory: ${err instanceof Error ? err.message : String(err)}`);
+			}
 			return;
 		}
 

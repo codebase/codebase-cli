@@ -23,7 +23,7 @@ rl.on("line", (line) => {
 			id: msg.id,
 			result: {
 				protocolVersion: "2025-06-18",
-				capabilities: { tools: {}, resources: {} },
+				capabilities: { tools: {}, resources: {}, prompts: {} },
 				serverInfo: { name: "mock", version: "0" },
 			},
 		});
@@ -77,6 +77,25 @@ rl.on("line", (line) => {
 			jsonrpc: "2.0",
 			id: msg.id,
 			result: { contents: [{ uri, mimeType: "text/plain", text: "hello from mock" }] },
+		});
+		return;
+	}
+	if (msg.method === "prompts/list") {
+		send({
+			jsonrpc: "2.0",
+			id: msg.id,
+			result: {
+				prompts: [{ name: "greet", description: "Greet someone", arguments: [{ name: "who", required: true }] }],
+			},
+		});
+		return;
+	}
+	if (msg.method === "prompts/get") {
+		const who = msg.params?.arguments?.who ?? "world";
+		send({
+			jsonrpc: "2.0",
+			id: msg.id,
+			result: { messages: [{ role: "user", content: { type: "text", text: `Say hello to ${who}.` } }] },
 		});
 		return;
 	}

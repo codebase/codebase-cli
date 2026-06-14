@@ -5,7 +5,12 @@ import { HttpMcpClient } from "./http-client.js";
 import type { AuthorizeDeps } from "./oauth/flow.js";
 import { McpOAuthProvider } from "./oauth/provider.js";
 import { McpOAuthStore } from "./oauth/store.js";
-import type { McpReadResourceResult, McpResourceDescriptor } from "./protocol.js";
+import type {
+	McpGetPromptResult,
+	McpPromptDescriptor,
+	McpReadResourceResult,
+	McpResourceDescriptor,
+} from "./protocol.js";
 import { StdioMcpClient } from "./stdio-client.js";
 import { mcpToAgentTool } from "./to-agent-tool.js";
 
@@ -20,6 +25,12 @@ export interface McpServerStatus {
 export interface McpResourceRef {
 	server: string;
 	descriptor: McpResourceDescriptor;
+}
+
+/** A prompt plus the server that exposes it. */
+export interface McpPromptRef {
+	server: string;
+	descriptor: McpPromptDescriptor;
 }
 
 export interface McpManagerOptions {
@@ -45,6 +56,7 @@ export class McpManager {
 	private readonly statuses: McpServerStatus[] = [];
 	private readonly toolList: AgentTool<any>[] = [];
 	private readonly resourceList: McpResourceRef[] = [];
+	private readonly promptList: McpPromptRef[] = [];
 	private readonly oauthStore: McpOAuthStore;
 	private readonly authDeps: AuthorizeDeps;
 
@@ -72,10 +84,12 @@ export class McpManager {
 					for (const desc of descriptors) {
 						this.toolList.push(mcpToAgentTool(name, client, desc));
 					}
-					// Resources are best-effort — a server without the capability
-					// returns [], and a failure here never blocks its tools.
+					// Resources + prompts are best-effort — a server without the
+					// capability returns [], and a failure never blocks its tools.
 					const resources = await client.listResources().catch(() => []);
 					for (const r of resources) this.resourceList.push({ server: name, descriptor: r });
+					const prompts = await client.listPrompts().catch(() => []);
+					for (const p of prompts) this.promptList.push({ server: name, descriptor: p });
 					this.statuses.push({ name, connected: true, toolCount: descriptors.length });
 				} catch (err) {
 					client.close();
@@ -110,6 +124,18 @@ export class McpManager {
 		const client = this.clientsByName.get(server);
 		if (!client) throw new Error(`MCP server "${server}" is not connected`);
 		return client.readResource(uri);
+	}
+
+	/** Every prompt discovered across connected servers. */
+	prompts(): readonly McpPromptRef[] {
+		return this.promptList;
+	}
+
+	/** Expand a prompt by server + name with arguments. Throws if the server isn't connected. */
+	async getPrompt(server: string, name: string, args: Record<string, string>): Promise<McpGetPromptResult> {
+		const client = this.clientsByName.get(server);
+		if (!client) throw new Error(`MCP server "${server}" is not connected`);
+		return client.getPrompt(name, args);
 	}
 
 	/** Terminate every server connection. Idempotent. */

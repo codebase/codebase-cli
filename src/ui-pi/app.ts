@@ -18,9 +18,11 @@ import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
 import { copyToClipboard } from "../clipboard/copy.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
+import { buildMcpPromptCommands } from "../commands/mcp-prompt-commands.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { buildSkillCommands } from "../commands/skill-commands.js";
 import { ConfigStore } from "../config/store.js";
+import { quickAddMemory } from "../memory/quick-add.js";
 import { runPlanFlow } from "../plan/run-flow.js";
 import type { ChatState, ToolExecution } from "../types.js";
 import { EMPTY_USAGE } from "../types.js";
@@ -264,6 +266,13 @@ export class App extends Container {
 						this.statusBar.note(`⚙ MCP ${s.name}: failed — ${s.error ?? "unknown"}`);
 					}
 				}
+				// Register MCP prompts as /mcp__server__name commands.
+				const promptCmds = buildMcpPromptCommands(this.bundle.mcp.prompts(), this.bundle.mcp, this.registry);
+				if (promptCmds.length > 0) {
+					this.registry.registerAll(promptCmds);
+					this.refreshAutocomplete();
+					this.statusBar.note(`⚙ MCP: ${promptCmds.length} prompt command${promptCmds.length === 1 ? "" : "s"}`);
+				}
 				this.tui?.requestRender();
 			})
 			.catch(() => undefined);
@@ -276,16 +285,19 @@ export class App extends Container {
 			.then((loaded) => {
 				if (loaded.length === 0) return;
 				this.registry.registerAll(buildSkillCommands(loaded, this.registry));
-				const refreshed: AutocompleteItem[] = this.registry.list().map((cmd) => ({
-					value: cmd.name,
-					label: `/${cmd.name}`,
-					description: cmd.description,
-				}));
-				this.inputBar?.setAutocompleteProvider(
-					new CombinedAutocompleteProvider(refreshed, this.bundle.toolContext.cwd),
-				);
+				this.refreshAutocomplete();
 			})
 			.catch(() => undefined);
+	}
+
+	/** Rebuild the editor's autocomplete from the current command registry. */
+	private refreshAutocomplete(): void {
+		const items: AutocompleteItem[] = this.registry.list().map((cmd) => ({
+			value: cmd.name,
+			label: `/${cmd.name}`,
+			description: cmd.description,
+		}));
+		this.inputBar?.setAutocompleteProvider(new CombinedAutocompleteProvider(items, this.bundle.toolContext.cwd));
 	}
 
 	private showUserQueryOverlay(q: import("../user-queries/store.js").UserQuery): void {
@@ -576,6 +588,18 @@ export class App extends Container {
 			const cmd = trimmed.slice(1);
 			await runShellEscape(cmd, this.bundle.toolContext.cwd, (line) => this.statusBar.note(line));
 			this.persistHistory(trimmed);
+			return;
+		}
+		// `# note` quick-adds a memory without spending an agent turn.
+		if (trimmed.startsWith("#") && trimmed.length > 1) {
+			try {
+				const rec = quickAddMemory(this.bundle.memory, trimmed);
+				this.statusBar.note(`📌 saved ${rec.type} memory: ${rec.name}`);
+			} catch (err) {
+				this.statusBar.note(`couldn't save memory: ${err instanceof Error ? err.message : String(err)}`);
+			}
+			this.persistHistory(trimmed);
+			this.tui?.requestRender();
 			return;
 		}
 

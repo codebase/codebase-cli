@@ -6,6 +6,8 @@ import {
 	type JsonRpcResponse,
 	MCP_PROTOCOL_VERSION,
 	type McpCallToolResult,
+	type McpGetPromptResult,
+	type McpPromptDescriptor,
 	type McpReadResourceResult,
 	type McpResourceDescriptor,
 	type McpToolDescriptor,
@@ -106,6 +108,23 @@ export class StdioMcpClient implements McpClient {
 	async readResource(uri: string): Promise<McpReadResourceResult> {
 		const res = await this.request("resources/read", { uri });
 		return (res.result as McpReadResourceResult) ?? {};
+	}
+
+	/** List prompts; [] when the server lacks a prompts capability. */
+	async listPrompts(): Promise<McpPromptDescriptor[]> {
+		try {
+			const res = await this.request("prompts/list", {});
+			const result = res.result as { prompts?: McpPromptDescriptor[] } | undefined;
+			return Array.isArray(result?.prompts) ? result.prompts : [];
+		} catch {
+			return [];
+		}
+	}
+
+	/** Expand a prompt by name with arguments. */
+	async getPrompt(name: string, args: Record<string, string>): Promise<McpGetPromptResult> {
+		const res = await this.request("prompts/get", { name, arguments: args });
+		return (res.result as McpGetPromptResult) ?? {};
 	}
 
 	/** Terminate the subprocess and reject any in-flight requests. */
