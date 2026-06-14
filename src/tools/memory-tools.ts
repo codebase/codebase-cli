@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, type TSchema, Type } from "typebox";
+import { rebuildMemoryIndex } from "../memory/index-file.js";
 import type { MemoryRecord, MemoryType } from "../memory/types.js";
 import type { ToolContext } from "./types.js";
 
@@ -150,13 +151,7 @@ function formatRecord(record: MemoryRecord): string {
 // ─── shared: update MEMORY.md after a save ───────────────────
 
 function updateIndex(ctx: ToolContext): void {
-	const records = ctx.memory.list();
-	if (records.length === 0) {
-		ctx.memory.writeIndex("");
-		return;
-	}
-	const lines = records.map((r) => `- [${r.name}](${r.filename}) — ${r.description}`);
-	ctx.memory.writeIndex(`${lines.join("\n")}\n`);
+	rebuildMemoryIndex(ctx.memory);
 }
 
 // ─── factory bundle ──────────────────────────────────────────
