@@ -14,12 +14,21 @@ export interface GitResult {
  * If `stdin` is provided it's written to the child's stdin and stdin is
  * closed (used for `git commit -F -` to feed multi-line messages without
  * a temp file).
+ *
+ * `env` overrides the child environment (e.g. GIT_INDEX_FILE for a
+ * snapshot against a scratch index); defaults to the parent process env.
  */
-export function runGit(args: string[], cwd: string, signal?: AbortSignal, stdin?: string): Promise<GitResult> {
+export function runGit(
+	args: string[],
+	cwd: string,
+	signal?: AbortSignal,
+	stdin?: string,
+	env?: NodeJS.ProcessEnv,
+): Promise<GitResult> {
 	return new Promise((resolveRun) => {
 		const child = spawn("git", args, {
 			cwd,
-			env: process.env,
+			env: env ?? process.env,
 			stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 		});
 		if (stdin !== undefined) {
