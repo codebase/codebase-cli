@@ -14,6 +14,7 @@ import { DiagnosticsEngine, formatDiagnostics } from "../diagnostics/engine.js";
 import { GlueClient, resolveGlueModels } from "../glue/client.js";
 import { HookManager } from "../hooks/manager.js";
 import { McpManager, type McpServerStatus } from "../mcp/manager.js";
+import { MemoryExtractor } from "../memory/extractor.js";
 import { buildMemoryAddendum } from "../memory/inject.js";
 import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
@@ -105,6 +106,8 @@ export interface AgentBundle {
 	userQueries: UserQueryStore;
 	planMode: PlanModeStore;
 	memory: MemoryStore;
+	/** Background pass that mines settled turns for durable memories. */
+	memoryExtractor: MemoryExtractor;
 	glue: GlueClient;
 	compaction: CompactionEngine;
 	compactionMonitor: CompactionMonitor;
@@ -213,6 +216,16 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const compactionMonitor = new CompactionMonitor();
 	const sessions = new SessionStore({ cwd });
 	const resumed = opts.sessionId ? sessions.loadById(opts.sessionId) : opts.resume ? sessions.load(model.id) : null;
+
+	// Background memory extraction: a cheap-model pass mines settled turns
+	// for durable facts. Seeded past any resumed transcript so it only
+	// considers new conversation. Uses the fast glue slot to stay cheap.
+	const memoryExtractor = new MemoryExtractor({
+		store: memory,
+		model: glue,
+		disabled: process.env.CODEBASE_NO_AUTO_MEMORY === "1",
+		startAt: (opts.initialMessages ?? resumed?.messages ?? []).length,
+	});
 
 	const backgroundShells = new BackgroundShellStore();
 	const monitors = new MonitorStore(backgroundShells);
@@ -579,6 +592,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		userQueries,
 		planMode,
 		memory,
+		memoryExtractor,
 		glue,
 		compaction,
 		compactionMonitor,

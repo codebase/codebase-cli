@@ -551,6 +551,26 @@ export class App extends Container {
 		return undefined;
 	}
 
+	/**
+	 * Fire-and-forget background memory extraction after a settled turn. The
+	 * extractor self-throttles (only runs once enough new turns accrue), so
+	 * calling it every agent_end is cheap. Saved memories are announced
+	 * quietly so the user knows what was remembered.
+	 */
+	private scheduleMemoryExtraction(): void {
+		void this.bundle.memoryExtractor
+			.maybeExtract(this.messages)
+			.then((saved) => {
+				if (saved.length === 0) return;
+				const titles = saved.map((r) => r.name).join(", ");
+				this.statusBar.note(
+					`📝 remembered ${saved.length === 1 ? "1 thing" : `${saved.length} things`}: ${titles}`,
+				);
+				this.tui?.requestRender();
+			})
+			.catch(() => undefined);
+	}
+
 	private composeInExternalEditor(): void {
 		if (!this.inputBar) return;
 		const edited = editInExternalEditor(this.inputBar.getText(), {
@@ -1211,6 +1231,7 @@ export class App extends Container {
 					}
 				}
 				this.maybeDrainQueue();
+				this.scheduleMemoryExtraction();
 				break;
 		}
 		this.pushMetrics();

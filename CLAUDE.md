@@ -99,6 +99,7 @@ CODEBASE_FRESH=1              skip auto-resume of prior session (same as --new)
 CODEBASE_REACT_TUI=1          legacy ink renderer (pi-tui is the default)
 CODEBASE_NO_SUGGESTIONS=1     disable ghost-text prompt suggestions
 CODEBASE_NO_NOTIFY=1          silence the turn-completion bell + OS notification
+CODEBASE_NO_AUTO_MEMORY=1     disable background memory extraction
 CODEBASE_DEBUG=1              verbose stderr logging
 CODEBASE_DEBUG_INPUT=1        log every keystroke to ~/.codebase/logs/input.log
 NO_HYPERLINK=1                disable OSC 8 clickable file paths
