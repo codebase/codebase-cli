@@ -1,3 +1,4 @@
+import { fetchAvailableModels } from "../../agent/model-list.js";
 import type { Command } from "../types.js";
 
 /**
@@ -37,15 +38,9 @@ export const modelCmd: Command = {
 	handler: async (args, ctx) => {
 		const arg = args.trim();
 		if (!arg) {
-			// No-args opens the inline picker. For BYOK / non-proxy sessions
-			// there's no live model list to fetch, so print the static info
-			// instead of an empty overlay.
-			if (ctx.bundle.source !== "proxy") {
-				const m = ctx.state.model;
-				ctx.emit(`Current model: ${m.name} (${m.provider}/${m.id})`);
-				ctx.emit("BYOK session — switch via CODEBASE_PROVIDER + CODEBASE_MODEL env vars at launch.");
-				return { handled: true };
-			}
+			// No-args opens the inline picker — it fetches the live model list
+			// from whatever this session talks to (proxy, an OpenAI-compatible /
+			// local server, Anthropic, Google) and switches in place.
 			ctx.openModelPicker();
 			return { handled: true };
 		}
@@ -67,61 +62,38 @@ export const modelCmd: Command = {
 export const modelsCmd: Command = {
 	name: "models",
 	aliases: ["lm"],
-	description: "List models available to your account (fetched live from the proxy).",
+	description: "List the models this session can switch to (live from the proxy, provider API, or local server).",
 	handler: async (_args, ctx) => {
-		// BYOK users don't go through our proxy — there's no central
-		// "available models" endpoint for arbitrary upstreams. Tell them
-		// how to switch and bail.
-		if (ctx.bundle.source !== "proxy") {
-			ctx.emit(`Current: ${ctx.state.model.name} (${ctx.state.model.provider}/${ctx.state.model.id})`);
-			ctx.emit("BYOK session — switch by re-launching with CODEBASE_PROVIDER + CODEBASE_MODEL env vars.");
-			return { handled: true };
-		}
-		const baseUrl = (ctx.bundle.model.baseUrl ?? "").replace(/\/+$/, "");
-		if (!baseUrl) {
-			ctx.emit("(model has no baseUrl — can't query the proxy)");
-			return { handled: true };
-		}
+		const apiKey = await ctx.bundle.agent.getApiKey?.(ctx.bundle.model.provider);
+		let models: Array<{ id: string; name: string; provider: string }>;
 		try {
-			const apiKey = await ctx.bundle.agent.getApiKey?.(ctx.bundle.model.provider);
-			if (!apiKey) {
-				ctx.emit("(not signed in — run `codebase auth login`)");
-				return { handled: true };
-			}
-			const res = await fetch(`${baseUrl}/models`, {
-				headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-			});
-			if (!res.ok) {
-				ctx.emit(`(failed to fetch models: ${res.status} ${res.statusText})`);
-				return { handled: true };
-			}
-			const json = (await res.json()) as { models?: Array<{ id: string; name: string; provider: string }> };
-			const models = json.models ?? [];
-			if (models.length === 0) {
-				ctx.emit("(no models returned)");
-				return { handled: true };
-			}
-			const current = `${ctx.state.model.provider}/${ctx.state.model.id}`;
-			ctx.emit("Available models (* = active):");
-			// Group by provider so the list reads as a tree.
-			const byProvider = new Map<string, Array<{ id: string; name: string }>>();
-			for (const m of models) {
-				const arr = byProvider.get(m.provider) ?? [];
-				arr.push({ id: m.id, name: m.name });
-				byProvider.set(m.provider, arr);
-			}
-			const providers = [...byProvider.keys()].sort();
-			for (const p of providers) {
-				ctx.emit(`  ${p}:`);
-				for (const m of byProvider.get(p) ?? []) {
-					const marker = `${p}/${m.id}` === current ? "*" : " ";
-					ctx.emit(`    ${marker} ${m.id}  ${m.name === m.id ? "" : `· ${m.name}`}`);
-				}
-			}
-			ctx.emit("Switch: /model <id> · /model <provider>:<id>");
+			models = await fetchAvailableModels(ctx.bundle.model, apiKey);
 		} catch (err) {
-			ctx.emit(`(error fetching models: ${err instanceof Error ? err.message : String(err)})`);
+			ctx.emit(`(couldn't list models: ${err instanceof Error ? err.message : String(err)})`);
+			ctx.emit(`Current: ${ctx.state.model.name} (${ctx.state.model.provider}/${ctx.state.model.id})`);
+			return { handled: true };
 		}
+		if (models.length === 0) {
+			ctx.emit(`(no models returned for ${ctx.bundle.model.provider})`);
+			return { handled: true };
+		}
+		const current = `${ctx.state.model.provider}/${ctx.state.model.id}`;
+		ctx.emit("Available models (* = active):");
+		// Group by provider so the list reads as a tree.
+		const byProvider = new Map<string, Array<{ id: string; name: string }>>();
+		for (const m of models) {
+			const arr = byProvider.get(m.provider) ?? [];
+			arr.push({ id: m.id, name: m.name });
+			byProvider.set(m.provider, arr);
+		}
+		for (const p of [...byProvider.keys()].sort()) {
+			ctx.emit(`  ${p}:`);
+			for (const m of byProvider.get(p) ?? []) {
+				const marker = `${p}/${m.id}` === current || m.id === ctx.state.model.id ? "*" : " ";
+				ctx.emit(`    ${marker} ${m.id}${m.name === m.id ? "" : `  · ${m.name}`}`);
+			}
+		}
+		ctx.emit("Switch: /model <id> · /model <provider>:<id> · or /model for the picker");
 		return { handled: true };
 	},
 };

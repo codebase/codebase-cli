@@ -25,20 +25,19 @@ export class ModelPickerOverlay extends Container {
 		models: ModelOption[],
 		onSelect: (spec: { provider?: string; modelId: string } | null) => void,
 		onCancel: () => void,
+		includeReset = true,
 	) {
 		super();
 
 		this.addChild(new Text(ansi.bold("Switch model"), 1, 0));
 		this.addChild(new Text(ansi.dim("↑↓ choose · Enter select · Esc cancel"), 1, 0));
 
-		// First synthetic entry: reset to Codebase Auto. Always first so it
-		// stays in the same slot regardless of provider order.
+		// First synthetic entry: reset to Codebase Auto — a proxy-only concept,
+		// omitted for BYOK / local sessions where there's no proxy default.
 		const items = [
-			{
-				value: "__reset__",
-				label: "Codebase Auto",
-				description: "let the proxy pick (default for OAuth)",
-			},
+			...(includeReset
+				? [{ value: "__reset__", label: "Codebase Auto", description: "let the proxy pick (default for OAuth)" }]
+				: []),
 			...models.map((m) => {
 				const active = m.id === currentId && m.provider === currentProvider;
 				return {

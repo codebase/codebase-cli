@@ -14,6 +14,7 @@ import {
 import { type AgentBundle, createAgent } from "../agent/agent.js";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
 import { listRewindPoints, type RewindPoint, truncateBefore } from "../agent/conversation-rewind.js";
+import { fetchAvailableModels } from "../agent/model-list.js";
 import { generateSuggestion } from "../agent/prompt-suggestion.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
@@ -1102,6 +1103,12 @@ export class App extends Container {
 		try {
 			const models = await loadAvailableModels(this.bundle);
 			this.statusBar.note("");
+			// BYOK with no list (or a one-model endpoint) → don't open an empty
+			// picker; the reset entry only exists for proxy sessions.
+			if (models.length === 0 && this.bundle.source !== "proxy") {
+				this.statusBar.note(`no models to switch to for ${this.bundle.model.provider}.`);
+				return;
+			}
 			this.showModelPicker(models);
 		} catch (err) {
 			this.statusBar.note(`model list failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1120,6 +1127,7 @@ export class App extends Container {
 				void this.switchModel(spec);
 			},
 			() => this.hideModelPicker(),
+			this.bundle.source === "proxy",
 		);
 		const handle = this.tui.showOverlay(component, { anchor: "center", width: "70%", minWidth: 50 });
 		this.tui.setFocus(component.getFocusTarget());
@@ -1535,19 +1543,8 @@ export class App extends Container {
  * back into `src/ui/App.tsx`, which goes away in phase 5.
  */
 async function loadAvailableModels(bundle: AgentBundle): Promise<ModelOption[]> {
-	if (bundle.source !== "proxy") {
-		throw new Error("BYOK session — use CODEBASE_PROVIDER + CODEBASE_MODEL env vars at launch to switch.");
-	}
-	const baseUrl = (bundle.model.baseUrl ?? "").replace(/\/+$/, "");
-	if (!baseUrl) throw new Error("model has no baseUrl — can't query the proxy");
 	const apiKey = await bundle.agent.getApiKey?.(bundle.model.provider);
-	if (!apiKey) throw new Error("not signed in — run `codebase auth login`");
-	const res = await fetch(`${baseUrl}/models`, {
-		headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-	});
-	if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-	const json = (await res.json()) as { models?: ModelOption[] };
-	return json.models ?? [];
+	return fetchAvailableModels(bundle.model, apiKey);
 }
 
 /**
