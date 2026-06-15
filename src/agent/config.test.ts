@@ -71,6 +71,34 @@ describe("resolveConfig", () => {
 		expect(config.model.contextWindow).toBe(32768);
 	});
 
+	it("honors a /model override on an openai-compat (local) session", () => {
+		credentials.save({
+			accessToken: "none",
+			scopes: [],
+			source: "byok",
+			provider: "openai-compat",
+			baseUrl: "http://localhost:1234/v1",
+			model: "qwen2.5-coder-32b",
+		});
+
+		const config = resolveConfig({ env: {}, credentials, modelOverride: { modelId: "deepseek-r1:14b" } });
+
+		expect(config.source).toBe("byok");
+		expect(config.model.id).toBe("deepseek-r1:14b"); // swapped via /model
+		expect(config.model.baseUrl).toBe("http://localhost:1234/v1"); // same local endpoint
+	});
+
+	it("honors a /model override on a keyed BYOK session, id-cloning unknown ids", () => {
+		credentials.save({ accessToken: "sk-ant-test", scopes: [], source: "byok", provider: "anthropic" });
+
+		const config = resolveConfig({ env: {}, credentials, modelOverride: { modelId: "claude-future-9000" } });
+
+		expect(config.source).toBe("byok");
+		expect(config.model.provider).toBe("anthropic");
+		expect(config.model.id).toBe("claude-future-9000"); // not in pi-ai's registry, id-cloned
+		expect(config.apiKey).toBe("sk-ant-test");
+	});
+
 	it("byok credentials win over env-var auto-detect", () => {
 		credentials.save({
 			accessToken: "sk-or-byok",

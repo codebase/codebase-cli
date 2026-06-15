@@ -82,16 +82,17 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 		if (creds.source === "byok" && creds.provider === "openai-compat" && creds.baseUrl) {
 			// Custom Chat Completions endpoint saved by the wizard (Ollama,
 			// LM Studio, vLLM, …). Same synthesis as the OPENAI_BASE_URL env
-			// path, but persisted so it survives restarts.
+			// path, but persisted so it survives restarts. A /model override
+			// swaps the id against the same local endpoint + key.
 			const compat = buildOpenAiCompatConfig({
 				baseUrl: creds.baseUrl,
-				modelId: creds.model ?? "default",
+				modelId: override?.modelId ?? creds.model ?? "default",
 				apiKey: creds.accessToken,
 				contextWindow: creds.contextWindow,
 			});
 			if (compat) return { ...compat, source: "byok" };
 		} else if (creds.source === "byok" && creds.provider) {
-			const byok = buildByokConfig(creds.provider as KnownProvider, creds.accessToken);
+			const byok = buildByokConfig(creds.provider as KnownProvider, creds.accessToken, override);
 			if (byok) return byok;
 		} else if (useProxy) {
 			const proxied = buildProxiedConfig(env, creds.accessToken, override);
@@ -109,7 +110,7 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 	if (env.OPENAI_BASE_URL && env.OPENAI_API_KEY && env.OPENAI_MODEL) {
 		const compat = buildOpenAiCompatConfig({
 			baseUrl: env.OPENAI_BASE_URL,
-			modelId: env.OPENAI_MODEL,
+			modelId: override?.modelId ?? env.OPENAI_MODEL,
 			apiKey: env.OPENAI_API_KEY,
 		});
 		if (compat) return compat;
@@ -119,7 +120,16 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 	const explicitModel = env.CODEBASE_MODEL;
 
 	if (explicitProvider && explicitModel) {
-		const model = getModel(explicitProvider, explicitModel as never);
+		// A /model override swaps the id at runtime; the launch env value is
+		// the default. An id pi-ai doesn't know is id-cloned from the launch
+		// model so any model the provider lists is switchable (only the
+		// initial launch id, with no override, must be registry-known).
+		const wantId = override?.modelId ?? explicitModel;
+		let model = getModel(explicitProvider, wantId as never) as Model<string> | undefined;
+		if (!model && override?.modelId) {
+			const base = getModel(explicitProvider, explicitModel as never) as Model<string> | undefined;
+			if (base) model = { ...base, id: wantId, name: wantId };
+		}
 		if (!model) {
 			throw new ConfigError(
 				`CODEBASE_PROVIDER=${explicitProvider} CODEBASE_MODEL=${explicitModel} not in pi-ai's model registry. ` +
@@ -312,20 +322,44 @@ function buildOpenAiCompatConfig(opts: {
 
 /**
  * BYOK mode: caller has saved a provider's own API key. Use the
- * provider's normal baseUrl from pi-ai's registry — no proxy.
+ * provider's normal baseUrl from pi-ai's registry — no proxy. A /model
+ * override swaps the id within the same provider; an id pi-ai doesn't
+ * know natively is id-cloned from the provider's default so every model
+ * the provider's /models endpoint lists is switchable.
  */
-function buildByokConfig(provider: KnownProvider, apiKey: string): ResolvedConfig | null {
-	const modelId = DEFAULT_MODELS[provider];
-	if (!modelId) return null;
-	const model = getModel(provider, modelId as never) as Model<string> | undefined;
+function buildByokConfig(
+	provider: KnownProvider,
+	apiKey: string,
+	override?: { provider?: string; modelId: string },
+): ResolvedConfig | null {
+	const defaultId = DEFAULT_MODELS[provider];
+	const wantId = override?.modelId ?? defaultId;
+	if (!wantId) return null;
+	let model = getModel(provider, wantId as never) as Model<string> | undefined;
+	if (!model && defaultId) {
+		const template = getModel(provider, defaultId as never) as Model<string> | undefined;
+		if (template) {
+			model = {
+				...template,
+				id: wantId,
+				name: wantId,
+				contextWindow: guessContextWindow(wantId, template.contextWindow),
+			};
+		}
+	}
 	if (!model) return null;
 	return { model, apiKey, source: "byok" };
 }
 
+const OPTION_KEYS = new Set(["env", "credentials", "modelOverride"]);
+
 function isProcessEnv(value: NodeJS.ProcessEnv | ResolveConfigOptions): value is NodeJS.ProcessEnv {
 	if (!value) return true;
-	// ResolveConfigOptions has at most env/credentials properties; ProcessEnv has many.
+	// ResolveConfigOptions only ever holds env/credentials/modelOverride; a
+	// real ProcessEnv has many other keys. (Missing modelOverride here was a
+	// real bug: resolveConfig({modelOverride}) was treated as an env, so the
+	// /model override was silently dropped and the model reverted to default.)
 	const keys = Object.keys(value);
 	if (keys.length === 0) return true;
-	return !keys.every((k) => k === "env" || k === "credentials");
+	return !keys.every((k) => OPTION_KEYS.has(k));
 }
