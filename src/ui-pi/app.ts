@@ -151,7 +151,12 @@ export class App extends Container {
 		// state change — pi-tui only paints on input events or explicit
 		// requestRender, never automatically on child invalidate.
 		const requestRender = (): void => this.tui?.requestRender();
-		this.statusBar = new StatusBar(this.bundle.model.name, this.bundle.toolContext.cwd, requestRender);
+		this.statusBar = new StatusBar(
+			this.bundle.model.name,
+			this.bundle.toolContext.cwd,
+			requestRender,
+			this.bundle.source !== "proxy",
+		);
 		this.bgShellPanel = new BackgroundShellPanel(this.bundle.backgroundShells, requestRender);
 		this.compactionBanner = new CompactionBanner(this.bundle.compactionMonitor, requestRender);
 		this.taskPanel = new TaskPanel(this.bundle.toolContext.tasks, requestRender);
@@ -1278,7 +1283,10 @@ export class App extends Container {
 	private pushMetrics(): void {
 		const state = this.buildChatStateShadow();
 		const usedTokens = estimateContextTokens(state);
-		const contextWindow = 200_000;
+		// Use the resolved model's real context window — a hardcoded 200k was
+		// wrong for local 8k models and 1M-context routes alike. Mirror the
+		// compaction engine, which already trusts model.contextWindow.
+		const contextWindow = this.bundle.model.contextWindow || 200_000;
 		const ctxPct = contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
 		this.statusBar.setMetrics(ctxPct, this.usage.cost.total, this.computeTokRate());
 		this.contextWarning.setPercent(ctxPct);
@@ -1568,11 +1576,16 @@ class StatusBar extends Container {
 	private verb = THINKING_VERBS[0];
 	private verbTimer: NodeJS.Timeout | undefined;
 	private readonly onTick: () => void;
-	constructor(modelName: string, cwd: string, onTick: () => void = () => undefined) {
+	/** Per-turn cost is only meaningful on metered (BYOK) sessions — the
+	 * proxy bills a flat subscription and returns no usage, so $0.0000 there
+	 * is noise, not information. Hidden for proxy. */
+	private readonly showCost: boolean;
+	constructor(modelName: string, cwd: string, onTick: () => void = () => undefined, showCost = true) {
 		super();
 		this.modelName = modelName;
 		this.cwdLabel = basename(cwd) || cwd;
 		this.onTick = onTick;
+		this.showCost = showCost;
 		this.line = new Text(this.format(), 1, 0);
 		this.notesContainer = new Container();
 		this.addChild(this.notesContainer);
@@ -1656,9 +1669,10 @@ class StatusBar extends Container {
 		const bar = ctxBar(this.ctxPercent);
 		const ctxText = colorByThreshold(`${bar} ${this.ctxPercent}%`, this.ctxPercent);
 		const tokPart = this.tokRate !== undefined ? ` · ${this.tokRate} tok/s` : "";
+		const costPart = this.showCost ? ` · $${formatCost(this.cost)}` : "";
 		// Model name reads at default brightness as the anchor; the rest of
 		// the meta recedes to dim so the line is glanceable, not a wall.
-		const meta = ansi.dim(`${this.cwdLabel} · ctx ${ctxText}${tokPart} · $${formatCost(this.cost)}`);
+		const meta = ansi.dim(`${this.cwdLabel} · ctx ${ctxText}${tokPart}${costPart}`);
 		return `${throb}${statusLabel}    ${this.modelName}  ${meta}`;
 	}
 }
