@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,8 +29,16 @@ function makeCapture(): { capture: Capture; write: { stdout: (s: string) => void
 describe("runHeadless", () => {
 	let faux: ReturnType<typeof registerFauxProvider>;
 	let model: Model<string>;
+	let tmpHome: string;
+	let prevHome: string | undefined;
 
 	beforeEach(() => {
+		// Isolate HOME so CredentialsStore can't pick up the dev's real
+		// ~/.codebase login — otherwise the ConfigError tests are non-hermetic
+		// and pass only when no valid credentials happen to exist on the box.
+		prevHome = process.env.HOME;
+		tmpHome = mkdtempSync(join(tmpdir(), "headless-home-"));
+		process.env.HOME = tmpHome;
 		faux = registerFauxProvider({
 			models: [
 				{
@@ -47,6 +58,9 @@ describe("runHeadless", () => {
 
 	afterEach(() => {
 		faux.unregister();
+		if (prevHome !== undefined) process.env.HOME = prevHome;
+		else delete process.env.HOME;
+		rmSync(tmpHome, { recursive: true, force: true });
 	});
 
 	it("text mode emits the assistant reply on stdout", async () => {
