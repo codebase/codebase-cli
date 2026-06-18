@@ -4,8 +4,8 @@ codebase-cli v2 is a complete rewrite of the v1 Go binary on top of the
 [pi-mono](https://github.com/earendil-works/pi-mono) TypeScript runtime.
 The user-facing surface is intentionally compatible: same data
 directory, same OAuth tokens, same env vars, same project conventions.
-The internals are different — see `V2_REWRITE_PLAN.md` and
-`docs/ARCHITECTURE.md` if you want the technical history.
+The internals are different — see [`.settings/architecture.md`](../.settings/architecture.md)
+if you want the technical detail.
 
 This guide is for v1 users upgrading.
 
