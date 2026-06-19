@@ -3,6 +3,7 @@ import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { ensureFreshCredentials } from "./auth/ensure-fresh.js";
+import { runDirectorSubcommand } from "./directors/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
@@ -75,6 +76,8 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runSshSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "project" || argv[0] === "projects") {
 	runProjectSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "director" || argv[0] === "directors") {
+	runDirectorSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "app-server") {
 	// JSON-RPC-ish over stdio for IDE extensions. Auto-approve permissions
 	// by default — IDE clients render approval UIs themselves and we don't
