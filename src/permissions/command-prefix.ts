@@ -26,6 +26,7 @@ const SUBCOMMAND_TOOLS: ReadonlySet<string> = new Set([
 	"go",
 	"docker",
 	"kubectl",
+	"helm",
 	"gh",
 	"pip",
 	"pip3",
