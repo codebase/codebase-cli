@@ -5,7 +5,7 @@ import { CredentialsStore } from "../auth/credentials.js";
  * Provider+model selection, in priority order:
  *   1. Saved OAuth/API credentials (~/.codebase/credentials.json) — if
  *      present and not expired, route the chosen model through the
- *      codebase.foundation inference proxy so the backend can deduct
+ *      codebase.design inference proxy so the backend can deduct
  *      credits. The model metadata stays the same; only baseUrl + apiKey
  *      change.
  *   2. CODEBASE_PROVIDER + CODEBASE_MODEL env (explicit override)
@@ -184,9 +184,9 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
  * Build a model that routes through codebase.design's inference proxy.
  *
  * Default when signed in via OAuth: "Codebase Auto" — the in-house
- * MiniMax-M2.7 served via the openai-compat protocol. This matches
- * what the web app calls the same model (`codebase` provider in
- * web/backend/providers/registry.js).
+ * DeepSeek V4 Flash (`d4f`) served via the OpenAI-compatible protocol.
+ * This matches the Codebase provider entry in
+ * web/backend/providers/registry.js.
  *
  * Override via env: CODEBASE_PROVIDER + CODEBASE_MODEL still pick a
  * specific upstream from pi-ai's registry, also routed through the
@@ -227,13 +227,10 @@ function buildProxiedConfig(
 			// `model.id` only, so this cast is safe.
 			provider: "codebase" as Model<string>["provider"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			// Codebase Auto routes to large-context models on the backend
-			// (Claude Sonnet 4 default, open-weight alternates also 128k+).
-			// The Groq llama template's 128k contextWindow was leaking
-			// through and triggering compaction at ~96k tokens on routes
-			// that have 200k of headroom. Set explicitly so the compaction
-			// engine reads the right value.
-			contextWindow: 200_000,
+			// Keep this in sync with web/backend/providers/registry.js. The
+			// Groq llama template's context window is only a synthesis
+			// scaffold; compaction must budget against the actual d4f backend.
+			contextWindow: 131_072,
 		};
 		return { model, apiKey: accessToken, source: "proxy" };
 	}

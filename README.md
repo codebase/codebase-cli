@@ -34,6 +34,12 @@ codebase
 
 Type, hit enter. It reads files, edits code, runs tests, and shows its work. `/help` lists everything.
 
+For a trusted one-shot build from scripts or CI:
+
+```sh
+codebase auto "build a small dashboard and run the tests"
+```
+
 ## Pick your LLM
 
 **Bring your own key** — Anthropic, OpenAI, Groq, OpenRouter, Mistral, Ollama, or any OpenAI-compatible endpoint:
@@ -48,7 +54,7 @@ ANTHROPIC_API_KEY=sk-ant-... codebase     # or OPENAI_API_KEY, GROQ_API_KEY, …
 codebase auth login
 ```
 
-Swap models live with `/model`. Set reasoning depth with `/effort`.
+OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash). Swap models live with `/model`. Set reasoning depth with `/effort`.
 
 ## What makes it good
 

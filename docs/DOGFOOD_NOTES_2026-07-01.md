@@ -28,6 +28,8 @@ The launch funnel around the CLI needs tightening before a broad web launch. The
   - first-run "Login to Codebase" browser OAuth from a clean `HOME`
   - authenticated interactive TUI app-build prompt
   - authenticated `codebase run --auto-approve --output text "<counter app prompt>"`
+  - authenticated `codebase auto --output json "Reply with exactly READY..."`
+  - authenticated `codebase auto --output json "<tiny static app prompt>"`
   - `codebase auth --help`, `codebase project --help`, `codebase run --help`
   - authenticated `project list` and `project pull <id> <dest>`
   - `codebase doctor` from a fresh temp `HOME`
@@ -63,6 +65,8 @@ The launch funnel around the CLI needs tightening before a broad web launch. The
 - Added top-level `codebase doctor`, sharing the same health-report core as interactive `/doctor`, so stuck users can diagnose runtime/auth/config/storage before the TUI starts.
 - `codebase project list` now defaults to 25 entries, supports `--limit N` / `--all`, and sorts indexed/titled projects before raw storage-only entries.
 - `codebase project pull` now prints a quoted unzip command that extracts beside the downloaded ZIP, including when the destination path contains spaces.
+- Added `codebase auto <prompt>` as a discoverable shortcut for `codebase run --auto-approve <prompt>`, including help text and JSON/stream-json output support.
+- CLI OAuth sessions now pin Codebase Auto metadata to the backend `codebase/d4f` route and use the backend registry's `131072` context window instead of an optimistic `200000`.
 
 Verification after fixes:
 
@@ -74,6 +78,8 @@ Verification after fixes:
 - `npx vitest --run src/auth/cli.test.ts src/projects/cli.test.ts src/headless/run.test.ts src/agent/config.test.ts`
 - Authenticated dogfood: first-run OAuth saved credentials at mode `0600`, `codebase auth status` reported scopes `inference projects credits`, and `codebase run --auto-approve` created `index.html`, `styles.css`, and `app.js` in a fresh temp workspace.
 - Authenticated scenario pass: `codebase run --auto-approve` edited only `app.js` in a temp git repo, ran `npm test`, and left the expected one-line diff; interactive `/diff` rendered the same hunk.
+- Authenticated `codebase auto --output json "Reply with exactly READY..."` exited `0` and reported `model: { provider: "codebase", id: "d4f", name: "Codebase Auto" }`, `source: "proxy"`.
+- Authenticated `codebase auto --output json "<tiny static app prompt>"` exited `0`, produced `index.html`, `styles.css`, and `app.js`, and the generated app rendered over localhost; clicking "Mark All Done" checked all three boxes and changed the button to "Reset All".
 
 ## Browser OAuth + Build E2E - 2026-07-01
 
@@ -205,10 +211,23 @@ Remaining follow-up: consider grouping/paging storage-only projects separately i
 Evidence:
 
 - Authenticated `codebase run --auto-approve --output json "Reply with exactly READY"` returned the correct `finalText`, but `usage.input`, `usage.output`, `totalTokens`, and cost were all `0`.
+- Re-tested with authenticated `codebase auto --output json "Reply with exactly READY..."` and a tiny app-build prompt. Both successful JSON envelopes still reported all usage/cost fields as `0`.
 
 Impact: `/cost`, JSON automation, and user trust around credits/accounting are weaker if the CLI cannot show real usage for Codebase-proxied calls.
 
 Suggested fix: have the inference proxy return provider usage in the response shape pi-ai reads, or translate backend accounting into the CLI envelope.
+
+### P1 - Default model naming differs by surface
+
+Evidence:
+
+- CLI OAuth/proxy default now resolves to `codebase/d4f` named `Codebase Auto`.
+- Web settings UI defaults to `d4f` / `Codebase Auto`.
+- Web backend registry fallback `DEFAULT_MODEL` is `process.env.DEFAULT_MODEL || process.env.OPENAI_MODEL || "deepseek-v4-flash"`, so API/build paths that omit a model can default to the official DeepSeek route rather than the in-house Codebase Auto route.
+
+Impact: when users ask "what model did my build use?", the honest answer can vary by surface and by whether a model was explicitly carried through the request. That is fine if intentional, but it should be named deliberately in docs/API responses.
+
+Suggested fix: pick the launch default contract. If "Codebase Auto" is the product default, make omitted-model API/build paths resolve to `d4f` or return an explicit `resolvedModel` field in build/session responses so the UI and CLI can show exactly what ran.
 
 ### P2 - Project pull works; unzip hint is now destination-aware
 

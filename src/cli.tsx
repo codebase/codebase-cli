@@ -114,6 +114,22 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	}
 	await ensureFreshCredentials();
 	runHeadless({ prompt, outputFormat, autoApprove }).then((code) => process.exit(code));
+} else if (argv[0] === "auto") {
+	if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
+		printAutoHelp();
+		process.exit(0);
+	}
+	const { prompt, outputFormat, error } = parseRunArgs(argv.slice(1));
+	if (error) {
+		process.stderr.write(`${error}\n`);
+		process.exit(2);
+	}
+	if (!prompt) {
+		process.stderr.write("usage: codebase auto [--output text|json|stream-json] <prompt>\n");
+		process.exit(2);
+	}
+	await ensureFreshCredentials();
+	runHeadless({ prompt, outputFormat, autoApprove: true }).then((code) => process.exit(code));
 } else {
 	setTerminalTitle("codebase");
 	// Print a one-line warning if any restriction is off so the user can't
@@ -207,6 +223,8 @@ function printHelp(): void {
 			"                               one-shot headless run, prints to stdout",
 			"  codebase run --auto-approve --output json|stream-json <prompt>",
 			"                               one-shot run with structured output",
+			"  codebase auto <prompt>       shortcut for run --auto-approve",
+			"                               one-shot build/change in a trusted workspace",
 			"  codebase auth login          sign in via codebase.design browser OAuth",
 			"  codebase auth logout         revoke the current session",
 			"  codebase auth status         show current sign-in",
@@ -248,6 +266,27 @@ function printRunHelp(): void {
 			"Options:",
 			"  --output, -o text|json|stream-json   choose stdout format (default: text)",
 			"  --auto-approve, --yes, -y            required: allow tool calls without interactive prompts",
+			"  --help, -h                           show this help",
+			"",
+			"Shortcut:",
+			"  codebase auto <prompt>               same as run --auto-approve <prompt>",
+			"",
+		].join("\n"),
+	);
+}
+
+function printAutoHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase auto [--output text|json|stream-json] <prompt>",
+			"",
+			"Run one trusted, non-interactive coding task with tool calls auto-approved.",
+			"",
+			"Equivalent to:",
+			"  codebase run --auto-approve <prompt>",
+			"",
+			"Options:",
+			"  --output, -o text|json|stream-json   choose stdout format (default: text)",
 			"  --help, -h                           show this help",
 			"",
 		].join("\n"),

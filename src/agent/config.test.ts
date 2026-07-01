@@ -55,6 +55,24 @@ describe("resolveConfig", () => {
 		expect(config.model.baseUrl).toBe("http://localhost:11434/v1");
 	});
 
+	it("defaults OAuth credentials to Codebase Auto", () => {
+		credentials.save({
+			accessToken: "oauth-token",
+			scopes: ["inference"],
+			source: "codebase",
+		});
+
+		const config = resolveConfig({ env: {}, credentials });
+
+		expect(config.source).toBe("proxy");
+		expect(config.apiKey).toBe("oauth-token");
+		expect(config.model.provider).toBe("codebase");
+		expect(config.model.id).toBe("d4f");
+		expect(config.model.name).toBe("Codebase Auto");
+		expect(config.model.baseUrl).toBe("https://codebase.design/api/inference");
+		expect(config.model.contextWindow).toBe(131_072);
+	});
+
 	it("a scan-detected context window overrides the template default", () => {
 		credentials.save({
 			accessToken: "none",

@@ -84,14 +84,17 @@ the env-var resolution bug class.
 ## Headless mode (for CI users)
 
 ```sh
+# Trusted one-shot shortcut
+codebase auto "say hello"
+
 # Text mode: assistant reply on stdout
 codebase run --auto-approve "say hello"
 
 # JSON mode: ONE object on stdout
-codebase run --auto-approve --output json "say hello" | jq .
+codebase auto --output json "say hello" | jq .
 
 # stream-json mode: one event per line
-codebase run --auto-approve --output stream-json "say hello"
+codebase auto --output stream-json "say hello"
 
 # Error path: no creds → structured error in JSON
 rm -f ~/.codebase/credentials.json
@@ -99,6 +102,9 @@ unset ANTHROPIC_API_KEY OPENAI_API_KEY GROQ_API_KEY
 codebase run --output json "x" 2>/dev/null | jq .
 # expect: { ok: false, exitCode: 1, code: "config_error", error: "..." }
 ```
+
+Verify JSON includes `model: { provider: "codebase", id: "d4f", name: "Codebase Auto" }`
+for a signed-in user unless the tester explicitly switched models.
 
 ## Slash commands (smoke test the obvious ones)
 
