@@ -73,11 +73,11 @@ interface FirstRunSetupProps {
 }
 
 const MENU_OPTIONS = [
-	{ key: "oauth", label: "Login to Codebase", hint: "free credits · Codebase Auto model · curated skills" },
+	{ key: "oauth", label: "Login to Codebase", hint: "free credits · Codebase Auto" },
 	{
 		key: "byok",
 		label: "Bring your own LLM key",
-		hint: "Anthropic / OpenAI / Groq key, or any OpenAI-compatible endpoint",
+		hint: "provider key or local endpoint",
 	},
 	{ key: "quit", label: "Quit", hint: "exit the wizard" },
 ] as const;
@@ -375,7 +375,7 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 		<Box flexDirection="column" paddingX={1} paddingY={1}>
 			<BrandHeader />
 			<Box marginBottom={1}>
-				<Text dimColor>Pick how you want to power the agent. You can change this later via `codebase auth`.</Text>
+				<Text dimColor>Pick how you want to power the agent. Change later with /model, auth login, or --new.</Text>
 			</Box>
 			{renderBody(mode, authBase, manualUrl, pasteBuffer, pasteError)}
 		</Box>

@@ -67,6 +67,7 @@ The launch funnel around the CLI needs tightening before a broad web launch. The
 - `codebase project pull` now prints a quoted unzip command that extracts beside the downloaded ZIP, including when the destination path contains spaces.
 - Added `codebase auto <prompt>` as a discoverable shortcut for `codebase run --auto-approve <prompt>`, including help text and JSON/stream-json output support.
 - CLI OAuth sessions now pin Codebase Auto metadata to the backend `codebase/d4f` route and use the backend registry's `131072` context window instead of an optimistic `200000`.
+- First-run setup copy now fits an 80-column terminal and tells users the actual recovery paths: `/model`, `auth login`, or `--new`.
 
 Verification after fixes:
 
@@ -80,6 +81,8 @@ Verification after fixes:
 - Authenticated scenario pass: `codebase run --auto-approve` edited only `app.js` in a temp git repo, ran `npm test`, and left the expected one-line diff; interactive `/diff` rendered the same hunk.
 - Authenticated `codebase auto --output json "Reply with exactly READY..."` exited `0` and reported `model: { provider: "codebase", id: "d4f", name: "Codebase Auto" }`, `source: "proxy"`.
 - Authenticated `codebase auto --output json "<tiny static app prompt>"` exited `0`, produced `index.html`, `styles.css`, and `app.js`, and the generated app rendered over localhost; clicking "Mark All Done" checked all three boxes and changed the button to "Reset All".
+- Fresh no-credentials `codebase auto --output json "make a file"` exited `1` with `code: "config_error"`, which is good for automation but still dense for a human first run.
+- Reopened the first-run wizard at 80 columns. The top-level menu now renders without clipping: "Login to Codebase" shows "free credits · Codebase Auto", and BYOK shows "provider key or local endpoint."
 
 ## Browser OAuth + Build E2E - 2026-07-01
 
@@ -108,6 +111,29 @@ uncaught exception: Error: Rendered line 22 exceeds terminal width (87 > 80).
 
 Cause: the sticky live tool-call panel rendered a multiline `write_file` argument preview as one line. The fix sanitizes preview newlines and clamps ANSI strings to terminal width. After the fix, the same TUI flow no longer crashed. It still required one approval per `write_file` call when choosing "Allow once"; for a first app build, nudging users toward "Trust tool" or batching writes would make the happy path feel smoother.
 
+## Web Launch UX Pass - 2026-07-01
+
+Path tested:
+
+1. Built the companion web branch with `npm run build`.
+2. Started local production Next with explicit localhost env overrides because encrypted production env placeholders cannot decrypt in this checkout.
+3. Checked `/cli` on desktop and mobile in the in-app browser.
+4. Checked `/downloads#cli` on desktop in the in-app browser.
+
+What looks good now:
+
+- `/cli` has a clear first viewport: the headline says "Build apps with AI from your terminal", the macOS/Linux, npm, and PowerShell install commands are visible, and CTAs go to the CLI source and all install options.
+- `/downloads#cli` now has a first-class CLI card with the same three install commands, a direct CLI source link, and a CLI quickstart link.
+- The marketing header no longer shows Pricing twice. The right-side public CTA is now "Open app" and points to `/workspace`.
+- Install commands on `/cli` and `/downloads#cli` now have copy buttons. On mobile, the long curl command stays on one horizontal line instead of breaking awkwardly after the pipe.
+- `npm run start:production` no longer fails because `dotenvx` is missing. SEO base URL helpers also ignore undecrypted `encrypted:` placeholders instead of trying to construct malformed canonical URLs.
+
+Still not great from a user seat:
+
+- The analytics consent bar covers the lower install command stack on mobile and the next row of cards on desktop. It does not block the primary curl copy button, but it makes the launch pages feel more cramped than they should.
+- Local `start:production` still needs explicit safe env overrides without the dotenvx private key. Otherwise other auth/env consumers can still choke on undecrypted placeholders. This is more of a contributor/devops UX issue than an end-user launch blocker.
+- The no-credentials JSON failure mode is structurally correct but not friendly copy. For human terminal output, a direct "run codebase auth login or codebase --new" message would feel better.
+
 ## Launch Funnel Notes
 
 ### P0 - npm README is blank in registry metadata
@@ -133,6 +159,8 @@ Evidence:
 Fixed in companion web branch: `/cli` now shows real install commands, `/downloads#cli` has a first-class CLI card, and the homepage hero source CTA points to `https://github.com/codebase-foundation/codebase-cli`.
 
 Also fixed in companion web branch: `npm run build` now regenerates backend tRPC declarations before the Next production build. A fresh install initially failed because the frontend imported `backend/dist/trpc/routers/index.js` before that generated tree existed; after wiring `npm run build:trpc` into the build scripts, the production build passes.
+
+Also fixed in companion web branch after mobile dogfood: CLI install command cards now include copy buttons on `/cli` and `/downloads#cli`, and the right-side marketing header CTA points to `/workspace` instead of duplicating Pricing.
 
 Impact: someone excited by `codebase.design` can miss the OSS CLI entirely, or fail to connect the web product with the terminal product.
 

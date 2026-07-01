@@ -66,12 +66,12 @@ const MENU_ITEMS = [
 	{
 		value: "oauth",
 		label: "Login to Codebase",
-		description: "free credits · Codebase Auto model · curated skills",
+		description: "free credits · Codebase Auto",
 	},
 	{
 		value: "byok",
 		label: "Bring your own LLM key",
-		description: "Anthropic / OpenAI / Groq key, or any OpenAI-compatible endpoint",
+		description: "provider key or local endpoint",
 	},
 	{ value: "quit", label: "Quit", description: "exit the wizard" },
 ];
@@ -193,7 +193,7 @@ export class FirstRunWizard extends Container {
 		this.addChild(new Text(ansi.dim("AI coding agent · CLI"), 1, 0));
 		this.addChild(
 			new Text(
-				ansi.dim("Pick how you want to power the agent. You can change this later via `codebase auth`."),
+				ansi.dim("Pick how you want to power the agent. Change later with /model, auth login, or --new."),
 				1,
 				1,
 			),
