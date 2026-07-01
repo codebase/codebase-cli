@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -40,7 +40,7 @@ describe("runHook", () => {
 		const config: HookConfig = { event: "PreToolUse", command: 'node -e "console.log(process.cwd())"' };
 		const result = await runHook(config, ctx());
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout.trim()).toBe(dir);
+		expect(realpathSync(result.stdout.trim())).toBe(realpathSync(dir));
 	});
 
 	it("captures stderr separately from stdout", async () => {

@@ -1,5 +1,4 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { CheckpointStore } from "../checkpoint/store.js";
 import { resolveInsideCwd } from "./file-ops.js";
 import type { ToolContext } from "./types.js";
 

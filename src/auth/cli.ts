@@ -49,7 +49,7 @@ export interface AuthCliOptions {
  *   auth login            → run OAuth browser flow, persist tokens
  *   auth logout           → clear credentials, best-effort server revoke
  *   auth refresh          → force a refresh against the stored refresh token
- *   auth <key>            → save a manual API key (headless / SSH)
+ *   auth <token>          → save a manual Codebase bearer token (headless / SSH)
  */
 export async function runAuthSubcommand(argv: string[], options: AuthCliOptions = {}): Promise<number> {
 	const store = options.store ?? new CredentialsStore();
@@ -61,6 +61,12 @@ export async function runAuthSubcommand(argv: string[], options: AuthCliOptions 
 
 	try {
 		switch (subcommand) {
+			case "--help":
+			case "-h":
+			case "help":
+				printAuthHelp(out);
+				return 0;
+
 			case "status":
 				return statusCmd(store, out);
 
@@ -250,14 +256,37 @@ async function refreshCmd(
 }
 
 function manualKeyCmd(store: CredentialsStore, key: string, out: (m: string) => void): number {
+	if (looksLikeProviderKey(key)) {
+		throw new Error(
+			"That looks like a provider API key, not a Codebase bearer token. " +
+				"For BYOK, run `codebase --new` and choose Bring your own key, or set ANTHROPIC_API_KEY/OPENAI_API_KEY/etc. in your shell.",
+		);
+	}
 	if (!key || key.length < 16) {
-		throw new Error("API key looks too short — paste the full token from the dashboard.");
+		throw new Error("token looks too short — paste the full Codebase bearer token.");
 	}
 	store.save({
 		accessToken: key,
 		scopes: ["inference"],
 		source: "manual",
 	});
-	out("API key saved.");
+	out("Codebase bearer token saved.");
 	return 0;
+}
+
+function printAuthHelp(out: (m: string) => void): void {
+	out("usage: codebase auth [status | login | logout | refresh | <token>]");
+	out("");
+	out("Commands:");
+	out("  status        show current sign-in");
+	out("  login         sign in via codebase.design browser OAuth");
+	out("  logout        revoke and remove the saved session");
+	out("  refresh       force-refresh the saved OAuth access token");
+	out("  <token>       save a Codebase bearer token for advanced headless/SSH use");
+	out("");
+	out("Provider BYOK: run `codebase --new` and choose Bring your own key, or set an *_API_KEY env var.");
+}
+
+function looksLikeProviderKey(key: string): boolean {
+	return /^(sk-ant-|sk-proj-|sk-|gsk_|xai-|AIza|mistral-|or-|openrouter-|AIzaSy)/.test(key);
 }

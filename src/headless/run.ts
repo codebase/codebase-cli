@@ -96,11 +96,39 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		return 1;
 	}
 
+	if (!opts.autoApprove) {
+		const msg =
+			"Headless runs cannot answer tool approval prompts. Re-run with `--auto-approve` in a trusted workspace, or use interactive `codebase`.";
+		if (format === "stream-json") {
+			out(`${JSON.stringify({ type: "error", code: "approval_required", error: msg, ts: Date.now() })}\n`);
+		} else if (format === "json") {
+			out(
+				`${JSON.stringify({
+					ok: false,
+					exitCode: 2,
+					error: msg,
+					code: "approval_required",
+					messages: [],
+					usage: EMPTY_USAGE,
+					model: null,
+					source: null,
+					durationMs: 0,
+				})}\n`,
+			);
+		} else {
+			err(`error: ${msg}\n`);
+		}
+		return 2;
+	}
+
 	const startedAt = Date.now();
 	let aborted = false;
 	let errored = false;
+	let errorCode: string | undefined;
 	let errorMessage: string | undefined;
+	let errorExitCode = 1;
 	let totalUsage: Usage = { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost } };
+	const pendingTools = new Map<string, string>();
 
 	// Connect configured MCP servers so headless runs (CI, scripts) can
 	// use MCP tools too. Best-effort: a failed server is skipped, never
@@ -114,6 +142,15 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		if (event.type !== "message_end") return;
 		const candidate = (event.message as { usage?: Usage }).usage;
 		if (candidate) totalUsage = mergeUsage(totalUsage, candidate);
+	});
+	const lifecycleUnsub = bundle.subscribe((event: AgentEvent) => {
+		if (event.type === "tool_execution_start") {
+			const id = (event as { toolCallId?: string }).toolCallId;
+			if (id) pendingTools.set(id, event.toolName);
+		} else if (event.type === "tool_execution_end") {
+			const id = (event as { toolCallId?: string }).toolCallId;
+			if (id) pendingTools.delete(id);
+		}
 	});
 
 	const onSigInt = () => {
@@ -141,6 +178,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		const submitResult = await bundle.submitUserPrompt(opts.prompt);
 		if (!submitResult.submitted) {
 			errored = true;
+			errorCode = "prompt_blocked";
 			errorMessage = submitResult.reason ?? "Prompt blocked by hook.";
 			if (format === "stream-json") {
 				out(`${JSON.stringify({ type: "error", code: "prompt_blocked", error: errorMessage, ts: Date.now() })}\n`);
@@ -153,6 +191,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 			// the error explicitly so CI scripts see a non-zero exit + a real
 			// error message instead of a "succeeded with empty output" run.
 			errored = true;
+			errorCode = "agent_error";
 			errorMessage = submitResult.error;
 			if (format === "stream-json") {
 				out(`${JSON.stringify({ type: "error", code: "agent_error", error: errorMessage, ts: Date.now() })}\n`);
@@ -160,17 +199,51 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 				err(`agent error: ${errorMessage}\n`);
 			}
 		}
+		if (!errored && !aborted) {
+			const turnError = latestAssistantError(bundle.agent.state.messages);
+			if (turnError) {
+				errored = true;
+				errorCode = "agent_error";
+				errorMessage = turnError;
+				if (format === "stream-json") {
+					out(`${JSON.stringify({ type: "error", code: "agent_error", error: errorMessage, ts: Date.now() })}\n`);
+				} else if (format !== "json") {
+					err(`agent error: ${errorMessage}\n`);
+				}
+			}
+		}
+		if (!errored && !aborted && pendingTools.size > 0) {
+			errored = true;
+			const pending = [...pendingTools.values()].join(", ");
+			if (opts.autoApprove) {
+				errorCode = "agent_error";
+				errorMessage = `Tool execution did not complete: ${pending}`;
+			} else {
+				errorCode = "approval_required";
+				errorExitCode = 2;
+				errorMessage =
+					`Tool approval required for ${pending}, but headless mode has no approval UI. ` +
+					"Re-run with `--auto-approve` in a trusted workspace, or use interactive `codebase`.";
+			}
+			if (format === "stream-json") {
+				out(`${JSON.stringify({ type: "error", code: errorCode, error: errorMessage, ts: Date.now() })}\n`);
+			} else if (format !== "json") {
+				err(`agent error: ${errorMessage}\n`);
+			}
+		}
 	} catch (e) {
 		errored = true;
+		errorCode = "agent_error";
 		errorMessage = e instanceof Error ? e.message : String(e);
 		if (format === "stream-json") {
-			out(`${JSON.stringify({ type: "error", error: errorMessage, ts: Date.now() })}\n`);
+			out(`${JSON.stringify({ type: "error", code: errorCode, error: errorMessage, ts: Date.now() })}\n`);
 		} else if (format !== "json") {
 			err(`agent error: ${errorMessage}\n`);
 		}
 	} finally {
 		unsubscribe();
 		usageUnsub();
+		lifecycleUnsub();
 		process.off("SIGINT", onSigInt);
 		// Terminate MCP server subprocesses so a headless run doesn't leak
 		// children to the parent shell / CI runner.
@@ -178,13 +251,14 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		bundle.checkpoints.dispose();
 	}
 
-	const exitCode = aborted ? 130 : errored ? 1 : 0;
+	const exitCode = aborted ? 130 : errored ? errorExitCode : 0;
 
 	if (format === "json") {
 		const payload = buildJsonResult({
 			ok: !errored && !aborted,
 			exitCode,
 			error: errorMessage,
+			errorCode,
 			messages: bundle.agent.state.messages,
 			usage: totalUsage,
 			model: { provider: bundle.model.provider, id: bundle.model.id, name: bundle.model.name },
@@ -218,6 +292,7 @@ interface JsonResultInput {
 	ok: boolean;
 	exitCode: number;
 	error?: string;
+	errorCode?: string;
 	messages: AgentMessage[];
 	usage: unknown;
 	model: { provider: string; id: string; name: string };
@@ -232,6 +307,7 @@ export function buildJsonResult(input: JsonResultInput): Record<string, unknown>
 		ok: input.ok,
 		exitCode: input.exitCode,
 		...(input.error ? { error: input.error } : {}),
+		...(input.errorCode ? { code: input.errorCode } : {}),
 		model: input.model,
 		source: input.source,
 		durationMs: input.durationMs,
@@ -291,4 +367,13 @@ function extractText(message: { content?: unknown }): string {
 		if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
 	}
 	return parts.join("");
+}
+
+function latestAssistantError(messages: AgentMessage[]): string | undefined {
+	const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+	if (!lastAssistant) return undefined;
+	const candidate = lastAssistant as { stopReason?: unknown; errorMessage?: unknown };
+	if (typeof candidate.errorMessage === "string" && candidate.errorMessage.trim()) return candidate.errorMessage;
+	if (candidate.stopReason === "error") return "Agent turn ended with an error.";
+	return undefined;
 }

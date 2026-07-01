@@ -149,6 +149,6 @@ if (-not (Test-Path $CredPath) `
     -and -not $env:ANTHROPIC_API_KEY `
     -and -not $env:OPENAI_API_KEY) {
     Write-Host ""
-    Write-Host "First time? Sign in for free Claude usage:"
+    Write-Host "First time? Sign in for free Codebase credits:"
     Write-Host "  $BinName auth login"
 }

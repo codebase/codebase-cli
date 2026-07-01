@@ -1,5 +1,8 @@
+import { dirname, resolve } from "node:path";
 import { defaultDownloadPath, NotAuthenticatedError, ProjectClient, ProjectClientError } from "./client.js";
 import type { PlatformProject } from "./types.js";
+
+const DEFAULT_LIST_LIMIT = 25;
 
 export interface ProjectCliOptions {
 	stdout?: (msg: string) => void;
@@ -26,17 +29,23 @@ export async function runProjectSubcommand(argv: string[], options: ProjectCliOp
 	const subcommand = argv[1] ?? "list";
 
 	try {
-		switch (subcommand) {
-			case "list":
-			case "ls":
-				return await listCmd(client, out);
-			case "pull":
-				return await pullCmd(client, argv[2], argv[3], out, err);
-			default:
-				err(`unknown subcommand: ${subcommand}`);
-				err("usage: codebase project [list | pull <id> [dest]]");
-				return 2;
+		if (subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
+			printProjectHelp(out);
+			return 0;
 		}
+		if (subcommand === "pull") return await pullCmd(client, argv[2], argv[3], out, err);
+		if (subcommand === "list" || subcommand === "ls" || isListFlag(subcommand)) {
+			const args = subcommand === "list" || subcommand === "ls" ? argv.slice(2) : argv.slice(1);
+			const opts = parseListOptions(args);
+			if (opts.error) {
+				err(opts.error);
+				return 2;
+			}
+			return await listCmd(client, opts, out);
+		}
+		err(`unknown subcommand: ${subcommand}`);
+		err("usage: codebase project [list | pull <id> [dest]]");
+		return 2;
 	} catch (e) {
 		if (e instanceof NotAuthenticatedError) {
 			err(e.message);
@@ -51,16 +60,63 @@ export async function runProjectSubcommand(argv: string[], options: ProjectCliOp
 	}
 }
 
-async function listCmd(client: ProjectClient, out: (msg: string) => void): Promise<number> {
-	const projects = await client.list();
+interface ListOptions {
+	all?: boolean;
+	limit: number;
+	error?: string;
+}
+
+function parseListOptions(args: string[]): ListOptions {
+	let all = false;
+	let limit = DEFAULT_LIST_LIMIT;
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--all") {
+			all = true;
+			continue;
+		}
+		if (arg === "--limit") {
+			const value = args[i + 1];
+			if (!value) return { limit, error: "--limit requires a positive integer" };
+			const parsed = parseLimit(value);
+			if (!parsed) return { limit, error: "--limit requires a positive integer" };
+			limit = parsed;
+			i++;
+			continue;
+		}
+		if (arg.startsWith("--limit=")) {
+			const parsed = parseLimit(arg.slice("--limit=".length));
+			if (!parsed) return { limit, error: "--limit requires a positive integer" };
+			limit = parsed;
+			continue;
+		}
+		return { limit, error: `unknown flag: ${arg}` };
+	}
+	return { all, limit };
+}
+
+function parseLimit(value: string): number | undefined {
+	const n = Number.parseInt(value, 10);
+	return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+function isListFlag(arg: string): boolean {
+	return arg === "--all" || arg === "--limit" || arg.startsWith("--limit=");
+}
+
+async function listCmd(client: ProjectClient, opts: ListOptions, out: (msg: string) => void): Promise<number> {
+	const projects = sortProjects([...(await client.list())]);
 	if (projects.length === 0) {
 		out("(no projects yet — build one at https://codebase.design or pull an existing one)");
 		return 0;
 	}
 
-	out(`${projects.length} project${projects.length === 1 ? "" : "s"}:`);
+	const visible = opts.all ? projects : projects.slice(0, opts.limit);
+	const suffix =
+		visible.length < projects.length ? ` (showing ${visible.length}; use --all or --limit N to see more)` : "";
+	out(`${projects.length} project${projects.length === 1 ? "" : "s"}${suffix}:`);
 	out("");
-	for (const p of projects) {
+	for (const p of visible) {
 		out(formatProjectLine(p));
 	}
 	out("");
@@ -88,8 +144,43 @@ async function pullCmd(
 	const kb = (result.bytes / 1024).toFixed(1);
 	out(`✓ wrote ${result.path} (${kb} KB)`);
 	out("");
-	out(`unzip with:  unzip -d ./${projectId} ${result.path}`);
+	out(`unzip with:  unzip -d ${shellQuote(extractDir(result.path, projectId))} ${shellQuote(result.path)}`);
 	return 0;
+}
+
+function sortProjects(projects: PlatformProject[]): PlatformProject[] {
+	return projects.sort((a, b) => {
+		const source = sourceRank(a) - sourceRank(b);
+		if (source !== 0) return source;
+		const titled = titleRank(a) - titleRank(b);
+		if (titled !== 0) return titled;
+		const date = projectTime(b) - projectTime(a);
+		if (date !== 0) return date;
+		return a.id.localeCompare(b.id);
+	});
+}
+
+function sourceRank(p: PlatformProject): number {
+	return p.source === "convex" ? 0 : 1;
+}
+
+function titleRank(p: PlatformProject): number {
+	return p.title?.trim() ? 0 : 1;
+}
+
+function projectTime(p: PlatformProject): number {
+	const raw = p.publishedAt ?? p.createdAt;
+	const time = raw ? Date.parse(raw) : Number.NaN;
+	return Number.isFinite(time) ? time : 0;
+}
+
+function extractDir(zipPath: string, projectId: string): string {
+	const safe = projectId.replace(/[^a-zA-Z0-9._-]/g, "_");
+	return resolve(dirname(zipPath), safe);
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function formatProjectLine(p: PlatformProject): string {
@@ -108,4 +199,15 @@ function shortDate(iso: string): string {
 	// Strip the time portion for the listing — full ISO is verbose
 	// and the user just wants to scan dates.
 	return iso.slice(0, 10);
+}
+
+function printProjectHelp(out: (msg: string) => void): void {
+	out("usage: codebase project [list | pull <id> [dest]]");
+	out("");
+	out("Commands:");
+	out("  list          list your projects on codebase.design (default: 25)");
+	out("  list --all    show every project");
+	out("  list --limit N");
+	out("                show at most N projects");
+	out("  pull <id>     download a project ZIP");
 }

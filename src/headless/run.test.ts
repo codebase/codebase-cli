@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildJsonResult, runHeadless } from "./run.js";
 
@@ -130,6 +130,54 @@ describe("runHeadless", () => {
 		expect(parsed.finalText).toContain("done");
 		expect(parsed.messageCount).toBeGreaterThanOrEqual(2); // user + assistant
 		expect(parsed.model.id).toBe("test-model");
+	});
+
+	it("json mode exits non-zero when the assistant turn ends with a provider error", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([], {
+				stopReason: "error",
+				errorMessage: "simulated provider failure",
+			}),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "hi",
+			outputFormat: "json",
+			autoApprove: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as { ok: boolean; exitCode: number; error: string };
+		expect(parsed.ok).toBe(false);
+		expect(parsed.exitCode).toBe(1);
+		expect(parsed.error).toBe("simulated provider failure");
+	});
+
+	it("json mode fails explicitly when a tool needs approval without auto-approve", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "note.txt", content: "hi\n" })], {
+				stopReason: "toolUse",
+			}),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "write a note",
+			outputFormat: "json",
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(2);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			exitCode: number;
+			code: string;
+			error: string;
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.exitCode).toBe(2);
+		expect(parsed.code).toBe("approval_required");
+		expect(parsed.error).toMatch(/--auto-approve/);
 	});
 
 	it("returns exit code 1 with a stderr error when ConfigError fires before the loop", async () => {

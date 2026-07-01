@@ -419,7 +419,7 @@ function renderBody(
 							<Text bold={selected} color={selected ? "white" : undefined}>
 								{opt.label}
 							</Text>
-							<Text dimColor>{"   — " + opt.hint}</Text>
+							<Text dimColor>{`   — ${opt.hint}`}</Text>
 						</Text>
 					);
 				})}
@@ -486,7 +486,7 @@ function renderBody(
 								<Text bold={selected} color={selected ? "white" : undefined}>
 									{p.label}
 								</Text>
-								<Text dimColor>{"  — " + p.hint}</Text>
+								<Text dimColor>{`  — ${p.hint}`}</Text>
 							</Text>
 						);
 					})}

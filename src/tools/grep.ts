@@ -57,6 +57,7 @@ export interface GrepDetails {
 }
 
 const DEFAULT_LIMIT = 500;
+const DEFAULT_SKIP_DIRS = ["node_modules", ".git", "dist", "build", "target", "__pycache__"];
 
 const DESCRIPTION = `Search file contents for a pattern.
 
@@ -121,6 +122,9 @@ function buildRipgrepArgs(p: GrepParams): string[] {
 	if (p.case_insensitive) argv.push("-i");
 	if (p.fixed_strings) argv.push("-F");
 	if (p.context_lines && p.context_lines > 0) argv.push("-C", String(p.context_lines));
+	for (const skip of DEFAULT_SKIP_DIRS) {
+		argv.push("--glob", `!${skip}/**`, "--glob", `!**/${skip}/**`);
+	}
 	if (p.glob) argv.push("--glob", p.glob);
 	argv.push("--", p.pattern, ".");
 	return argv;
@@ -132,7 +136,7 @@ function buildGrepArgs(p: GrepParams): string[] {
 	if (p.fixed_strings) argv.push("-F");
 	if (p.context_lines && p.context_lines > 0) argv.push("-C", String(p.context_lines));
 	if (p.glob) argv.push(`--include=${p.glob}`);
-	for (const skip of ["node_modules", ".git", "dist", "build", "target", "__pycache__"]) {
+	for (const skip of DEFAULT_SKIP_DIRS) {
 		argv.push(`--exclude-dir=${skip}`);
 	}
 	argv.push("--", p.pattern, ".");

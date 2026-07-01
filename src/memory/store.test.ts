@@ -113,7 +113,7 @@ describe("MemoryStore", () => {
 	});
 
 	it("truncatedIndex caps at 25KB cutting at newline boundaries", () => {
-		const big = "- " + "x".repeat(1000) + "\n";
+		const big = `- ${"x".repeat(1000)}\n`;
 		const content = big.repeat(50);
 		store.writeIndex(content);
 		const truncated = store.truncatedIndex();

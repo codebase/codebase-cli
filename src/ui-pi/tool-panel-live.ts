@@ -1,4 +1,4 @@
-import { type Component, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ToolExecution } from "../types.js";
 import { ansi } from "./theme.js";
 
@@ -44,7 +44,7 @@ export class LiveToolPanel implements Component {
 			const header = ` ${ansi.magenta(frame)} ${ansi.bold(ansi.magenta(tool.name))}${
 				argsHint ? ansi.dim(` (${argsHint})`) : ""
 			}${ansi.dim(` · ${elapsed}s`)}`;
-			out.push(header);
+			out.push(truncateForWidth(header, width));
 
 			if (tool.result) {
 				for (const line of takeTail(tool.result, this.previewLines)) {
@@ -75,7 +75,7 @@ function summarizeArgs(args: unknown): string {
 	const entries = Object.entries(args as Record<string, unknown>).slice(0, 2);
 	return entries
 		.map(([k, v]) => {
-			const s = typeof v === "string" ? `"${truncate(v, 24)}"` : safeJson(v);
+			const s = typeof v === "string" ? `"${truncateInline(v, 24)}"` : safeJson(v);
 			return `${k}=${s}`;
 		})
 		.join(", ");
@@ -83,20 +83,20 @@ function summarizeArgs(args: unknown): string {
 
 function safeJson(v: unknown): string {
 	try {
-		return JSON.stringify(v).slice(0, 24);
+		return truncateInline(JSON.stringify(v), 24);
 	} catch {
-		return String(v).slice(0, 24);
+		return truncateInline(String(v), 24);
 	}
 }
 
-function truncate(s: string, max: number): string {
-	if (s.length <= max) return s;
-	return `${s.slice(0, max - 1)}…`;
+function truncateInline(s: string, max: number): string {
+	const oneLine = s.replace(/\s+/g, " ").trim();
+	if (oneLine.length <= max) return oneLine;
+	return `${oneLine.slice(0, Math.max(0, max - 1))}…`;
 }
 
 function truncateForWidth(s: string, max: number): string {
-	if (visibleWidth(s) <= max) return s;
-	// Coarse truncate — counts code units, not graphemes. Good enough
-	// for tool output previews.
-	return `${s.slice(0, Math.max(0, max - 1))}…`;
+	const oneLine = s.replace(/\r?\n/g, " ");
+	if (visibleWidth(oneLine) <= max) return oneLine;
+	return truncateToWidth(oneLine, Math.max(1, max), "…");
 }

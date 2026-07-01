@@ -1,7 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent } from "@earendil-works/pi-ai";
 import {
 	type AutocompleteItem,
 	CombinedAutocompleteProvider,

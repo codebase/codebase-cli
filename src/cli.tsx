@@ -3,6 +3,7 @@ import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { ensureFreshCredentials } from "./auth/ensure-fresh.js";
+import { buildDoctorReport } from "./diagnostics/doctor.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
@@ -75,6 +76,13 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runSshSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "project" || argv[0] === "projects") {
 	runProjectSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "doctor") {
+	if (argv[1] === "--help" || argv[1] === "-h") {
+		process.stdout.write("usage: codebase doctor\n\nDiagnose local runtime, auth, config, MCP, and storage.\n");
+		process.exit(0);
+	}
+	process.stdout.write(`${buildDoctorReport({ cwd: process.cwd() }).join("\n")}\n`);
+	process.exit(0);
 } else if (argv[0] === "app-server") {
 	// JSON-RPC-ish over stdio for IDE extensions. Auto-approve permissions
 	// by default — IDE clients render approval UIs themselves and we don't
@@ -91,6 +99,10 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	await ensureFreshCredentials();
 	runAppServer({ autoApprove: !noAutoApprove, resume }).then((code) => process.exit(code));
 } else if (argv[0] === "run") {
+	if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
+		printRunHelp();
+		process.exit(0);
+	}
 	const { prompt, outputFormat, autoApprove, error } = parseRunArgs(argv.slice(1));
 	if (error) {
 		process.stderr.write(`${error}\n`);
@@ -191,19 +203,21 @@ function printHelp(): void {
 			"",
 			"Usage:",
 			"  codebase                     run the interactive TUI in the current directory",
-			"  codebase run <prompt>        one-shot headless run, prints to stdout",
-			"  codebase run --output json|stream-json <prompt>",
+			"  codebase run --auto-approve <prompt>",
+			"                               one-shot headless run, prints to stdout",
+			"  codebase run --auto-approve --output json|stream-json <prompt>",
 			"                               one-shot run with structured output",
-			"  codebase auth login          sign in via codebase.foundation OAuth",
+			"  codebase auth login          sign in via codebase.design browser OAuth",
 			"  codebase auth logout         revoke the current session",
 			"  codebase auth status         show current sign-in",
 			"  codebase auth refresh        force-refresh the access token",
-			"  codebase auth <cbk_xxx>      save a manual API key (for SSH / headless)",
+			"  codebase auth <token>        save a Codebase bearer token (advanced)",
 			"  codebase ssh add <name> <host>    enroll a remote machine the agent can target",
 			"  codebase ssh list / rm / test     manage enrolled SSH hosts",
 			"  codebase ssh keygen <name>        generate an Ed25519 (or --rsa) keypair",
 			"  codebase project list        list your projects on codebase.design",
 			"  codebase project pull <id>   download a project as a ZIP",
+			"  codebase doctor              diagnose runtime, auth, config, MCP, storage",
 			"  codebase app-server          JSON-RPC server on stdio (for IDE extensions)",
 			"  codebase --version           print version and exit",
 			"  codebase --help              show this message",
@@ -219,6 +233,22 @@ function printHelp(): void {
 			"                               (use when reporting a keyboard/terminal issue)",
 			"",
 			"More: https://github.com/codebase-foundation/codebase-cli",
+			"",
+		].join("\n"),
+	);
+}
+
+function printRunHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase run [--output text|json|stream-json] [--auto-approve] <prompt>",
+			"",
+			"Run one non-interactive agent turn and print the result to stdout.",
+			"",
+			"Options:",
+			"  --output, -o text|json|stream-json   choose stdout format (default: text)",
+			"  --auto-approve, --yes, -y            required: allow tool calls without interactive prompts",
+			"  --help, -h                           show this help",
 			"",
 		].join("\n"),
 	);

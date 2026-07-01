@@ -37,6 +37,14 @@ describe("runAuthSubcommand", () => {
 		expect(stdout.join("\n")).toMatch(/codebase auth login/);
 	});
 
+	it("prints help without treating --help as an API key flag", async () => {
+		const code = await run(["auth", "--help"]);
+		expect(code).toBe(0);
+		expect(stdout.join("\n")).toMatch(/usage: codebase auth/);
+		expect(stdout.join("\n")).toMatch(/browser OAuth/);
+		expect(stderr).toEqual([]);
+	});
+
 	it("status with credentials prints the source + scopes", async () => {
 		store.save({
 			accessToken: "tok",
@@ -67,17 +75,25 @@ describe("runAuthSubcommand", () => {
 	});
 
 	it("manual API key argument saves credentials with source=manual", async () => {
-		const code = await run(["auth", "sk-codebase-abcdef0123456789xyz"]);
+		const code = await run(["auth", "codebase-bearer-abcdef0123456789xyz"]);
 		expect(code).toBe(0);
 		const loaded = store.load();
 		expect(loaded?.source).toBe("manual");
-		expect(loaded?.accessToken).toBe("sk-codebase-abcdef0123456789xyz");
+		expect(loaded?.accessToken).toBe("codebase-bearer-abcdef0123456789xyz");
 	});
 
 	it("rejects keys that look too short to be real", async () => {
 		const code = await run(["auth", "short"]);
 		expect(code).toBe(1);
 		expect(stderr.join("\n")).toMatch(/too short/);
+	});
+
+	it("rejects provider-looking keys with a BYOK recovery hint", async () => {
+		const code = await run(["auth", "sk-ant-fakefakefakefakefakefake"]);
+		expect(code).toBe(1);
+		expect(stderr.join("\n")).toMatch(/provider API key/);
+		expect(stderr.join("\n")).toMatch(/codebase --new/);
+		expect(store.load()).toBeNull();
 	});
 
 	it("rejects unknown flags with exit 2", async () => {
