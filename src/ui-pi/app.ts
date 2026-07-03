@@ -33,6 +33,7 @@ import { buildMcpPromptCommands } from "../commands/mcp-prompt-commands.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { buildSkillCommands } from "../commands/skill-commands.js";
 import { ConfigStore } from "../config/store.js";
+import { userFacingErrorMessage } from "../errors/user-facing.js";
 import { quickAddMemory } from "../memory/quick-add.js";
 import { runPlanFlow } from "../plan/run-flow.js";
 import type { ChatState, ToolExecution } from "../types.js";
@@ -1483,7 +1484,7 @@ export class App extends Container {
 				{
 					const errMsg = this.bundle.agent.state.errorMessage;
 					if (errMsg) {
-						this.errorCard.show(errMsg);
+						this.errorCard.show(userFacingErrorMessage(errMsg));
 					} else {
 						this.errorCard.hide();
 						// agent_end without errorMessage AND without any assistant

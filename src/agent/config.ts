@@ -173,10 +173,8 @@ export function resolveConfig(envOrOpts: NodeJS.ProcessEnv | ResolveConfigOption
 	}
 
 	throw new ConfigError(
-		"No usable LLM provider found. Sign in with `codebase auth login`, run `codebase --new` " +
-			"for the interactive BYOK setup, or set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, " +
-			"GOOGLE_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, CEREBRAS_API_KEY, XAI_API_KEY, OPENROUTER_API_KEY. " +
-			"Or set CODEBASE_PROVIDER + CODEBASE_MODEL explicitly.",
+		"No LLM provider configured. Run `codebase auth login` for Codebase Auto, `codebase --new` for BYOK setup, " +
+			"or set an *_API_KEY env var. Advanced users can also set CODEBASE_PROVIDER + CODEBASE_MODEL.",
 	);
 }
 

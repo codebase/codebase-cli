@@ -154,6 +154,28 @@ describe("runHeadless", () => {
 		expect(parsed.error).toBe("simulated provider failure");
 	});
 
+	it("json mode explains provider API key failures with recovery copy", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([], {
+				stopReason: "error",
+				errorMessage:
+					'ERROR 401\n{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+			}),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "hi",
+			outputFormat: "json",
+			autoApprove: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as { error: string };
+		expect(parsed.error).toContain("API key was rejected");
+		expect(parsed.error).toContain("codebase auth login");
+	});
+
 	it("json mode fails explicitly when a tool needs approval without auto-approve", async () => {
 		faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("write_file", { path: "note.txt", content: "hi\n" })], {

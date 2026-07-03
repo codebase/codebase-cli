@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
+import { providerAuthRecoveryMessage } from "../errors/user-facing.js";
 import type { ToolExecution } from "../types.js";
 import { Markdown } from "./Markdown.js";
 import { type AssistantContent, COLLAPSIBLE_READ_TOOLS, CollapsedReadGroup, ToolCallLine } from "./tool-call-line.js";
@@ -275,6 +276,10 @@ export function errorMessageNote(message: AgentMessage & { role: "assistant" }):
 	if (!raw) return null;
 	const trimmed = raw.trim();
 	const hasContent = messageHasVisibleText(message);
+	const authRecovery = providerAuthRecoveryMessage(trimmed);
+	if (authRecovery) {
+		return { text: `error: ${authRecovery}`, severity: "error" };
+	}
 
 	if (TRUNCATION_PATTERNS.some((re) => re.test(trimmed))) {
 		return { text: "(response truncated — model hit its output length limit)", severity: "warning" };

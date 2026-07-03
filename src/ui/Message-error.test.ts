@@ -63,6 +63,18 @@ describe("errorMessageNote", () => {
 		expect(note?.text).toMatch(/^error:/);
 	});
 
+	it("turns provider API key failures into recovery copy", () => {
+		const note = errorMessageNote(
+			assistant(
+				"text",
+				'ERROR 401\n{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+			),
+		);
+		expect(note?.severity).toBe("error");
+		expect(note?.text).toContain("API key was rejected");
+		expect(note?.text).toContain("codebase auth login");
+	});
+
 	it("trims surrounding whitespace before classifying", () => {
 		expect(errorMessageNote(assistant("text", "  terminated  "))).toBeNull();
 	});

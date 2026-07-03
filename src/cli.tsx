@@ -4,6 +4,7 @@ import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { ensureFreshCredentials } from "./auth/ensure-fresh.js";
 import { buildDoctorReport } from "./diagnostics/doctor.js";
+import { runDirectorSubcommand } from "./directors/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
@@ -83,6 +84,8 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	}
 	process.stdout.write(`${buildDoctorReport({ cwd: process.cwd() }).join("\n")}\n`);
 	process.exit(0);
+} else if (argv[0] === "director" || argv[0] === "directors") {
+	runDirectorSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "app-server") {
 	// JSON-RPC-ish over stdio for IDE extensions. Auto-approve permissions
 	// by default — IDE clients render approval UIs themselves and we don't
@@ -236,6 +239,7 @@ function printHelp(): void {
 			"  codebase project list        list your projects on codebase.design",
 			"  codebase project pull <id>   download a project as a ZIP",
 			"  codebase doctor              diagnose runtime, auth, config, MCP, storage",
+			"  codebase director list       manage trained directors (hire, status, fire)",
 			"  codebase app-server          JSON-RPC server on stdio (for IDE extensions)",
 			"  codebase --version           print version and exit",
 			"  codebase --help              show this message",

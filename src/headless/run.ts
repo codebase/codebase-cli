@@ -2,6 +2,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
+import { userFacingErrorMessage } from "../errors/user-facing.js";
 
 const EMPTY_USAGE: Usage = {
 	input: 0,
@@ -192,7 +193,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 			// error message instead of a "succeeded with empty output" run.
 			errored = true;
 			errorCode = "agent_error";
-			errorMessage = submitResult.error;
+			errorMessage = userFacingErrorMessage(submitResult.error);
 			if (format === "stream-json") {
 				out(`${JSON.stringify({ type: "error", code: "agent_error", error: errorMessage, ts: Date.now() })}\n`);
 			} else if (format !== "json") {
@@ -204,7 +205,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 			if (turnError) {
 				errored = true;
 				errorCode = "agent_error";
-				errorMessage = turnError;
+				errorMessage = userFacingErrorMessage(turnError);
 				if (format === "stream-json") {
 					out(`${JSON.stringify({ type: "error", code: "agent_error", error: errorMessage, ts: Date.now() })}\n`);
 				} else if (format !== "json") {
@@ -234,7 +235,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	} catch (e) {
 		errored = true;
 		errorCode = "agent_error";
-		errorMessage = e instanceof Error ? e.message : String(e);
+		errorMessage = userFacingErrorMessage(e instanceof Error ? e.message : String(e));
 		if (format === "stream-json") {
 			out(`${JSON.stringify({ type: "error", code: errorCode, error: errorMessage, ts: Date.now() })}\n`);
 		} else if (format !== "json") {
