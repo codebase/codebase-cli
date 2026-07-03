@@ -600,3 +600,10 @@ permission prompts. Lifecycle: connected on mount, re-connected on a
 
 - **Platform skills**: OAuth-fetched skills from codebase.foundation —
   the loader exists; wiring is gated on a stable endpoint contract.
+
+## Git commits
+
+- Author identity for this repo is the repo-local git config
+  (`codebase-cli <codebase-cli@users.noreply.github.com>`). Do not override it.
+- Do NOT add Co-Authored-By trailers, Claude-Session links, "Generated with"
+  footers, or any AI attribution to commit messages or PR bodies.
