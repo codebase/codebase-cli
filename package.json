@@ -16,11 +16,11 @@
 	],
 	"homepage": "https://codebase.design",
 	"bugs": {
-		"url": "https://github.com/codebase-foundation/codebase-cli/issues"
+		"url": "https://github.com/codebase/codebase-cli/issues"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/codebase-foundation/codebase-cli.git"
+		"url": "git+https://github.com/codebase/codebase-cli.git"
 	},
 	"license": "MIT",
 	"author": "Codebase Foundation",

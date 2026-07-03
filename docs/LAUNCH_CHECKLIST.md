@@ -32,7 +32,7 @@ codebase --help                    # prints help, no crash
 
 ```sh
 # Pick the right one
-curl -L -o codebase https://github.com/codebase-foundation/codebase-cli/releases/download/v2.0.0/codebase-darwin-arm64
+curl -L -o codebase https://github.com/codebase/codebase-cli/releases/download/v2.0.0/codebase-darwin-arm64
 chmod +x codebase
 ./codebase --version
 ./codebase --help

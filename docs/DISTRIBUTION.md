@@ -105,7 +105,7 @@ URL `brew install codebase-foundation/codebase/codebase` to work, you
 need:
 
 ```
-github.com/codebase-foundation/homebrew-codebase
+github.com/codebase/homebrew-codebase
 └── Formula/
     └── codebase.rb
 ```

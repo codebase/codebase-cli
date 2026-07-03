@@ -114,7 +114,7 @@ If you need to roll back to v1:
 npm uninstall -g codebase-cli
 
 # 2. Reinstall v1 from the tagged Go release
-curl -fsSL https://github.com/codebase-foundation/codebase-cli/releases/download/v1.0.0/install.sh | sh
+curl -fsSL https://github.com/codebase/codebase-cli/releases/download/v1.0.0/install.sh | sh
 ```
 
 Your `~/.codebase/` is untouched by either install or uninstall.
@@ -124,7 +124,7 @@ them as forward-compatible no-ops.
 ## Reporting migration issues
 
 If something breaks after upgrade, please open an issue:
-<https://github.com/codebase-foundation/codebase-cli/issues> with:
+<https://github.com/codebase/codebase-cli/issues> with:
 
 1. Output of `codebase --version`
 2. Output of `codebase auth status`

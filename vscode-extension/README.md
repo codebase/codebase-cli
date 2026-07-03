@@ -1,6 +1,6 @@
 # Codebase — VS Code / Cursor / Windsurf extension
 
-A sidebar chat panel powered by [codebase-cli](https://github.com/codebase-foundation/codebase-cli).
+A sidebar chat panel powered by [codebase-cli](https://github.com/codebase/codebase-cli).
 Spawns `codebase app-server` as a child process and renders the agent's
 events into a webview. Works in any VS Code-API-compatible editor —
 verified in **VS Code**, **Cursor**, and **Windsurf**.
