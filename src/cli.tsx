@@ -3,6 +3,7 @@ import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { ensureFreshCredentials } from "./auth/ensure-fresh.js";
+import { fetchUsageReport } from "./commands/builtins/usage.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
@@ -90,6 +91,15 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	// of a working server.
 	await ensureFreshCredentials();
 	runAppServer({ autoApprove: !noAutoApprove, resume }).then((code) => process.exit(code));
+} else if (argv[0] === "usage") {
+	if (argv[1] === "--help" || argv[1] === "-h") {
+		process.stdout.write("usage: codebase usage\n\nShow Codebase plan credits, reset date, and build turns.\n");
+		process.exit(0);
+	}
+	fetchUsageReport().then((report) => {
+		process.stdout.write(`${report}\n`);
+		process.exit(0);
+	});
 } else if (argv[0] === "run") {
 	const { prompt, outputFormat, autoApprove, error } = parseRunArgs(argv.slice(1));
 	if (error) {
@@ -194,6 +204,7 @@ function printHelp(): void {
 			"  codebase run <prompt>        one-shot headless run, prints to stdout",
 			"  codebase run --output json|stream-json <prompt>",
 			"                               one-shot run with structured output",
+			"  codebase usage               show Codebase plan credits and build turns",
 			"  codebase auth login          sign in via codebase.foundation OAuth",
 			"  codebase auth logout         revoke the current session",
 			"  codebase auth status         show current sign-in",
