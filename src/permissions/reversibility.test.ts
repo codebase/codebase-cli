@@ -134,3 +134,23 @@ describe("Verdict shape", () => {
 		}
 	});
 });
+
+describe("classifyReversibility — compound shell commands", () => {
+	it("an irreversible tail is not shadowed by a reversible prefix", () => {
+		expect(shell("git commit -am wip && git push")).toBe("irreversible");
+		expect(shell("cd repo && terraform apply")).toBe("irreversible");
+		expect(shell("echo ok && npm publish")).toBe("irreversible");
+		expect(shell("git add -A; git commit -m x && docker push acme/app")).toBe("irreversible");
+	});
+
+	it("all-reversible compounds stay reversible", () => {
+		expect(shell("git add -A && git commit -m x")).toBe("reversible");
+		expect(shell("mkdir build && cargo build")).toBe("reversible");
+	});
+
+	it("a compound with an unclassified segment escalates (unknown), not reversible", () => {
+		// `git commit` is reversible but the curl tail is an unclassified external
+		// mutation — must not auto-run.
+		expect(shell("git commit -m x && curl -X POST https://example.com/hook")).toBe("unknown");
+	});
+});
