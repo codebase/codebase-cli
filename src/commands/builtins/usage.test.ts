@@ -1,5 +1,24 @@
-import { describe, expect, it } from "vitest";
-import { formatUsageBalance } from "./usage.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fetchUsageReport, formatUsageBalance } from "./usage.js";
+
+let homeDir: string | undefined;
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+	if (homeDir) {
+		rmSync(homeDir, { recursive: true, force: true });
+		homeDir = undefined;
+	}
+});
+
+function isolateHome() {
+	homeDir = mkdtempSync(join(tmpdir(), "codebase-usage-home-"));
+	vi.stubEnv("HOME", homeDir);
+	return homeDir;
+}
 
 describe("formatUsageBalance", () => {
 	it("uses top-level monthlyCredits from the v1 credits endpoint", () => {
@@ -50,5 +69,13 @@ describe("formatUsageBalance", () => {
 			pct: 10,
 			planName: "pro",
 		});
+	});
+});
+
+describe("fetchUsageReport", () => {
+	it("prints the login hint when no Codebase session exists", async () => {
+		isolateHome();
+
+		await expect(fetchUsageReport()).resolves.toBe("Not signed in. Run `codebase auth login` first.");
 	});
 });

@@ -24,55 +24,55 @@ export const usage: Command = {
 	name: "usage",
 	description: "Show your Codebase plan usage — credits used, remaining, and reset date.",
 	handler: async (_args, ctx) => {
-		const store = new CredentialsStore();
-		let creds = store.load();
-		if (!creds) {
-			ctx.emit("Not signed in. Run `codebase auth login` first.");
-			return { handled: true };
-		}
-		if (creds.source !== "codebase") {
-			ctx.emit("Usage is only tracked for Codebase accounts (you're using a BYOK/manual key).");
-			return { handled: true };
-		}
-		try {
-			await ensureFreshCredentials();
-			creds = store.load() ?? creds;
-		} catch {
-			// fall through with the token we already have
-		}
-
-		try {
-			const res = await fetch(`${API_BASE}/api/v1/credits/balance`, {
-				headers: { Authorization: `Bearer ${creds.accessToken}` },
-			});
-			if (res.status === 401) {
-				ctx.emit("Session expired — run `codebase auth login` again.");
-				return { handled: true };
-			}
-			if (!res.ok) {
-				ctx.emit(`Couldn't fetch usage (HTTP ${res.status}).`);
-				return { handled: true };
-			}
-			const b = (await res.json()) as Balance;
-			const formatted = formatUsageBalance(b);
-			const lines = [`Plan: ${formatted.planName}`, formatted.creditLine];
-			if (formatted.pct != null) {
-				lines.push(
-					`${bar(formatted.pct)} ${formatted.pct}%${formatted.days != null ? `  ·  resets in ${formatted.days}d` : ""}`,
-				);
-			} else {
-				lines.push("Monthly allowance was not returned yet; showing remaining credits only.");
-			}
-			if (typeof b.anyBuildsRemaining === "number" && b.anyBuildsRemaining >= 0) {
-				lines.push(`Build turns remaining: ${b.anyBuildsRemaining.toLocaleString()}`);
-			}
-			ctx.emit(lines.join("\n"));
-		} catch (err) {
-			ctx.emit(`Couldn't fetch usage: ${(err as Error).message}`);
-		}
+		ctx.emit(await fetchUsageReport());
 		return { handled: true };
 	},
 };
+
+export async function fetchUsageReport(): Promise<string> {
+	const store = new CredentialsStore();
+	let creds = store.load();
+	if (!creds) {
+		return "Not signed in. Run `codebase auth login` first.";
+	}
+	if (creds.source !== "codebase") {
+		return "Usage is only tracked for Codebase accounts (you're using a BYOK/manual key).";
+	}
+	try {
+		await ensureFreshCredentials();
+		creds = store.load() ?? creds;
+	} catch {
+		// fall through with the token we already have
+	}
+
+	try {
+		const res = await fetch(`${API_BASE}/api/v1/credits/balance`, {
+			headers: { Authorization: `Bearer ${creds.accessToken}` },
+		});
+		if (res.status === 401) {
+			return "Session expired — run `codebase auth login` again.";
+		}
+		if (!res.ok) {
+			return `Couldn't fetch usage (HTTP ${res.status}).`;
+		}
+		const b = (await res.json()) as Balance;
+		const formatted = formatUsageBalance(b);
+		const lines = [`Plan: ${formatted.planName}`, formatted.creditLine];
+		if (formatted.pct != null) {
+			lines.push(
+				`${bar(formatted.pct)} ${formatted.pct}%${formatted.days != null ? `  ·  resets in ${formatted.days}d` : ""}`,
+			);
+		} else {
+			lines.push("Monthly allowance was not returned yet; showing remaining credits only.");
+		}
+		if (typeof b.anyBuildsRemaining === "number" && b.anyBuildsRemaining >= 0) {
+			lines.push(`Build turns remaining: ${b.anyBuildsRemaining.toLocaleString()}`);
+		}
+		return lines.join("\n");
+	} catch (err) {
+		return `Couldn't fetch usage: ${(err as Error).message}`;
+	}
+}
 
 export function formatUsageBalance(b: Balance): {
 	creditLine: string;

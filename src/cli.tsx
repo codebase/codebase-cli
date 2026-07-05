@@ -3,6 +3,7 @@ import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { ensureFreshCredentials } from "./auth/ensure-fresh.js";
+import { fetchUsageReport } from "./commands/builtins/usage.js";
 import { buildDoctorReport } from "./diagnostics/doctor.js";
 import { runDirectorSubcommand } from "./directors/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
@@ -77,6 +78,15 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runSshSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "project" || argv[0] === "projects") {
 	runProjectSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "usage") {
+	if (argv[1] === "--help" || argv[1] === "-h") {
+		process.stdout.write("usage: codebase usage\n\nShow Codebase plan credits, reset date, and build turns.\n");
+		process.exit(0);
+	}
+	fetchUsageReport().then((report) => {
+		process.stdout.write(`${report}\n`);
+		process.exit(0);
+	});
 } else if (argv[0] === "doctor") {
 	if (argv[1] === "--help" || argv[1] === "-h") {
 		process.stdout.write("usage: codebase doctor\n\nDiagnose local runtime, auth, config, MCP, and storage.\n");
@@ -233,6 +243,7 @@ function printHelp(): void {
 			"  codebase auth status         show current sign-in",
 			"  codebase auth refresh        force-refresh the access token",
 			"  codebase auth <token>        save a Codebase bearer token (advanced)",
+			"  codebase usage               show Codebase plan credits and build turns",
 			"  codebase ssh add <name> <host>    enroll a remote machine the agent can target",
 			"  codebase ssh list / rm / test     manage enrolled SSH hosts",
 			"  codebase ssh keygen <name>        generate an Ed25519 (or --rsa) keypair",
