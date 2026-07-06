@@ -39,6 +39,23 @@ describe("MemoryStore", () => {
 		expect(record?.body.trim()).toBe("User is a senior dev with 10y Go.");
 	});
 
+	it("redacts high-confidence secrets before durable save", () => {
+		const fakeToken = "ghp_0123456789abcdef0123456789abcdef0123";
+		const record = store.save({
+			filename: "secret_note.md",
+			name: `Token ${fakeToken}`,
+			description: `Do not keep ${fakeToken}`,
+			type: "feedback",
+			body: `Never persist ${fakeToken} in memory.`,
+		});
+
+		expect(record.name).not.toContain(fakeToken);
+		expect(record.description).not.toContain(fakeToken);
+		expect(record.body).not.toContain(fakeToken);
+		expect(record.body).toContain("[REDACTED]");
+		expect(readFileSync(join(store.directory, "secret_note.md"), "utf8")).not.toContain(fakeToken);
+	});
+
 	it("rejects bad filenames", () => {
 		expect(() =>
 			store.save({

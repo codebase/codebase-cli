@@ -22,6 +22,13 @@ Per-run metrics captured into `bench/results/<sweep>/runs.jsonl`:
 - **Model + source** (proxy / explicit env / auto / byok)
 - **Final assistant text** (truncated to 1KB for readability)
 - **Verify exit code + last 500 bytes of stderr** when it failed
+- **Verify stdout** tail when scenario verifiers emit extra diagnostics
+
+The runner also writes the raw agent JSON envelope into each temporary project
+at `.codebase-bench/agent.json` and exposes its path as
+`CODEBASE_BENCH_AGENT_JSON` to `verify.sh`. Scenarios can grade transcript-level
+behavior, such as whether the agent used `create_task`, `update_task`, or
+`save_memory`, without relying on brittle final prose.
 
 ## Prerequisites
 
@@ -44,6 +51,16 @@ You also need `dist/cli.js` built:
 
 ```sh
 npm run build
+```
+
+By default every run gets an isolated temporary `HOME` so memory, sessions,
+checkpoints, and config writes do not pollute your real `~/.codebase`. The
+runner copies `credentials.json`, `config.json`, and `config.local.json` into
+that temp home when present, so OAuth/BYOK runs still work. To deliberately use
+your real home directory:
+
+```sh
+node bench/run.mjs --scenario all --isolate-home false
 ```
 
 ## Run
@@ -144,6 +161,26 @@ Design rules for scenarios:
 
 The `verify.sh` runs in the tmp project's cwd. Use `set -e` and exit
 non-zero with a clear message on failure.
+
+Useful verifier environment:
+
+- `CODEBASE_BENCH_AGENT_JSON`: parsed JSON-mode output from `codebase run`
+- `CODEBASE_BENCH_HOME`: the isolated home used for this run
+- `CODEBASE_BENCH_PROJECT`: the temporary project cwd
+- `CODEBASE_BENCH_SCENARIO_DIR`: source scenario directory
+
+## Capability Scenarios
+
+The launch-readiness set includes behavior-focused scenarios inspired by
+Claude Code's task and memory systems:
+
+- `task-list-fidelity`: multi-step bug fix that must use task tools, keep
+  progress moving through `in_progress`, complete tasks, and include
+  verification as tracked work.
+- `memory-secret-hygiene`: requires a durable `save_memory` call while
+  ensuring a fake token in the prompt is not retained in memory files.
+- `complex-issue-recovery`: multi-file config bug with deterministic tests;
+  grades code inspection, task tracking, minimal repair, and verification.
 
 ## Layout
 

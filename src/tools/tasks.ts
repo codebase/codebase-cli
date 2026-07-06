@@ -33,7 +33,7 @@ export function createCreateTask(ctx: ToolContext): AgentTool<typeof CreateParam
 		name: "create_task",
 		label: "New task",
 		description:
-			"Add a task to the agent's checklist. Returns the task with an assigned id. Status starts as 'pending'.",
+			"Add a task to the agent's checklist. Returns the task with an assigned id. Status starts as 'pending'. After creating the checklist, mark exactly one task in_progress before doing that work.",
 		parameters: CreateParams,
 		executionMode: "sequential",
 		execute: async (_id, params) => {
@@ -43,7 +43,12 @@ export function createCreateTask(ctx: ToolContext): AgentTool<typeof CreateParam
 				activeForm: params.active_form ?? null,
 			});
 			return {
-				content: [{ type: "text", text: `Created ${task.id}: ${task.title}` }],
+				content: [
+					{
+						type: "text",
+						text: `Created ${task.id}: ${task.title}. Keep the checklist live: mark the current task in_progress before working on it, and complete it immediately after.`,
+					},
+				],
 				details: task,
 			};
 		},
@@ -71,7 +76,7 @@ export function createUpdateTask(ctx: ToolContext): AgentTool<typeof UpdateParam
 		name: "update_task",
 		label: "Update task",
 		description:
-			"Change a task's status or fields. Move tasks to 'in_progress' when you start them and 'completed' when done.",
+			"Change a task's status or fields. Move each task to 'in_progress' before starting it and to 'completed' immediately after finishing it. Do not batch lifecycle updates.",
 		parameters: UpdateParams,
 		executionMode: "sequential",
 		execute: async (_id, params) => {
@@ -81,8 +86,14 @@ export function createUpdateTask(ctx: ToolContext): AgentTool<typeof UpdateParam
 				description: params.description,
 				activeForm: params.active_form,
 			});
+			const nextStep =
+				task.status === "completed"
+					? " If more work remains, mark the next task in_progress before starting it."
+					: task.status === "in_progress"
+						? " Work only this active task until it is complete or blocked."
+						: "";
 			return {
-				content: [{ type: "text", text: `${task.id} → ${task.status}: ${task.title}` }],
+				content: [{ type: "text", text: `${task.id} -> ${task.status}: ${task.title}.${nextStep}` }],
 				details: task,
 			};
 		},

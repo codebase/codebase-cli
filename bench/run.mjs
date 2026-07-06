@@ -32,8 +32,18 @@
  * runner does not log in for you — that's a one-time setup step.
  */
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+	copyFileSync,
+	cpSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +64,7 @@ const sweepId = args["sweep-id"] ?? buildSweepId();
 const sweepDir = join(RESULTS_DIR, sweepId);
 const timeoutMs = positiveInt(args.timeout, 5 * 60_000);
 const keepTmp = args["keep-tmp"] === "true" || args["keep-tmp"] === "1";
+const isolateHome = args["isolate-home"] !== "false";
 
 mkdirSync(sweepDir, { recursive: true });
 const jsonlPath = join(sweepDir, "runs.jsonl");
@@ -105,6 +116,8 @@ async function runOne(scenarioName, runIndex) {
 
 	const prompt = readFileSync(promptPath, "utf8").trim();
 	const tmpProject = mkdtempSync(join(tmpdir(), `bench-${scenarioName}-`));
+	const tmpHome = isolateHome ? mkdtempSync(join(tmpdir(), `bench-home-${scenarioName}-`)) : process.env.HOME || homedir();
+	if (isolateHome) prepareBenchHome(tmpHome);
 
 	// Copy setup/ → tmpProject if present.
 	if (existsSync(setupDir)) {
@@ -112,7 +125,7 @@ async function runOne(scenarioName, runIndex) {
 	}
 
 	const startedAt = Date.now();
-	const cliResult = await invokeCli({ tmpProject, prompt });
+	const cliResult = await invokeCli({ tmpProject, tmpHome, prompt });
 	const elapsedMs = Date.now() - startedAt;
 
 	let agentJson = null;
@@ -123,7 +136,21 @@ async function runOne(scenarioName, runIndex) {
 		agentParseError = err instanceof Error ? err.message : String(err);
 	}
 
-	const verify = await runVerify({ tmpProject, verifyPath });
+	const artifactDir = join(tmpProject, ".codebase-bench");
+	mkdirSync(artifactDir, { recursive: true });
+	const agentJsonPath = join(artifactDir, "agent.json");
+	const stdoutPath = join(artifactDir, "stdout.txt");
+	const stderrPath = join(artifactDir, "stderr.txt");
+	writeFileSync(stdoutPath, cliResult.stdout);
+	writeFileSync(stderrPath, cliResult.stderr);
+	writeFileSync(
+		agentJsonPath,
+		agentJson
+			? `${JSON.stringify(agentJson, null, 2)}\n`
+			: `${JSON.stringify({ ok: false, parseError: agentParseError, rawStdout: cliResult.stdout }, null, 2)}\n`,
+	);
+
+	const verify = await runVerify({ tmpProject, tmpHome, verifyPath, agentJsonPath });
 
 	const result = {
 		scenario: scenarioName,
@@ -145,9 +172,11 @@ async function runOne(scenarioName, runIndex) {
 		// verify
 		verifyPassed: verify.exitCode === 0,
 		verifyExit: verify.exitCode,
+		verifyStdout: verify.stdout.slice(-500),
 		verifyStderr: verify.stderr.slice(-500),
 		// bookkeeping
 		tmpProject: keepTmp ? tmpProject : undefined,
+		tmpHome: keepTmp && isolateHome ? tmpHome : undefined,
 		ts: Date.now(),
 	};
 
@@ -156,6 +185,13 @@ async function runOne(scenarioName, runIndex) {
 			rmSync(tmpProject, { recursive: true, force: true });
 		} catch {
 			// best effort
+		}
+		if (isolateHome) {
+			try {
+				rmSync(tmpHome, { recursive: true, force: true });
+			} catch {
+				// best effort
+			}
 		}
 	}
 
@@ -178,9 +214,9 @@ function errorResult(scenarioName, runIndex, message) {
 
 // ─── invocation ───────────────────────────────────────────────────────
 
-function invokeCli({ tmpProject, prompt }) {
+function invokeCli({ tmpProject, tmpHome, prompt }) {
 	return new Promise((resolveCli) => {
-		const env = { ...process.env };
+		const env = { ...process.env, HOME: tmpHome, CODEBASE_BENCH_HOME: tmpHome };
 		if (modelOverride) {
 			// Pi-ai's model registry uses provider+id; user typically passes
 			// just an id. We let the user set CODEBASE_MODEL externally for
@@ -222,10 +258,18 @@ function invokeCli({ tmpProject, prompt }) {
 	});
 }
 
-function runVerify({ tmpProject, verifyPath }) {
+function runVerify({ tmpProject, tmpHome, verifyPath, agentJsonPath }) {
 	return new Promise((resolveVerify) => {
 		const child = spawn("/bin/sh", [verifyPath], {
 			cwd: tmpProject,
+			env: {
+				...process.env,
+				HOME: tmpHome,
+				CODEBASE_BENCH_HOME: tmpHome,
+				CODEBASE_BENCH_AGENT_JSON: agentJsonPath,
+				CODEBASE_BENCH_PROJECT: tmpProject,
+				CODEBASE_BENCH_SCENARIO_DIR: dirname(verifyPath),
+			},
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let stdout = "";
@@ -320,6 +364,22 @@ function resolveCliPath(override) {
 		`could not find a CLI to invoke. Build first (npm run build) or pass --cli /path/to/cli`,
 	);
 	process.exit(1);
+}
+
+function prepareBenchHome(tmpHome) {
+	const sourceRoot = join(process.env.HOME || homedir(), ".codebase");
+	const destRoot = join(tmpHome, ".codebase");
+	mkdirSync(destRoot, { recursive: true });
+	for (const name of ["credentials.json", "config.json", "config.local.json"]) {
+		const src = join(sourceRoot, name);
+		if (!existsSync(src)) continue;
+		try {
+			copyFileSync(src, join(destRoot, name));
+		} catch {
+			// A copied credential/config is a convenience for OAuth/BYOK users.
+			// Env-var API keys still work when this copy fails.
+		}
+	}
 }
 
 function parseArgs(argv) {

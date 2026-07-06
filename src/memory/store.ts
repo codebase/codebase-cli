@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { redactSecrets } from "./secrets.js";
 import { MEMORY_TYPES, type MemoryFrontmatter, type MemoryRecord, type MemoryType, parseMemoryType } from "./types.js";
 
 const MAX_INDEX_LINES = 200;
@@ -72,19 +73,22 @@ export class MemoryStore {
 		if (!parseMemoryType(input.type)) {
 			throw new Error(`memory type must be one of ${MEMORY_TYPES.join(", ")}; got "${input.type}"`);
 		}
+		const name = redactSecrets(input.name);
+		const description = redactSecrets(input.description);
+		const redactedBody = redactSecrets(input.body);
 		mkdirSync(this.dir, { recursive: true });
 		const body = serializeMemoryFile({
-			frontmatter: { name: input.name, description: input.description, type: input.type },
-			body: input.body,
+			frontmatter: { name, description, type: input.type },
+			body: redactedBody,
 		});
 		const path = join(this.dir, safe);
 		writeFileSync(path, body, { mode: 0o644 });
 		return {
 			filename: safe,
-			name: input.name,
-			description: input.description,
+			name,
+			description,
 			type: input.type,
-			body: input.body,
+			body: redactedBody,
 			updatedAt: statSync(path).mtimeMs,
 		};
 	}
