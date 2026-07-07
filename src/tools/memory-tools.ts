@@ -69,6 +69,7 @@ export function createSaveMemory(ctx: ToolContext): AgentTool<typeof SaveParams,
 				description: params.description,
 				type: params.type,
 				body: params.body,
+				source: "save_memory tool",
 			});
 			updateIndex(ctx);
 			return {
@@ -145,7 +146,17 @@ export function createReadMemory(ctx: ToolContext): AgentTool<typeof ReadParams,
 }
 
 function formatRecord(record: MemoryRecord): string {
-	return [`# ${record.name}  (${record.type})`, `> ${record.description}`, "", record.body.trim()].join("\n");
+	return [
+		`# ${record.name}  (${record.type})`,
+		`> ${record.description}`,
+		`> file: ${record.filename}; source: ${record.source}; created: ${formatDate(record.createdAt)}; updated: ${formatDate(record.updatedAt)}`,
+		"",
+		record.body.trim(),
+	].join("\n");
+}
+
+function formatDate(ms: number): string {
+	return new Date(ms).toISOString().slice(0, 10);
 }
 
 // ─── shared: update MEMORY.md after a save ───────────────────

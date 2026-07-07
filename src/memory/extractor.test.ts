@@ -85,6 +85,7 @@ describe("MemoryExtractor", () => {
 		const saved = await ext.maybeExtract([user("a"), assistant("b"), user("c")]);
 		expect(saved).toHaveLength(1);
 		expect(saved[0].type).toBe("user");
+		expect(saved[0].source).toBe("auto-extract");
 		expect(store.list()).toHaveLength(1);
 		expect(store.index()).toContain("Prefers tabs");
 	});

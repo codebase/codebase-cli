@@ -39,6 +39,60 @@ describe("MemoryStore", () => {
 		expect(record?.body.trim()).toBe("User is a senior dev with 10y Go.");
 	});
 
+	it("writes durable provenance frontmatter and preserves created_at on overwrite", () => {
+		const createdAt = Date.UTC(2026, 6, 7, 12);
+		const updatedAt = Date.UTC(2026, 6, 8, 12);
+		store.save({
+			filename: "project_rule.md",
+			name: "Project rule",
+			description: "Keep receipts",
+			type: "project",
+			body: "Always keep verification receipts.",
+			source: "unit test",
+			now: createdAt,
+		});
+
+		let raw = readFileSync(join(store.directory, "project_rule.md"), "utf8");
+		expect(raw).toContain("source: unit test");
+		expect(raw).toContain("created_at: 2026-07-07T12:00:00.000Z");
+		expect(raw).toContain("updated_at: 2026-07-07T12:00:00.000Z");
+
+		const overwritten = store.save({
+			filename: "project_rule.md",
+			name: "Project rule",
+			description: "Keep receipts updated",
+			type: "project",
+			body: "Always keep fresh verification receipts.",
+			now: updatedAt,
+		});
+
+		expect(overwritten.source).toBe("unit test");
+		expect(overwritten.createdAt).toBe(createdAt);
+		expect(overwritten.updatedAt).toBe(updatedAt);
+		raw = readFileSync(join(store.directory, "project_rule.md"), "utf8");
+		expect(raw).toContain("created_at: 2026-07-07T12:00:00.000Z");
+		expect(raw).toContain("updated_at: 2026-07-08T12:00:00.000Z");
+	});
+
+	it("reads legacy memory files without provenance frontmatter", () => {
+		store.writeIndex("");
+		writeFileSync(
+			join(store.directory, "legacy.md"),
+			"---\nname: Legacy\ndescription: Old format\ntype: project\n---\n\nbody\n",
+		);
+
+		const record = store.read("legacy.md");
+		expect(record).toMatchObject({
+			filename: "legacy.md",
+			name: "Legacy",
+			description: "Old format",
+			type: "project",
+			source: "local project memory",
+		});
+		expect(record?.createdAt).toEqual(expect.any(Number));
+		expect(record?.updatedAt).toEqual(expect.any(Number));
+	});
+
 	it("redacts high-confidence secrets before durable save", () => {
 		const fakeToken = "ghp_0123456789abcdef0123456789abcdef0123";
 		const record = store.save({

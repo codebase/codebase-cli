@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -53,6 +53,7 @@ describe("memory injection", () => {
 		expect(reminder).toContain("<system-reminder>");
 		expect(reminder).toContain("Deploy checklist");
 		expect(reminder).toContain("file: deploy.md; type: project; source: local project memory");
+		expect(reminder).toContain("created:");
 		expect(reminder).toContain("updated:");
 		expect(reminder).toContain("stale: no");
 		expect(reminder).toContain("Run npm run check before deploy");
@@ -60,15 +61,15 @@ describe("memory injection", () => {
 	});
 
 	it("marks older matching memories stale", () => {
+		const oldDate = Date.UTC(2026, 4, 15);
 		store.save({
 			filename: "old_deploy.md",
 			name: "Old deploy note",
 			description: "Deploy workaround",
 			type: "feedback",
 			body: "The old staging deploy needs a manual cache clear.",
+			now: oldDate,
 		});
-		const oldDate = new Date(Date.UTC(2026, 4, 15));
-		utimesSync(join(store.directory, "old_deploy.md"), oldDate, oldDate);
 
 		const reminder = buildRelevantMemoryReminder(store, "Use the deploy workaround.", {
 			now: Date.UTC(2026, 6, 7),

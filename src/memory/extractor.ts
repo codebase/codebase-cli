@@ -107,6 +107,7 @@ export class MemoryExtractor {
 					description: clip(p.description, 200),
 					type: p.type,
 					body: p.body.trim(),
+					source: "auto-extract",
 				}),
 			);
 		}

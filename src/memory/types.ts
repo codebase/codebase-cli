@@ -6,10 +6,15 @@ export interface MemoryFrontmatter {
 	name: string;
 	description: string;
 	type: MemoryType;
+	source?: string;
+	createdAt?: number;
+	updatedAt?: number;
 }
 
 export interface MemoryRecord extends MemoryFrontmatter {
 	filename: string;
+	source: string;
+	createdAt: number;
 	body: string;
 	updatedAt: number;
 }

@@ -54,6 +54,7 @@ describe("save_memory", () => {
 		);
 
 		const stored = ctx.memory.read("user_role.md");
+		expect(stored?.source).toBe("save_memory tool");
 		expect(stored?.body.trim()).toBe("Background: 10 years Go, new to TS.");
 
 		const indexPath = join(ctx.memory.directory, "MEMORY.md");
@@ -122,6 +123,7 @@ describe("read_memory", () => {
 		const result = await createReadMemory(ctx).execute("r", { filename: "user_a.md" }, undefined);
 		expect(result.details.mode).toBe("single");
 		expect(result.details.record?.body).toContain("u-body");
+		expect((result.content[0] as { text: string }).text).toContain("source: save_memory tool");
 	});
 
 	it("errors with a clear message on missing filename", async () => {

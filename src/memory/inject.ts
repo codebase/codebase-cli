@@ -82,7 +82,7 @@ function formatMemory(index: number, record: MemoryRecord, now: number): string 
 	const body = truncate(record.body.trim(), MAX_MEMORY_BODY_CHARS);
 	const lines = [
 		`${index}. ${record.name}`,
-		`   file: ${record.filename}; type: ${record.type}; source: local project memory; updated: ${formatDate(record.updatedAt)}; stale: ${stale ? "yes" : "no"}`,
+		`   file: ${record.filename}; type: ${record.type}; source: ${record.source}; created: ${formatDate(record.createdAt)}; updated: ${formatDate(record.updatedAt)}; stale: ${stale ? "yes" : "no"}`,
 		`   description: ${record.description}`,
 	];
 	if (body) {
