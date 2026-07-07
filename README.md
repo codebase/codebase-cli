@@ -73,7 +73,7 @@ OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash)
 - **🪝 Hooks.** Shell commands on lifecycle events (pre/post tool, edit, prompt, session start/end) — run a formatter on save, block secrets, commit on exit.
 - **🌐 SSH.** Run commands on enrolled remote hosts by name, behind the same safety validator as the local shell.
 
-…plus a fast differential TUI (clean copy-mode with `Ctrl-O`, image paste with `Ctrl-V`, history search with `Ctrl-R`, `$EDITOR` compose with `Ctrl-G`), **plan mode** for a cheap Q&A pass before editing, **auto-compaction** of long sessions, **multi-session resume** (`/resume`, `/rename`, `/tag`), **skills** & **output styles** as drop-in markdown, **45+ tools** behind one interface, and **effect-based permissions** you can teach with `/permissions`.
+…plus a fast differential TUI (clean copy-mode with `Ctrl-O`, image paste with `Ctrl-V`, history search with `Ctrl-R`, `$EDITOR` compose with `Ctrl-G`), **plan mode** for a cheap Q&A pass before editing, **auto-compaction** of long sessions, **multi-session resume** (`/resume`, `/rename`, `/tag`), **TS/JS code navigation** for definitions/references/hover/symbols/diagnostics, **skills** & **output styles** as drop-in markdown, **45+ tools** behind one interface, and **effect-based permissions** you can teach with `/permissions`.
 
 ## Cheat sheet
 

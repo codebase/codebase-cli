@@ -55,6 +55,7 @@ export const EXPLORE_TOOLS: readonly string[] = [
 	"list_files",
 	"glob",
 	"grep",
+	"code_navigation",
 	"web_fetch",
 	"web_search",
 	"git_status",

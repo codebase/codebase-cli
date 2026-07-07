@@ -106,6 +106,7 @@ const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
 	"list_files",
 	"glob",
 	"grep",
+	"code_navigation",
 	"web_fetch",
 	"web_search",
 	"git_status",
