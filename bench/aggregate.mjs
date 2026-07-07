@@ -114,27 +114,42 @@ function renderReceiptScorecard(runs) {
 	const out = [
 		"### Reliability receipts",
 		"",
-		"| scenario | n | receipt ok | task ok | verified | fresh verified | avg mutations | avg verifies | avg checkpoints | common failures |",
-		"|---|---|---|---|---|---|---|---|---|---|",
+		"| scenario | n | receipt ok | task ok | task evidence | verified | fresh verified | avg mutations | avg verifies | avg checkpoints | common failures |",
+		"|---|---|---|---|---|---|---|---|---|---|---|",
 	];
 	for (const [scenario, items] of grouped) {
 		const receipts = items.map((r) => r.receipt).filter(Boolean);
 		if (receipts.length === 0) {
-			out.push(`| ${scenario} | ${items.length} | — | — | — | — | — | — | — | — |`);
+			out.push(`| ${scenario} | ${items.length} | — | — | — | — | — | — | — | — | — |`);
 			continue;
 		}
 		const receiptOk = receipts.filter((r) => r.ok).length;
 		const taskOk = receipts.filter((r) => (r.summary?.completedTasks ?? 0) > 0 && (r.summary?.openTasks ?? 0) === 0).length;
+		const taskEvidence = receipts.filter((r) => hasCompletedTaskEvidence(r)).length;
 		const verified = receipts.filter((r) => (r.summary?.verificationCount ?? 0) > 0).length;
 		const freshVerified = receipts.filter((r) => hasFreshVerification(r)).length;
 		const avgMutations = mean(receipts.map((r) => r.summary?.mutationCount ?? r.mutations?.length ?? 0));
 		const avgVerifies = mean(receipts.map((r) => r.summary?.verificationCount ?? 0));
 		const avgCheckpoints = mean(receipts.map((r) => r.summary?.checkpoints ?? 0));
 		out.push(
-			`| ${scenario} | ${receipts.length}/${items.length} | ${receiptOk} | ${taskOk} | ${verified} | ${freshVerified} | ${avgMutations.toFixed(2)} | ${avgVerifies.toFixed(2)} | ${avgCheckpoints.toFixed(2)} | ${commonFailures(receipts)} |`,
+			`| ${scenario} | ${receipts.length}/${items.length} | ${receiptOk} | ${taskOk} | ${taskEvidence} | ${verified} | ${freshVerified} | ${avgMutations.toFixed(2)} | ${avgVerifies.toFixed(2)} | ${avgCheckpoints.toFixed(2)} | ${commonFailures(receipts)} |`,
 		);
 	}
 	return out;
+}
+
+function hasCompletedTaskEvidence(receipt) {
+	const completed = receipt.summary?.completedTasks ?? 0;
+	if (completed === 0) return false;
+	const evidenced = receipt.summary?.completedTasksWithEvidence;
+	if (typeof evidenced === "number") return evidenced >= completed;
+	const byTask = receipt.taskEvidence;
+	if (!Array.isArray(byTask)) return false;
+	return byTask.filter((item) => item.status === "completed" && taskEvidenceCount(item) > 0).length >= completed;
+}
+
+function taskEvidenceCount(item) {
+	return (item.toolCalls?.length ?? 0) + (item.mutations?.length ?? 0) + (item.verification?.length ?? 0);
 }
 
 function hasFreshVerification(receipt) {

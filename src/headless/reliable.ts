@@ -3,6 +3,7 @@ import type { CheckpointEntry } from "../checkpoint/store.js";
 import type { Task, TaskStatus } from "../tools/task-store.js";
 
 const MUTATING_FILE_TOOLS = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
+const TASK_TOOL_NAMES = new Set(["create_task", "update_task", "list_tasks", "get_task"]);
 
 export const RELIABLE_MODE_PROMPT = `# Reliable mode
 
@@ -11,6 +12,7 @@ This headless run is being audited for reliability. Treat the user's request as 
 Rules:
 - Use create_task/update_task for any non-trivial work. Keep exactly one task in_progress at a time.
 - Do not mark a task completed until its work is actually done.
+- Make completed tasks auditable: while each task is in_progress, use tools that leave evidence (file reads/writes, shell commands, searches, or other relevant tool calls).
 - Run a meaningful verification command after the final file change and before the final answer (tests, build, lint, typecheck, or a project-specific verify script).
 - If verification fails, fix the underlying issue and run verification again.
 - In the final answer, name the verification command that passed.`;
@@ -53,8 +55,22 @@ export interface TaskLifecycleEvidence {
 	transitions: Array<{
 		toolCallId: string;
 		status: TaskStatus;
+		order: number;
 		at: number;
 	}>;
+}
+
+export interface TaskEvidence {
+	id: string;
+	title: string;
+	status: TaskStatus;
+	activeFrom?: number;
+	completedAt?: number;
+	toolCalls: Array<
+		Pick<ReceiptToolCall, "id" | "name" | "args" | "status" | "order" | "startedAt" | "endedAt" | "durationMs">
+	>;
+	mutations: MutationEvidence[];
+	verification: VerificationEvidence[];
 }
 
 export interface ReliabilityReceipt {
@@ -70,11 +86,13 @@ export interface ReliabilityReceipt {
 		mutationCount: number;
 		verificationCount: number;
 		verificationAfterLastMutationCount: number;
+		completedTasksWithEvidence: number;
 		checkpoints: number;
 		durationMs: number;
 	};
 	tasks: Task[];
 	taskLifecycle: TaskLifecycleEvidence[];
+	taskEvidence: TaskEvidence[];
 	tools: ReceiptToolCall[];
 	mutations: MutationEvidence[];
 	verification: VerificationEvidence[];
@@ -134,6 +152,13 @@ export class ReliabilityRecorder {
 		const verificationAfterLastMutation = lastMutation
 			? verification.filter((item) => happenedAfter(item, lastMutation))
 			: verification;
+		const taskEvidence = collectTaskEvidence(tasks, lifecycle.tasks, tools, mutations, verification);
+		const completedTasksWithEvidence = taskEvidence.filter(
+			(item) => item.status === "completed" && hasTaskEvidence(item),
+		);
+		const completedTasksWithoutEvidence = taskEvidence.filter(
+			(item) => item.status === "completed" && !hasTaskEvidence(item),
+		);
 		const failures: string[] = [];
 		const warnings: string[] = [];
 
@@ -143,6 +168,11 @@ export class ReliabilityRecorder {
 		if (verification.length === 0) failures.push("no successful verification command was recorded");
 		if (mutations.length > 0 && verification.length > 0 && verificationAfterLastMutation.length === 0) {
 			failures.push("successful verification ran before the last file mutation");
+		}
+		if (completedTasksWithoutEvidence.length > 0) {
+			failures.push(
+				`completed task${completedTasksWithoutEvidence.length === 1 ? "" : "s"} lacked evidence: ${completedTasksWithoutEvidence.map((item) => item.id).join(", ")}`,
+			);
 		}
 		if (lifecycle.completedWithoutInProgress.length > 0) {
 			failures.push(
@@ -168,11 +198,13 @@ export class ReliabilityRecorder {
 				mutationCount: mutations.length,
 				verificationCount: verification.length,
 				verificationAfterLastMutationCount: verificationAfterLastMutation.length,
+				completedTasksWithEvidence: completedTasksWithEvidence.length,
 				checkpoints: input.checkpoints.length,
 				durationMs: input.durationMs,
 			},
 			tasks,
 			taskLifecycle: lifecycle.tasks,
+			taskEvidence,
 			tools,
 			mutations,
 			verification,
@@ -215,7 +247,7 @@ function analyzeTaskLifecycle(tools: ReceiptToolCall[]): TaskLifecycleAnalysis {
 			transitions: [],
 		};
 		if (!evidence.title && typeof tool.details?.title === "string") evidence.title = tool.details.title;
-		evidence.transitions.push({ toolCallId: tool.id, status, at: tool.endedAt ?? tool.startedAt });
+		evidence.transitions.push({ toolCallId: tool.id, status, order: tool.order, at: tool.endedAt ?? tool.startedAt });
 		byId.set(id, evidence);
 
 		if (statuses.get(id) === status && tool.name !== "create_task") continue;
@@ -236,6 +268,97 @@ function analyzeTaskLifecycle(tools: ReceiptToolCall[]): TaskLifecycleAnalysis {
 		completedWithoutInProgress: [...new Set(completedWithoutInProgress)],
 		activeOverlaps: activeOverlaps.map((ids) => [...new Set(ids)]),
 	};
+}
+
+interface TaskActiveInterval {
+	startOrder: number;
+	endOrder: number;
+	startedAt: number;
+	endedAt?: number;
+}
+
+function collectTaskEvidence(
+	tasks: Task[],
+	lifecycle: TaskLifecycleEvidence[],
+	tools: ReceiptToolCall[],
+	mutations: MutationEvidence[],
+	verification: VerificationEvidence[],
+): TaskEvidence[] {
+	const lifecycleById = new Map(lifecycle.map((item) => [item.id, item]));
+	const workTools = sortedTools(tools).filter((tool) => !TASK_TOOL_NAMES.has(tool.name));
+	return tasks.map((task) => {
+		const intervals = activeIntervals(lifecycleById.get(task.id)?.transitions ?? []);
+		const toolCalls = workTools.filter((tool) => intervals.some((interval) => withinInterval(tool.order, interval)));
+		const taskMutations = mutations.filter((mutation) =>
+			intervals.some((interval) => withinInterval(mutation.order, interval)),
+		);
+		const taskVerification = verification.filter((item) =>
+			intervals.some((interval) => withinInterval(item.order, interval)),
+		);
+		const completedTransition = lastTransition(lifecycleById.get(task.id)?.transitions ?? [], "completed");
+		return {
+			id: task.id,
+			title: task.title,
+			status: task.status,
+			...(intervals[0] ? { activeFrom: intervals[0].startedAt } : {}),
+			...(completedTransition ? { completedAt: completedTransition.at } : {}),
+			toolCalls: toolCalls.map((tool) => ({
+				id: tool.id,
+				name: tool.name,
+				args: tool.args,
+				status: tool.status,
+				order: tool.order,
+				startedAt: tool.startedAt,
+				...(tool.endedAt !== undefined ? { endedAt: tool.endedAt } : {}),
+				...(tool.durationMs !== undefined ? { durationMs: tool.durationMs } : {}),
+			})),
+			mutations: taskMutations,
+			verification: taskVerification,
+		};
+	});
+}
+
+function activeIntervals(transitions: TaskLifecycleEvidence["transitions"]): TaskActiveInterval[] {
+	const intervals: TaskActiveInterval[] = [];
+	let active: TaskActiveInterval | null = null;
+	for (const transition of [...transitions].sort((a, b) => a.order - b.order)) {
+		if (transition.status === "in_progress") {
+			if (!active) {
+				active = {
+					startOrder: transition.order,
+					endOrder: Number.POSITIVE_INFINITY,
+					startedAt: transition.at,
+				};
+			}
+			continue;
+		}
+		if (active) {
+			intervals.push({ ...active, endOrder: transition.order, endedAt: transition.at });
+			active = null;
+		}
+	}
+	if (active) intervals.push(active);
+	return intervals;
+}
+
+function lastTransition(
+	transitions: TaskLifecycleEvidence["transitions"],
+	status: TaskStatus,
+): TaskLifecycleEvidence["transitions"][number] | undefined {
+	for (let i = transitions.length - 1; i >= 0; i--) {
+		if (transitions[i]?.status === status) return transitions[i];
+	}
+	return undefined;
+}
+
+function withinInterval(order: number, interval: TaskActiveInterval): boolean {
+	return order > interval.startOrder && order < interval.endOrder;
+}
+
+function hasTaskEvidence(item: TaskEvidence): boolean {
+	return (
+		item.mutations.length > 0 || item.verification.length > 0 || item.toolCalls.some((tool) => tool.status === "done")
+	);
 }
 
 function collectMutations(tools: ReceiptToolCall[], checkpoints: readonly CheckpointEntry[]): MutationEvidence[] {

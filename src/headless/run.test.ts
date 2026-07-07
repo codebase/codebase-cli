@@ -171,14 +171,25 @@ describe("runHeadless", () => {
 			ok: boolean;
 			receipt: {
 				ok: boolean;
-				summary: { completedTasks: number; verificationCount: number };
+				summary: { completedTasks: number; completedTasksWithEvidence: number; verificationCount: number };
+				taskEvidence: Array<{
+					id: string;
+					toolCalls: Array<{ name: string }>;
+					verification: Array<{ command: string }>;
+				}>;
 				verification: { command: string }[];
 			};
 		};
 		expect(parsed.ok).toBe(true);
 		expect(parsed.receipt.ok).toBe(true);
 		expect(parsed.receipt.summary.completedTasks).toBe(1);
+		expect(parsed.receipt.summary.completedTasksWithEvidence).toBe(1);
 		expect(parsed.receipt.summary.verificationCount).toBe(1);
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			toolCalls: [{ name: "shell" }],
+			verification: [{ command: "npm test" }],
+		});
 		expect(parsed.receipt.verification[0]?.command).toBe("npm test");
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
@@ -282,8 +293,19 @@ describe("runHeadless", () => {
 			ok: boolean;
 			receipt: {
 				ok: boolean;
-				summary: { mutationCount: number; verificationCount: number; verificationAfterLastMutationCount: number };
+				summary: {
+					mutationCount: number;
+					completedTasksWithEvidence: number;
+					verificationCount: number;
+					verificationAfterLastMutationCount: number;
+				};
 				mutations: Array<{ tool: string; path?: string; checkpoints: unknown[] }>;
+				taskEvidence: Array<{
+					id: string;
+					toolCalls: Array<{ name: string }>;
+					mutations: Array<{ tool: string }>;
+					verification: Array<{ command: string }>;
+				}>;
 				verification: Array<{ command: string; endedAt: number }>;
 			};
 		};
@@ -291,6 +313,7 @@ describe("runHeadless", () => {
 		expect(parsed.receipt.ok).toBe(true);
 		expect(parsed.receipt.summary).toMatchObject({
 			mutationCount: 1,
+			completedTasksWithEvidence: 1,
 			verificationCount: 1,
 			verificationAfterLastMutationCount: 1,
 		});
@@ -299,7 +322,71 @@ describe("runHeadless", () => {
 			path: "result.txt",
 			checkpoints: [{ display: "result.txt" }],
 		});
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			toolCalls: [{ name: "write_file" }, { name: "shell" }],
+			mutations: [{ tool: "write_file" }],
+			verification: [{ command: "npm test" }],
+		});
 		expect(parsed.receipt.verification[0]?.command).toBe("npm test");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when a completed task has no active evidence", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-empty-task-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Do work" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				summary: { completedTasks: number; completedTasksWithEvidence: number; verificationCount: number };
+				taskEvidence: Array<{ id: string; toolCalls: unknown[]; mutations: unknown[]; verification: unknown[] }>;
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("completed task lacked evidence: task-1");
+		expect(parsed.receipt.summary).toMatchObject({
+			completedTasks: 1,
+			completedTasksWithEvidence: 0,
+			verificationCount: 1,
+		});
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			toolCalls: [],
+			mutations: [],
+			verification: [],
+		});
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
