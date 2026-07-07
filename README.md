@@ -46,7 +46,9 @@ tasks through `in_progress` without overlapping active work, attaches evidence
 to each completed task, and records a passing verification command after the
 final file change. With `--output json`, the result includes a receipt: task
 lifecycle, per-task evidence, file mutations, verification evidence, usage, and
-rewind checkpoints.
+rewind checkpoints. Inspect the latest one with `codebase receipt`, list saved
+runs with `codebase receipt list`, or export markdown with
+`codebase receipt export --out receipt.md`.
 
 ## Pick your LLM
 
@@ -68,7 +70,7 @@ OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash)
 ## What makes it good
 
 - **🏁 Tournaments.** `/tournament <task>` races several agents on the same change in isolated worktrees, a judge ranks them, you merge the winner. `--models opus,sonnet,haiku` pits models head-to-head on *your* code.
-- **Receipts.** `codebase auto --reliable` turns a one-shot task into an audited run: task lifecycle, verification, tool calls, usage, and checkpoints are captured in JSON.
+- **Receipts.** `codebase auto --reliable` turns a one-shot task into an audited run: task lifecycle, per-task evidence, verification, tool calls, usage, and checkpoints are saved locally and inspectable with `codebase receipt`.
 - **↺ Rewind anything.** `/rewind` rolls the conversation *and* the files back to before any earlier prompt — a bad turn fully un-happens. Every edit is checkpointed.
 - **🧠 Remembers across sessions.** Pulls durable facts (your prefs, project decisions, the rules you set) out of a session, then recalls matching notes with file/source/staleness labels. `#note` to add one by hand.
 - **🔌 MCP.** Connect external tool servers (filesystem, Postgres, git, fetch, …) over stdio or remote HTTP, OAuth and all. Their tools splice straight into the agent.

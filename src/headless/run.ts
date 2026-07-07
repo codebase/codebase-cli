@@ -3,6 +3,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { userFacingErrorMessage } from "../errors/user-facing.js";
+import { ReceiptStore } from "./receipt-store.js";
 import {
 	formatReliabilityFailure,
 	RELIABLE_MODE_PROMPT,
@@ -268,6 +269,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	}
 
 	let receipt: ReliabilityReceipt | undefined;
+	let receiptRecord: { id: string; path: string } | undefined;
 	if (reliability) {
 		receipt = reliability.build({
 			tasks: bundle.toolContext.tasks.list(),
@@ -295,6 +297,40 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	}
 
 	const exitCode = aborted ? 130 : errored ? errorExitCode : 0;
+	if (receipt) {
+		try {
+			const store = new ReceiptStore();
+			const record = store.save({
+				cwd: bundle.toolContext.cwd,
+				prompt: opts.prompt,
+				ok: !errored && !aborted,
+				exitCode,
+				error: errorMessage,
+				code: errorCode,
+				model: { provider: bundle.model.provider, id: bundle.model.id, name: bundle.model.name },
+				source: bundle.source,
+				durationMs: Date.now() - startedAt,
+				usage: totalUsage,
+				finalText: latestAssistantText(bundle.agent.state.messages),
+				receipt,
+			});
+			receiptRecord = { id: record.id, path: store.pathFor(record.id) };
+			if (format === "stream-json") {
+				out(
+					`${JSON.stringify({ type: "receipt_saved", id: receiptRecord.id, path: receiptRecord.path, ts: Date.now() })}\n`,
+				);
+			} else if (format === "text") {
+				err(`[receipt] ${receiptRecord.path}\n`);
+			}
+		} catch (saveErr) {
+			const saveMessage = saveErr instanceof Error ? saveErr.message : String(saveErr);
+			if (format === "stream-json") {
+				out(`${JSON.stringify({ type: "receipt_save_error", error: saveMessage, ts: Date.now() })}\n`);
+			} else if (format !== "json") {
+				err(`[receipt save failed] ${saveMessage}\n`);
+			}
+		}
+	}
 
 	if (format === "json") {
 		const payload = buildJsonResult({
@@ -308,6 +344,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 			source: bundle.source,
 			durationMs: Date.now() - startedAt,
 			receipt,
+			receiptRecord,
 		});
 		out(`${JSON.stringify(payload)}\n`);
 	}
@@ -343,6 +380,7 @@ interface JsonResultInput {
 	source: string;
 	durationMs: number;
 	receipt?: ReliabilityReceipt;
+	receiptRecord?: { id: string; path: string };
 }
 
 /** Exported for unit tests — production code reaches it through runHeadless. */
@@ -358,6 +396,7 @@ export function buildJsonResult(input: JsonResultInput): Record<string, unknown>
 		durationMs: input.durationMs,
 		usage: input.usage,
 		...(input.receipt ? { receipt: input.receipt } : {}),
+		...(input.receiptRecord ? { receiptId: input.receiptRecord.id, receiptPath: input.receiptRecord.path } : {}),
 		messageCount: input.messages.length,
 		finalText: lastAssistant ? extractText(lastAssistant) : "",
 		messages: input.messages,
@@ -422,4 +461,9 @@ function latestAssistantError(messages: AgentMessage[]): string | undefined {
 	if (typeof candidate.errorMessage === "string" && candidate.errorMessage.trim()) return candidate.errorMessage;
 	if (candidate.stopReason === "error") return "Agent turn ended with an error.";
 	return undefined;
+}
+
+function latestAssistantText(messages: AgentMessage[]): string {
+	const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+	return lastAssistant ? extractText(lastAssistant) : "";
 }

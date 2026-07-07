@@ -7,6 +7,7 @@ import { fetchUsageReport } from "./commands/builtins/usage.js";
 import { buildDoctorReport } from "./diagnostics/doctor.js";
 import { runDirectorSubcommand } from "./directors/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
+import { runReceiptSubcommand } from "./headless/receipt-cli.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
 import { runProjectSubcommand } from "./projects/cli.js";
 import { runSshSubcommand } from "./ssh/cli.js";
@@ -100,6 +101,8 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	process.exit(0);
 } else if (argv[0] === "director" || argv[0] === "directors") {
 	runDirectorSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "receipt" || argv[0] === "receipts") {
+	runReceiptSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "app-server") {
 	// JSON-RPC-ish over stdio for IDE extensions. Auto-approve permissions
 	// by default — IDE clients render approval UIs themselves and we don't
@@ -251,6 +254,8 @@ function printHelp(): void {
 			"                               require tasks, verification, and a receipt",
 			"  codebase auto <prompt>       shortcut for run --auto-approve",
 			"                               one-shot build/change in a trusted workspace",
+			"  codebase receipt             inspect the latest reliable-mode receipt",
+			"  codebase receipt list        list saved reliable-mode receipts",
 			"  codebase auth login          sign in via codebase.design browser OAuth",
 			"  codebase auth logout         revoke the current session",
 			"  codebase auth status         show current sign-in",

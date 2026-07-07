@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
@@ -169,6 +169,8 @@ describe("runHeadless", () => {
 		expect(exitCode).toBe(0);
 		const parsed = JSON.parse(capture.stdout.trim()) as {
 			ok: boolean;
+			receiptId: string;
+			receiptPath: string;
 			receipt: {
 				ok: boolean;
 				summary: { completedTasks: number; completedTasksWithEvidence: number; verificationCount: number };
@@ -191,6 +193,12 @@ describe("runHeadless", () => {
 			verification: [{ command: "npm test" }],
 		});
 		expect(parsed.receipt.verification[0]?.command).toBe("npm test");
+		expect(parsed.receiptId).toMatch(/\d{4}/);
+		expect(parsed.receiptPath).toContain(".codebase/receipts");
+		expect(existsSync(parsed.receiptPath)).toBe(true);
+		const saved = JSON.parse(readFileSync(parsed.receiptPath, "utf8")) as { id: string; receipt: { ok: boolean } };
+		expect(saved.id).toBe(parsed.receiptId);
+		expect(saved.receipt.ok).toBe(true);
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 

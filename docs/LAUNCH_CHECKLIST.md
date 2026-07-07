@@ -114,6 +114,12 @@ codebase auto --output json "say hello" | jq .
 # stream-json mode: one event per line
 codebase auto --output stream-json "say hello"
 
+# reliable mode: audited task lifecycle + receipt
+codebase auto --reliable "make a tiny verified change"
+codebase receipt
+codebase receipt list
+codebase receipt export --out receipt.md
+
 # Error path: no creds → structured error in JSON
 rm -f ~/.codebase/credentials.json
 unset ANTHROPIC_API_KEY OPENAI_API_KEY GROQ_API_KEY
@@ -123,6 +129,9 @@ codebase run --output json "x" 2>/dev/null | jq .
 
 Verify JSON includes `model: { provider: "codebase", id: "d4f", name: "Codebase Auto" }`
 for a signed-in user unless the tester explicitly switched models.
+Verify reliable mode prints a `[receipt]` path, `codebase receipt` can
+show it, and the saved summary includes task evidence plus fresh
+post-mutation verification.
 
 ## Slash commands (smoke test the obvious ones)
 
