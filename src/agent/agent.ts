@@ -15,7 +15,7 @@ import { GlueClient, resolveGlueModels } from "../glue/client.js";
 import { HookManager } from "../hooks/manager.js";
 import { McpManager, type McpServerStatus } from "../mcp/manager.js";
 import { MemoryExtractor } from "../memory/extractor.js";
-import { buildMemoryAddendum } from "../memory/inject.js";
+import { buildMemoryAddendum, buildRelevantMemoryReminder } from "../memory/inject.js";
 import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
 import { PlanModeStore } from "../plan/store.js";
@@ -386,7 +386,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		},
 		getApiKey: () => apiKey,
 		transformContext: async (messages, signal) => {
-			if (!compaction.needsCompaction(messages)) return messages;
+			if (!compaction.needsCompaction(messages)) return withRelevantMemoryReminder(memory, messages);
 
 			// Stage 1 — microcompaction: clear stale tool-result content
 			// (old reads, grep dumps, command output) without a summary
@@ -394,7 +394,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			// threshold, we're done and skip the expensive summarize path.
 			const micro = compaction.microcompact(messages);
 			if (micro.clearedCount > 0 && !compaction.needsCompaction(micro.messages)) {
-				return micro.messages;
+				return withRelevantMemoryReminder(memory, micro.messages);
 			}
 			// Microcompaction wasn't enough (or freed nothing) — fall through
 			// to the full summarize-everything compaction, operating on the
@@ -420,7 +420,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					},
 					signal,
 				);
-				return result.messages;
+				return withRelevantMemoryReminder(memory, result.messages);
 			} finally {
 				// Always clear — even if compact() threw, the user shouldn't
 				// see a stuck "Compacting…" banner forever.
@@ -632,6 +632,42 @@ function buildOutputStyleAddendum(config: ConfigStore, cwd: string): string {
 	const style = getOutputStyle(id, { cwd });
 	if (!style) return "";
 	return `\n\n# Response style: ${style.name}\n${style.body}`;
+}
+
+function withRelevantMemoryReminder(memory: MemoryStore, messages: AgentMessage[]): AgentMessage[] {
+	const target = latestRealUserMessage(messages);
+	if (!target) return messages;
+	const reminder = buildRelevantMemoryReminder(memory, target.text);
+	if (!reminder) return messages;
+	const reminderMessage: AgentMessage = {
+		role: "user",
+		content: reminder,
+		timestamp: Date.now(),
+	};
+	return [...messages.slice(0, target.index), reminderMessage, ...messages.slice(target.index)];
+}
+
+function latestRealUserMessage(messages: readonly AgentMessage[]): { index: number; text: string } | null {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (!message || !("role" in message) || message.role !== "user") continue;
+		const text = userMessageText(message.content).trim();
+		if (!text || text.startsWith("<system-reminder>")) continue;
+		return { index: i, text };
+	}
+	return null;
+}
+
+function userMessageText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((block) => {
+			if (!block || typeof block !== "object") return [];
+			const candidate = block as { type?: unknown; text?: unknown };
+			return candidate.type === "text" && typeof candidate.text === "string" ? [candidate.text] : [];
+		})
+		.join("\n");
 }
 
 /** Extract the trailing assistant text content from an array of messages. */

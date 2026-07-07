@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	type Context,
 	type FauxProviderRegistration,
 	fauxAssistantMessage,
 	fauxText,
@@ -25,9 +26,18 @@ import { createAgent } from "../agent.js";
 
 describe("agent bundle end-to-end", () => {
 	let cwd: string;
+	let home: string;
+	let prevHome: string | undefined;
+	let prevNoAutoMemory: string | undefined;
 	let faux: FauxProviderRegistration;
 
 	beforeEach(() => {
+		prevHome = process.env.HOME;
+		prevNoAutoMemory = process.env.CODEBASE_NO_AUTO_MEMORY;
+		home = mkdtempSync(join(tmpdir(), "codebase-e2e-home-"));
+		process.env.HOME = home;
+		process.env.CODEBASE_NO_AUTO_MEMORY = "1";
+
 		cwd = mkdtempSync(join(tmpdir(), "codebase-e2e-"));
 		// Seed a file the agent's first scripted tool call will read.
 		writeFileSync(join(cwd, "hello.txt"), "hello from the e2e harness\n");
@@ -40,6 +50,11 @@ describe("agent bundle end-to-end", () => {
 	afterEach(() => {
 		faux.unregister();
 		rmSync(cwd, { recursive: true, force: true });
+		rmSync(home, { recursive: true, force: true });
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
+		if (prevNoAutoMemory === undefined) delete process.env.CODEBASE_NO_AUTO_MEMORY;
+		else process.env.CODEBASE_NO_AUTO_MEMORY = prevNoAutoMemory;
 	});
 
 	it("runs a tool call and produces a final answer", async () => {
@@ -133,4 +148,66 @@ describe("agent bundle end-to-end", () => {
 		// Short transcript can't trigger compaction; monitor must stay idle.
 		expect(bundle.compactionMonitor.current().active).toBe(false);
 	});
+
+	it("recalls relevant memory for the model without persisting reminder messages", async () => {
+		let seenContext: Context | null = null;
+		faux.setResponses([
+			(context) => {
+				seenContext = { ...context, messages: structuredClone(context.messages), tools: [] };
+				return fauxAssistantMessage("Use the orchard checklist.");
+			},
+		]);
+		const bundle = createAgent({
+			cwd,
+			configOverride: { model: faux.getModel(), apiKey: "test-key", source: "explicit" },
+			autoApprove: true,
+		});
+		bundle.memory.save({
+			filename: "orchard_deploy.md",
+			name: "Orchard deploy checklist",
+			description: "Required steps for orchard deploy tasks",
+			type: "project",
+			body: "Run npm run check and capture the preview URL before calling orchard done.",
+		});
+		bundle.memory.save({
+			filename: "palette.md",
+			name: "Palette note",
+			description: "Brand color reference",
+			type: "reference",
+			body: "Use green for success and red for destructive actions.",
+		});
+
+		const result = await bundle.submitUserPrompt("Please handle the orchard deploy now.");
+
+		expect(result).toEqual({ submitted: true });
+		expect(seenContext).not.toBeNull();
+		const userTexts = userTextsFromContext(seenContext!);
+		expect(userTexts[0]).toContain("<system-reminder>");
+		expect(userTexts[0]).toContain("Relevant project memories for this prompt");
+		expect(userTexts[0]).toContain("file: orchard_deploy.md; type: project; source: local project memory");
+		expect(userTexts[0]).toContain("Run npm run check");
+		expect(userTexts[0]).not.toContain("Palette note");
+		expect(userTexts[1]).toContain("Please handle the orchard deploy now.");
+
+		expect(bundle.agent.state.messages).toHaveLength(2);
+		expect(userTextsFromContext({ messages: bundle.agent.state.messages, tools: [] })).toEqual([
+			"Please handle the orchard deploy now.",
+		]);
+	});
 });
+
+function userTextsFromContext(context: Pick<Context, "messages">): string[] {
+	return context.messages.flatMap((message) => (message.role === "user" ? [messageContentText(message.content)] : []));
+}
+
+function messageContentText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((block) => {
+			if (!block || typeof block !== "object") return [];
+			const candidate = block as { type?: unknown; text?: unknown };
+			return candidate.type === "text" && typeof candidate.text === "string" ? [candidate.text] : [];
+		})
+		.join("\n");
+}
