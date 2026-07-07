@@ -22,7 +22,8 @@ Per-run metrics captured into `bench/results/<sweep>/runs.jsonl`:
 - **Model + source** (proxy / explicit env / auto / byok)
 - **Reliability receipt** when run with `--reliable true`: task completion,
   per-task evidence, file-mutation evidence, post-mutation verification
-  evidence, failed tool count, checkpoints, and failure reasons
+  evidence, completed-task verification evidence, final-answer proof, failed
+  tool count, checkpoints, and failure reasons
 - **Final assistant text** (truncated to 1KB for readability)
 - **Verify exit code + last 500 bytes of stderr** when it failed
 - **Verify stdout** tail when scenario verifiers emit extra diagnostics
@@ -135,6 +136,14 @@ node bench/aggregate.mjs sweep-foo \
   --out ../docs/benchmarks/2026-05-09-foo.md
 ```
 
+Also write machine-readable launch metrics for the web app or docs pipeline:
+
+```sh
+node bench/aggregate.mjs sweep-foo \
+  --out ../docs/benchmarks/2026-05-09-foo.md \
+  --json-out ../docs/benchmarks/2026-05-09-foo.json
+```
+
 The aggregator computes per-scenario means over the **passing runs
 only** so a single failure doesn't poison the timing data; outcome
 counts are reported separately.
@@ -151,23 +160,27 @@ launch reviewer without opening the JSONL:
 - **complex recovery**: `complex-issue-recovery`
 
 The public scorecard reports pass rate, reliable receipt health, task evidence,
-fresh post-mutation verification, median passing time, and average passing cost.
-Receipt columns show `not collected` unless the sweep used `--reliable true`.
+completed-task verification, final-answer proof, fresh post-mutation
+verification, p50 passing time, and average passing cost. Receipt columns show
+`not collected` unless the sweep used `--reliable true`.
 For launch-facing claims, prefer:
 
 ```sh
 npm run build
 sweep_id=launch-$(date +%Y-%m-%d)
 node bench/run.mjs --scenario all --runs 3 --reliable true --sweep-id "$sweep_id"
-node bench/aggregate.mjs "$sweep_id" --out "docs/benchmarks/$sweep_id.md"
+node bench/aggregate.mjs "$sweep_id" \
+  --out "docs/benchmarks/$sweep_id.md" \
+  --json-out "docs/benchmarks/$sweep_id.json"
 ```
 
 When a sweep includes reliable-mode receipts, the report also includes a
 receipt scorecard: receipt pass count, task lifecycle pass count, task evidence
-count, verification count, fresh post-mutation verification count, average
-mutations, average checkpoints, and common failure reasons. Reliable receipts
-also flag stale verification that ran before the final file mutation. This is
-the launch-facing table to publish when comparing agent builds.
+count, completed-task verification count, final-answer proof count,
+verification count, fresh post-mutation verification count, average mutations,
+average checkpoints, and common failure reasons. Reliable receipts also flag
+stale verification that ran before the final file mutation. This is the
+launch-facing table to publish when comparing agent builds.
 
 ## Add a new scenario
 

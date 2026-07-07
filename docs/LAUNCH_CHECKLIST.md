@@ -133,6 +133,23 @@ Verify reliable mode prints a `[receipt]` path, `codebase receipt` can
 show it, and the saved summary includes task evidence, fresh post-mutation
 verification, completed-task verification evidence, and final-answer proof.
 
+## Public benchmark surface
+
+```sh
+npm run build
+sweep_id=launch-$(date +%Y-%m-%d)
+node bench/run.mjs --scenario all --runs 3 --reliable true --sweep-id "$sweep_id"
+node bench/aggregate.mjs "$sweep_id" \
+  --out "docs/benchmarks/$sweep_id.md" \
+  --json-out "docs/benchmarks/$sweep_id.json"
+```
+
+Verify the markdown report includes Methodology, Claim-ready summary,
+Public scorecard, Reliability receipts, task fidelity, memory hygiene,
+p50 pass time, average pass cost, task verified, final proof, and fresh
+verified columns. Verify the JSON scorecard exposes the same values for
+the web app or docs pipeline without scraping markdown.
+
 ## Slash commands (smoke test the obvious ones)
 
 In an interactive session:
