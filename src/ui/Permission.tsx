@@ -82,9 +82,19 @@ export function Permission({ request, onRespond }: PermissionProps) {
 				<Text dimColor>{"  "}</Text>
 				<Text>{request.summary}</Text>
 			</Box>
+			{request.reason ? (
+				<Box marginTop={1}>
+					<Text dimColor>{request.reason}</Text>
+				</Box>
+			) : null}
 			{request.detail ? (
 				<Box marginTop={1} flexDirection="column">
 					<Text dimColor>{truncate(request.detail, 600)}</Text>
+				</Box>
+			) : null}
+			{request.trustScope ? (
+				<Box marginTop={1}>
+					<Text dimColor>Trust scope: {request.trustScope}</Text>
 				</Box>
 			) : null}
 			<Box marginTop={1} flexDirection="row">
@@ -102,10 +112,17 @@ export function Permission({ request, onRespond }: PermissionProps) {
 				})}
 			</Box>
 			<Box marginTop={1}>
-				<Text dimColor>{CHOICES[cursor].hint} · ←→ Enter · y/t/a/n shortcuts · Esc to deny</Text>
+				<Text dimColor>{hintForChoice(CHOICES[cursor], request)} · ←→ Enter · y/t/a/n shortcuts · Esc to deny</Text>
 			</Box>
 		</Box>
 	);
+}
+
+function hintForChoice(choice: ChoiceSpec, request: PermissionRequest): string {
+	if (choice.key === "trust-tool" && request.trustScope) {
+		return `trust ${request.trustScope} this session`;
+	}
+	return choice.hint;
 }
 
 function truncate(s: string, n: number): string {

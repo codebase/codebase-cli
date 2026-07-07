@@ -20,14 +20,24 @@ export class PermissionOverlay extends Container {
 
 		this.addChild(new Text(`${riskColor(ansi.bold(riskLabel))} · permission needed`, 1, 0));
 		this.addChild(new Text(`${ansi.bold(request.tool)}  ${request.summary}`, 1, 0));
+		if (request.reason) {
+			this.addChild(new Text(ansi.dim(request.reason), 1, 0));
+		}
 		if (request.detail) {
 			this.addChild(new Text(ansi.dim(truncate(request.detail, 600)), 1, 0));
+		}
+		if (request.trustScope) {
+			this.addChild(new Text(ansi.dim(`Trust scope: ${request.trustScope}`), 1, 0));
 		}
 
 		this.list = new SelectList(
 			[
 				{ value: "allow-once", label: "Allow once", description: "this one time" },
-				{ value: "trust-tool", label: "Trust tool", description: "for the rest of this session" },
+				{
+					value: "trust-tool",
+					label: "Trust tool",
+					description: request.trustScope ? `${request.trustScope} this session` : "for the rest of this session",
+				},
 				{ value: "trust-all", label: "Trust all", description: "any tool, this session" },
 				{ value: "deny", label: "Deny", description: "block this call" },
 			],

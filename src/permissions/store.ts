@@ -1,4 +1,5 @@
 import { shellNeedsPermission } from "../tools/permission.js";
+import { validateShellCommand } from "../tools/shell-validator.js";
 import { commandPrefix } from "./command-prefix.js";
 
 export type Decision = "allow" | "block";
@@ -84,8 +85,12 @@ export interface PermissionRequest {
 	tool: string;
 	/** One-line summary fit for a status line. */
 	summary: string;
+	/** Why this request needs a decision. */
+	reason?: string;
 	/** Optional multi-line detail (e.g. shell command, full diff). */
 	detail?: string;
+	/** Scope granted by a "trust tool" response. */
+	trustScope?: string;
 	/** Hint about how risky this is. UI may color accordingly. */
 	risk: "low" | "medium" | "high";
 }
@@ -217,21 +222,23 @@ export class PermissionStore {
 		if (this.autoApprove) return "allow";
 
 		return new Promise((resolve) => {
-			const request: PermissionRequest = {
-				id: `perm-${++this.counter}`,
-				tool: toolName,
-				summary: summarize(toolName, args),
-				detail: detailFor(toolName, args),
-				risk: riskFor(toolName, args),
-			};
-			// For shell, capture the command prefix so a trust-tool response
-			// trusts the command family (e.g. "git commit") rather than all
-			// of shell.
 			let shellPrefix: string | undefined;
 			if (toolName === "shell") {
 				const cmd = (args as { command?: string } | undefined)?.command;
 				if (typeof cmd === "string") shellPrefix = commandPrefix(cmd) ?? undefined;
 			}
+			const request: PermissionRequest = {
+				id: `perm-${++this.counter}`,
+				tool: toolName,
+				summary: summarize(toolName, args),
+				reason: reasonFor(toolName, args),
+				detail: detailFor(toolName, args),
+				trustScope: trustScopeFor(toolName, shellPrefix),
+				risk: riskFor(toolName, args),
+			};
+			// For shell, capture the command prefix so a trust-tool response
+			// trusts the command family (e.g. "git commit") rather than all
+			// of shell.
 			this.queue.push({ request, resolve, shellPrefix });
 			this.notify();
 		});
@@ -346,10 +353,40 @@ function detailFor(tool: string, args: unknown): string | undefined {
 	return undefined;
 }
 
+function reasonFor(tool: string, args: unknown): string | undefined {
+	const a = (args ?? {}) as Record<string, unknown>;
+	if (tool === "shell") {
+		const cmd = stringOf(a.command);
+		const verdict = validateShellCommand(cmd);
+		if (verdict.verdict === "block" && verdict.reason) {
+			return `Shell validator will hard-block this command: ${verdict.reason}.`;
+		}
+		if (verdict.verdict === "warn" && verdict.reason) {
+			return `Shell validator warning: ${verdict.reason}.`;
+		}
+		return "This shell command is not in the read-only allowlist, so it needs approval before running.";
+	}
+	if (tool === "write_file") return "This will create or overwrite a file in the workspace.";
+	if (tool === "edit_file" || tool === "multi_edit" || tool === "notebook_edit") {
+		return "This will modify files in the workspace.";
+	}
+	if (tool === "git_commit") return "This will create a git commit.";
+	if (tool === "git_branch") return "This will change git branch state.";
+	if (tool === "enter_worktree" || tool === "exit_worktree") return "This will change the active worktree.";
+	return undefined;
+}
+
+function trustScopeFor(tool: string, shellPrefix?: string): string {
+	if (tool === "shell" && shellPrefix) return `shell:${shellPrefix}*`;
+	return tool;
+}
+
 function riskFor(tool: string, args: unknown): "low" | "medium" | "high" {
 	const a = (args ?? {}) as Record<string, unknown>;
 	if (tool === "shell") {
 		const cmd = stringOf(a.command);
+		const verdict = validateShellCommand(cmd);
+		if (verdict.verdict === "warn" || verdict.verdict === "block") return "high";
 		if (/\brm\s+-r/.test(cmd) || /\bgit\s+push/.test(cmd) || />\s*\/dev\//.test(cmd)) return "high";
 		return "medium";
 	}

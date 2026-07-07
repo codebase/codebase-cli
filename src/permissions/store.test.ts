@@ -154,6 +154,37 @@ describe("PermissionStore request shape", () => {
 		expect(store.current()?.risk).toBe("medium");
 	});
 
+	it("explains shell prompts and trust scope", async () => {
+		const store = new PermissionStore();
+		store.evaluate("shell", { command: 'git commit -m "wip"' });
+
+		expect(store.current()).toMatchObject({
+			reason: expect.stringContaining("not in the read-only allowlist"),
+			trustScope: "shell:git commit*",
+		});
+	});
+
+	it("surfaces shell validator warnings on the permission request", async () => {
+		const store = new PermissionStore();
+		store.evaluate("shell", { command: "sudo apt update" });
+
+		expect(store.current()).toMatchObject({
+			risk: "high",
+			reason: expect.stringContaining("Shell validator warning"),
+			trustScope: "shell:apt update*",
+		});
+	});
+
+	it("sets a trust scope for non-shell tools", async () => {
+		const store = new PermissionStore();
+		store.evaluate("write_file", { path: "src/foo.ts", content: "x" });
+
+		expect(store.current()).toMatchObject({
+			reason: expect.stringContaining("create or overwrite"),
+			trustScope: "write_file",
+		});
+	});
+
 	it("includes a multi-line detail for shell and git_commit", async () => {
 		const store = new PermissionStore();
 		store.evaluate("shell", { command: "rm -rf dist" });
