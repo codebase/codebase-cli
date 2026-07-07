@@ -9,7 +9,9 @@ import type { ToolContext } from "./types.js";
 const Params = Type.Object({
 	operation: Type.Union([
 		Type.Literal("definition"),
+		Type.Literal("type_definition"),
 		Type.Literal("references"),
+		Type.Literal("implementation"),
 		Type.Literal("hover"),
 		Type.Literal("symbols"),
 		Type.Literal("diagnostics"),
@@ -63,7 +65,9 @@ const DESCRIPTION = `Read-only TypeScript/JavaScript code intelligence.
 
 Operations:
 - definition: find the symbol definition at path:line:column.
+- type_definition: find the type definition at path:line:column.
 - references: find references to the symbol at path:line:column.
+- implementation: find implementations of an interface/member at path:line:column.
 - hover: show TypeScript quick-info at path:line:column.
 - symbols: outline symbols in a file; pass query to filter names.
 - diagnostics: show TypeScript syntactic + semantic diagnostics for a file.
@@ -89,8 +93,12 @@ export function createCodeNavigation(ctx: ToolContext): AgentTool<typeof Params,
 			switch (params.operation) {
 				case "definition":
 					return runDefinition(ctx.cwd, language, absPath, params, limit, includeExternal);
+				case "type_definition":
+					return runTypeDefinition(ctx.cwd, language, absPath, params, limit, includeExternal);
 				case "references":
 					return runReferences(ctx.cwd, language, absPath, params, limit, includeExternal);
+				case "implementation":
+					return runImplementation(ctx.cwd, language, absPath, params, limit, includeExternal);
 				case "hover":
 					return runHover(ctx.cwd, language, absPath, params, includeExternal);
 				case "symbols":
@@ -125,6 +133,24 @@ function runDefinition(
 	return textResult(cwd, "definition", absPath, includeExternal, results, truncated);
 }
 
+function runTypeDefinition(
+	cwd: string,
+	language: LanguageContext,
+	absPath: string,
+	params: CodeNavigationParams,
+	limit: number,
+	includeExternal: boolean,
+) {
+	const position = positionFromParams(language.sourceFile, params);
+	const all = language.service.getTypeDefinitionAtPosition(absPath, position) ?? [];
+	const filtered = filterLocations(cwd, all, includeExternal);
+	const { items, truncated } = cap(filtered, limit);
+	const results = items.flatMap((entry) =>
+		locationFromSpan(cwd, language.service, entry.fileName, entry.textSpan, entry),
+	);
+	return textResult(cwd, "type_definition", absPath, includeExternal, results, truncated);
+}
+
 function runReferences(
 	cwd: string,
 	language: LanguageContext,
@@ -142,6 +168,24 @@ function runReferences(
 		locationFromSpan(cwd, language.service, entry.fileName, entry.textSpan, entry),
 	);
 	return textResult(cwd, "references", absPath, includeExternal, results, truncated);
+}
+
+function runImplementation(
+	cwd: string,
+	language: LanguageContext,
+	absPath: string,
+	params: CodeNavigationParams,
+	limit: number,
+	includeExternal: boolean,
+) {
+	const position = positionFromParams(language.sourceFile, params);
+	const all = language.service.getImplementationAtPosition(absPath, position) ?? [];
+	const filtered = filterLocations(cwd, all, includeExternal);
+	const { items, truncated } = cap(filtered, limit);
+	const results = items.flatMap((entry) =>
+		locationFromSpan(cwd, language.service, entry.fileName, entry.textSpan, entry),
+	);
+	return textResult(cwd, "implementation", absPath, includeExternal, results, truncated);
 }
 
 function runHover(

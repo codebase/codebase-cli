@@ -17,6 +17,18 @@ function text(result: Awaited<ReturnType<typeof run>>): string {
 function positionOf(source: string, needle: string): { line: number; column: number } {
 	const index = source.indexOf(needle);
 	if (index < 0) throw new Error(`missing ${needle}`);
+	return positionAtIndex(source, index);
+}
+
+function positionIn(source: string, anchor: string, needle: string): { line: number; column: number } {
+	const anchorIndex = source.indexOf(anchor);
+	if (anchorIndex < 0) throw new Error(`missing ${anchor}`);
+	const index = source.indexOf(needle, anchorIndex);
+	if (index < 0) throw new Error(`missing ${needle} after ${anchor}`);
+	return positionAtIndex(source, index);
+}
+
+function positionAtIndex(source: string, index: number): { line: number; column: number } {
 	const before = source.slice(0, index);
 	const lines = before.split("\n");
 	return { line: lines.length, column: lines[lines.length - 1].length + 1 };
@@ -44,18 +56,30 @@ describe("code_navigation", () => {
 			}),
 		);
 		utilSource = [
+			"export interface Greeter {",
+			"  greet(name: string): string;",
+			"}",
+			"",
 			"export function greet(name: string): string {",
 			"  return name.toUpperCase();",
 			"}",
 			"",
+			"export class ConsoleGreeter implements Greeter {",
+			"  greet(name: string): string {",
+			"    return greet(name);",
+			"  }",
+			"}",
+			"",
+			"export const greeter: Greeter = new ConsoleGreeter();",
 			"export const version = 1;",
 			"",
 		].join("\n");
 		mainSource = [
-			'import { greet, version } from "./util";',
+			'import { greet, greeter, type Greeter, version } from "./util";',
 			"",
+			"const active: Greeter = greeter;",
 			"const message = greet(123);",
-			"console.log(message, version);",
+			'console.log(active.greet("Ada"), message, version);',
 			"",
 		].join("\n");
 		writeFileSync(join(dir, "src", "util.ts"), utilSource);
@@ -72,19 +96,36 @@ describe("code_navigation", () => {
 
 		const result = await run(ctx, { operation: "definition", path: "src/main.ts", ...pos });
 
-		expect(text(result)).toContain("src/util.ts:1:17 function greet");
-		expect(result.details.results[0]).toMatchObject({ file: "src/util.ts", line: 1, column: 17 });
+		expect(text(result)).toContain("src/util.ts:5:17 function greet");
+		expect(result.details.results[0]).toMatchObject({ file: "src/util.ts", line: 5, column: 17 });
+	});
+
+	it("finds a TypeScript type definition at a position", async () => {
+		const pos = positionOf(mainSource, "active.greet");
+
+		const result = await run(ctx, { operation: "type_definition", path: "src/main.ts", ...pos });
+
+		expect(text(result)).toContain("src/util.ts:1:18 interface Greeter");
 	});
 
 	it("finds project-local references", async () => {
-		const pos = positionOf(utilSource, "greet(name");
+		const pos = positionIn(utilSource, "export function greet", "greet");
 
 		const result = await run(ctx, { operation: "references", path: "src/util.ts", ...pos });
 		const out = text(result);
 
-		expect(out).toContain("src/util.ts:1:17");
+		expect(out).toContain("src/util.ts:5:17");
 		expect(out).toContain("src/main.ts:1:10");
-		expect(out).toContain("src/main.ts:3:17");
+		expect(out).toContain("src/main.ts:4:17");
+		expect(out).toContain("src/util.ts:11:12");
+	});
+
+	it("finds implementations of an interface member", async () => {
+		const pos = positionOf(utilSource, "greet(name: string): string;");
+
+		const result = await run(ctx, { operation: "implementation", path: "src/util.ts", ...pos });
+
+		expect(text(result)).toContain("src/util.ts:10:3 method");
 	});
 
 	it("returns hover quick-info", async () => {
@@ -98,7 +139,7 @@ describe("code_navigation", () => {
 	it("outlines and filters symbols", async () => {
 		const result = await run(ctx, { operation: "symbols", path: "src/util.ts", query: "ver" });
 
-		expect(text(result)).toContain("src/util.ts:5:14 const version");
+		expect(text(result)).toContain("src/util.ts:16:14 const version");
 		expect(text(result)).not.toContain("greet");
 	});
 
