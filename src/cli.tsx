@@ -262,6 +262,8 @@ function printHelp(): void {
 			"  codebase ssh keygen <name>        generate an Ed25519 (or --rsa) keypair",
 			"  codebase project list        list your projects on codebase.design",
 			"  codebase project pull <id>   download a project as a ZIP",
+			"  codebase project build <prompt>",
+			"                               start a web build on codebase.design",
 			"  codebase doctor              diagnose runtime, auth, config, MCP, storage",
 			"  codebase mcp                 show MCP setup help",
 			"  codebase director list       manage trained directors (hire, status, fire)",

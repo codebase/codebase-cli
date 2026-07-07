@@ -1,13 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { runProjectSubcommand } from "./cli.js";
 import type { ProjectClient } from "./client.js";
-import type { PlatformProject } from "./types.js";
+import type {
+	BuildCancelResponse,
+	BuildPreviewResponse,
+	BuildStartResponse,
+	BuildStatusResponse,
+	PlatformProject,
+} from "./types.js";
 
-function fakeClient(opts: { projects?: PlatformProject[]; pullPath?: string } = {}): ProjectClient {
+function fakeClient(
+	opts: {
+		projects?: PlatformProject[];
+		pullPath?: string;
+		onStartBuild?: (input: { prompt: string; model?: string; scaffold?: string; projectId?: string }) => void;
+		build?: BuildStartResponse;
+		status?: BuildStatusResponse;
+		preview?: BuildPreviewResponse;
+		cancel?: BuildCancelResponse;
+	} = {},
+): ProjectClient {
 	return {
 		list: async () => opts.projects ?? [],
 		pull: async () => ({ path: opts.pullPath ?? "/tmp/project.zip", bytes: 2048 }),
 		hasCredentials: () => true,
+		startBuild: async (input) => {
+			opts.onStartBuild?.(input);
+			return (
+				opts.build ?? {
+					sessionId: "sess-1",
+					projectId: "proj-1",
+					status: "building",
+					model: "codebase/d4f",
+				}
+			);
+		},
+		getBuildStatus: async () => opts.status ?? { sessionId: "sess-1", status: "completed", projectId: "proj-1" },
+		ensureBuildPreview: async () => opts.preview ?? { ok: true, previewPath: "/preview/proj-1" },
+		cancelBuild: async () => opts.cancel ?? { sessionId: "sess-1", status: "cancelled", stopped: true },
+		absoluteUrl: (path: string) => `https://codebase.design${path.startsWith("/") ? path : `/${path}`}`,
 	} as unknown as ProjectClient;
 }
 
@@ -18,6 +49,7 @@ async function runProject(argv: string[], client: ProjectClient) {
 		client,
 		stdout: (m) => stdout.push(m),
 		stderr: (m) => stderr.push(m),
+		sleep: async () => undefined,
 	});
 	return { code, stdout, stderr };
 }
@@ -91,5 +123,75 @@ describe("runProjectSubcommand", () => {
 		expect(result.stdout.join("\n")).toContain(
 			"unzip -d '/tmp/Codebase Pulls/has_slash' '/tmp/Codebase Pulls/out.zip'",
 		);
+	});
+
+	it("starts a web build with prompt and options", async () => {
+		let input: { prompt: string; model?: string; scaffold?: string; projectId?: string } | undefined;
+
+		const result = await runProject(
+			[
+				"project",
+				"build",
+				"--model",
+				"codebase/d4f",
+				"--scaffold",
+				"scaffold-next",
+				"--project",
+				"proj-1",
+				"Build",
+				"a",
+				"waitlist",
+			],
+			fakeClient({
+				onStartBuild: (value) => {
+					input = value;
+				},
+			}),
+		);
+
+		expect(result.code).toBe(0);
+		expect(input).toEqual({
+			prompt: "Build a waitlist",
+			model: "codebase/d4f",
+			scaffold: "scaffold-next",
+			projectId: "proj-1",
+		});
+		expect(result.stdout.join("\n")).toContain("session: sess-1");
+		expect(result.stdout.join("\n")).toContain("codebase project status sess-1");
+	});
+
+	it("waits for a completed build and prints its preview URL", async () => {
+		const result = await runProject(
+			["project", "build", "--wait", "Build", "a", "demo"],
+			fakeClient({
+				status: {
+					sessionId: "sess-1",
+					status: "completed",
+					projectId: "proj-1",
+					filesCreated: ["index.html", "styles.css"],
+				},
+				preview: { ok: true, previewPath: "/preview/proj-1" },
+			}),
+		);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout.join("\n")).toContain("files:   index.html, styles.css");
+		expect(result.stdout.join("\n")).toContain("preview: https://codebase.design/preview/proj-1");
+	});
+
+	it("shows build status and cancel controls", async () => {
+		const status = await runProject(
+			["project", "status", "sess-1"],
+			fakeClient({ status: { sessionId: "sess-1", status: "failed", projectId: "proj-1" } }),
+		);
+		expect(status.code).toBe(1);
+		expect(status.stdout.join("\n")).toContain("build sess-1: failed");
+
+		const cancel = await runProject(
+			["project", "cancel", "sess-1"],
+			fakeClient({ cancel: { sessionId: "sess-1", status: "cancelled", stopped: true } }),
+		);
+		expect(cancel.code).toBe(0);
+		expect(cancel.stdout.join("\n")).toContain("cancel requested");
 	});
 });

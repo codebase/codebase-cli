@@ -2,6 +2,7 @@ import { CredentialsStore } from "./credentials.js";
 import { type OAuthConfig, refreshAccessToken, revokeToken, runOAuthLogin } from "./flow.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
+const DEFAULT_CODEBASE_SCOPES = "inference projects credits builds:read builds:write";
 
 /**
  * Resolves the OAuth config the CLI uses against the codebase web app.
@@ -28,7 +29,7 @@ export function defaultOAuthConfig(env: NodeJS.ProcessEnv = process.env): OAuthC
 		refreshUrl: `${base}/api/oauth/token`,
 		revokeUrl: `${base}/api/oauth/revoke`,
 		clientId: env.CODEBASE_CLIENT_ID ?? "codebase-cli",
-		scopes: (env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
+		scopes: (env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES).split(/\s+/).filter(Boolean),
 	};
 }
 

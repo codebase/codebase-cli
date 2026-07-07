@@ -58,9 +58,10 @@ ANTHROPIC_API_KEY=sk-ant-... codebase     # or OPENAI_API_KEY, GROQ_API_KEY, …
 
 ```sh
 codebase auth login
+codebase project build --wait "build a launch waitlist page"
 ```
 
-OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash). Swap models live with `/model`. Set reasoning depth with `/effort`.
+OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash). Swap models live with `/model`. Set reasoning depth with `/effort`. `project build` hands a prompt to the web builder and prints the session, status, event stream, and preview URL when you pass `--wait`.
 
 ## What makes it good
 

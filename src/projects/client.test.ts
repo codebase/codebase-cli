@@ -143,6 +143,91 @@ describe("ProjectClient.pull", () => {
 	});
 });
 
+describe("ProjectClient build endpoints", () => {
+	let dataRoot: string;
+
+	beforeEach(() => {
+		dataRoot = mkdtempSync(join(tmpdir(), "projects-"));
+	});
+
+	afterEach(() => {
+		rmSync(dataRoot, { recursive: true, force: true });
+	});
+
+	it("starts a web build with OAuth bearer auth", async () => {
+		const credentials = makeStore(dataRoot, "build-token");
+		const fetchFn = mockFetch((url, init) => {
+			expect(url).toBe("https://codebase.design/api/v1/builds");
+			expect(init?.method).toBe("POST");
+			expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer build-token");
+			expect(JSON.parse(String(init?.body))).toEqual({
+				prompt: "Build the dashboard",
+				model: "codebase/d4f",
+				projectId: "proj-1",
+			});
+			return new Response(
+				JSON.stringify({
+					sessionId: "sess-1",
+					projectId: "proj-1",
+					status: "building",
+					model: "codebase/d4f",
+					poll: "/api/v1/builds/sess-1/status",
+				}),
+				{ status: 202 },
+			);
+		});
+
+		const result = await new ProjectClient({ credentials, fetchFn }).startBuild({
+			prompt: "Build the dashboard",
+			model: "codebase/d4f",
+			projectId: "proj-1",
+		});
+
+		expect(result).toMatchObject({ sessionId: "sess-1", projectId: "proj-1", status: "building" });
+	});
+
+	it("reads build status, preview, and cancel endpoints", async () => {
+		const credentials = makeStore(dataRoot);
+		const seen: string[] = [];
+		const fetchFn = mockFetch((url, init) => {
+			seen.push(`${init?.method ?? "GET"} ${url}`);
+			if (url.endsWith("/status")) {
+				return new Response(JSON.stringify({ sessionId: "sess/1", status: "completed", projectId: "proj" }));
+			}
+			if (url.endsWith("/preview")) {
+				return new Response(JSON.stringify({ ok: true, previewPath: "/preview/proj" }));
+			}
+			if (url.endsWith("/cancel")) {
+				return new Response(JSON.stringify({ sessionId: "sess/1", status: "cancelled", stopped: true }));
+			}
+			return new Response("missing", { status: 404 });
+		});
+		const client = new ProjectClient({ credentials, fetchFn });
+
+		await expect(client.getBuildStatus("sess/1")).resolves.toMatchObject({ status: "completed" });
+		await expect(client.ensureBuildPreview("sess/1")).resolves.toMatchObject({ previewPath: "/preview/proj" });
+		await expect(client.cancelBuild("sess/1")).resolves.toMatchObject({ stopped: true });
+		expect(seen).toEqual([
+			"GET https://codebase.design/api/v1/builds/sess%2F1/status",
+			"POST https://codebase.design/api/v1/builds/sess%2F1/preview",
+			"POST https://codebase.design/api/v1/builds/sess%2F1/cancel",
+		]);
+	});
+
+	it("surfaces missing build scopes as a ProjectClientError", async () => {
+		const credentials = makeStore(dataRoot);
+		const fetchFn = mockFetch(
+			() => new Response(JSON.stringify({ error: "Missing required scope: builds:write" }), { status: 403 }),
+		);
+		const client = new ProjectClient({ credentials, fetchFn });
+
+		await expect(client.startBuild({ prompt: "Ship it" })).rejects.toMatchObject({
+			name: "ProjectClientError",
+			status: 403,
+		});
+	});
+});
+
 describe("ProjectClient.hasCredentials", () => {
 	it("returns true when a non-expired credential exists", () => {
 		const dataRoot = mkdtempSync(join(tmpdir(), "projects-"));
@@ -160,6 +245,24 @@ describe("ProjectClient.hasCredentials", () => {
 		try {
 			const client = new ProjectClient({ credentials: new CredentialsStore({ dataRoot }) });
 			expect(client.hasCredentials()).toBe(false);
+		} finally {
+			rmSync(dataRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("returns true for an expired OAuth credential with a refresh token", () => {
+		const dataRoot = mkdtempSync(join(tmpdir(), "projects-"));
+		try {
+			const credentials = new CredentialsStore({ dataRoot });
+			credentials.save({
+				accessToken: "expired",
+				refreshToken: "refresh",
+				expiresAt: Date.now() - 60_000,
+				scopes: ["projects"],
+				source: "codebase",
+			});
+			const client = new ProjectClient({ credentials });
+			expect(client.hasCredentials()).toBe(true);
 		} finally {
 			rmSync(dataRoot, { recursive: true, force: true });
 		}

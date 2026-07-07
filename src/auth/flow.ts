@@ -26,7 +26,7 @@ export interface OAuthConfig {
 	revokeUrl?: string;
 	/** Stable client identifier the backend uses to identify the CLI. */
 	clientId: string;
-	/** Scopes to request (`inference projects credits` for codebase.foundation). */
+	/** Scopes to request from codebase.design OAuth. */
 	scopes: string[];
 	/** Network call timeout. */
 	timeoutMs?: number;

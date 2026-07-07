@@ -6,6 +6,7 @@ import { type DiscoveredServer, formatContextWindow, SCAN_PORTS, scanLocalEndpoi
 import { ansi, selectListTheme } from "./theme.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
+const DEFAULT_CODEBASE_SCOPES = "inference projects credits builds:read builds:write";
 
 interface ProviderChoice {
 	id: string;
@@ -506,6 +507,6 @@ function oauthConfigForBase(base: string): OAuthConfig {
 		refreshUrl: `${trimmed}/api/oauth/token`,
 		revokeUrl: `${trimmed}/api/oauth/revoke`,
 		clientId: process.env.CODEBASE_CLIENT_ID ?? "codebase-cli",
-		scopes: (process.env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
+		scopes: (process.env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES).split(/\s+/).filter(Boolean),
 	};
 }
