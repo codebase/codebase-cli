@@ -94,6 +94,9 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	}
 	process.stdout.write(`${buildDoctorReport({ cwd: process.cwd() }).join("\n")}\n`);
 	process.exit(0);
+} else if (argv[0] === "mcp") {
+	printMcpHelp();
+	process.exit(0);
 } else if (argv[0] === "director" || argv[0] === "directors") {
 	runDirectorSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "app-server") {
@@ -250,6 +253,7 @@ function printHelp(): void {
 			"  codebase project list        list your projects on codebase.design",
 			"  codebase project pull <id>   download a project as a ZIP",
 			"  codebase doctor              diagnose runtime, auth, config, MCP, storage",
+			"  codebase mcp                 show MCP setup help",
 			"  codebase director list       manage trained directors (hire, status, fire)",
 			"  codebase app-server          JSON-RPC server on stdio (for IDE extensions)",
 			"  codebase --version           print version and exit",
@@ -266,6 +270,38 @@ function printHelp(): void {
 			"                               (use when reporting a keyboard/terminal issue)",
 			"",
 			"More: https://github.com/codebase-foundation/codebase-cli",
+			"",
+		].join("\n"),
+	);
+}
+
+function printMcpHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase mcp",
+			"",
+			"Configure MCP servers for codebase.",
+			"",
+			"Config files:",
+			"  ~/.codebase/mcp.json",
+			"  <project>/.codebase/mcp.json",
+			"",
+			"Example:",
+			"  {",
+			'    "mcpServers": {',
+			'      "filesystem": {',
+			'        "command": "npx",',
+			'        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]',
+			"      },",
+			'      "remote": {',
+			'        "url": "https://mcp.example.com/sse",',
+			'        "headers": { "Authorization": "Bearer <token>" }',
+			"      }",
+			"    }",
+			"  }",
+			"",
+			"Restart codebase after editing config. Inside the TUI, run /mcp to see",
+			"connected servers, tools, resources, and prompts.",
 			"",
 		].join("\n"),
 	);
