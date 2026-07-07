@@ -39,4 +39,45 @@ describe("/permissions", () => {
 		expect(emits[0]).toContain("hard blocks:");
 		expect(emits[0]).toContain("warnings:");
 	});
+
+	it("suggests when a shell command is already auto-allowed", () => {
+		permissions.handler("suggest git status --short", ctx);
+
+		expect(emits).toHaveLength(1);
+		expect(emits[0]).toContain("Shell permission suggestion:");
+		expect(emits[0]).toContain("command: git status --short");
+		expect(emits[0]).toContain("already auto-allowed");
+	});
+
+	it("suggests a narrow allow and deny rule for prompted shell commands", () => {
+		permissions.handler("suggest npm install", ctx);
+
+		expect(emits[0]).toContain("will prompt");
+		expect(emits[0]).toContain("session trust scope: shell:npm install*");
+		expect(emits[0]).toContain("/permissions allow shell:npm install*");
+		expect(emits[0]).toContain("/permissions deny shell:npm install*");
+	});
+
+	it("surfaces validator warnings and safer paths", () => {
+		permissions.handler("suggest sudo apt update", ctx);
+
+		expect(emits[0]).toContain("will prompt as high risk");
+		expect(emits[0]).toContain("uses sudo");
+		expect(emits[0]).toContain("safer path:");
+		expect(emits[0]).toContain("session trust scope: shell:apt update*");
+	});
+
+	it("does not suggest allow rules for hard-blocked shell commands", () => {
+		permissions.handler("suggest rm -rf /", ctx);
+
+		expect(emits[0]).toContain("hard-blocked by shell validator");
+		expect(emits[0]).toContain("no allow rule is offered");
+		expect(emits[0]).not.toContain("/permissions allow");
+	});
+
+	it("shows usage for missing shell suggestions", () => {
+		permissions.handler("suggest", ctx);
+
+		expect(emits).toEqual(["Usage: /permissions suggest <shell command>"]);
+	});
 });
