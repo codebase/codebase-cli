@@ -203,7 +203,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 	}, [bundle]);
 
 	useEffect(() => {
-		return bundle.toolContext.tasks.subscribe((snapshot) => setTasks(snapshot));
+		return bundle.toolContext.tasks.subscribe((snapshot) => setTasks(snapshot), { immediate: true });
 	}, [bundle]);
 
 	// Connect MCP servers once after mount (async — spawns subprocesses).
@@ -556,10 +556,12 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			// before rebuilding so a /model switch doesn't leak per swap.
 			bundle.mcp.dispose();
 			bundle.checkpoints.dispose();
+			bundle.toolContext.tasks.dispose();
 			const next = createAgent({
 				cwd: bundle.toolContext.cwd,
 				modelOverride: spec ?? undefined,
 				initialMessages: state.messages,
+				taskListId: bundle.sessions.id,
 				resume: false,
 			});
 			setBundle(next);

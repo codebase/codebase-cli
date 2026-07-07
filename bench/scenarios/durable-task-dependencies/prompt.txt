@@ -1,0 +1,3 @@
+Fix the dependency scheduler in src/workflow.mjs so npm test passes.
+
+Use the task checklist for this work. Claim the implementation task with owner "main-agent", and represent verification as blocked by implementation using blocked_by, add_blocked_by, or add_blocks.

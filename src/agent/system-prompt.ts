@@ -111,6 +111,10 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 		"  - Exactly ONE task is in_progress at a time. Flip the next one to in_progress BEFORE starting it; mark it completed IMMEDIATELY after — never batch completions.",
 	);
 	lines.push(
+		"  - Use blocker edges for dependent work. Keep blocked tasks pending until their blockers complete; use list_tasks({available:true}) when choosing what to start next.",
+	);
+	lines.push("  - Use owner when claiming or delegating task work so parallel agents can avoid duplicate effort.");
+	lines.push(
 		"  - Never mark a task completed if it errored, tests are failing, or you couldn't finish. Keep it in_progress and append a follow-up task for whatever's blocking.",
 	);
 	lines.push("  - Append new tasks if you discover work mid-stream; cancel tasks that turned out to be unnecessary.");

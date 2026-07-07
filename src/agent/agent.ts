@@ -95,6 +95,8 @@ export interface CreateAgentOptions {
 	 * doesn't lose context, but we don't want to disk-roundtrip.
 	 */
 	initialMessages?: AgentMessage[];
+	/** Reuse an existing task-list id while rebuilding an in-memory agent. */
+	taskListId?: string;
 }
 
 export interface AgentBundle {
@@ -311,7 +313,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const toolContext: ToolContext = {
 		cwd,
 		fileStateCache: new FileStateCache(),
-		tasks: new TaskStore(),
+		tasks: new TaskStore({ cwd, taskListId: opts.taskListId ?? sessions.id }),
 		userQueries,
 		planMode,
 		memory,

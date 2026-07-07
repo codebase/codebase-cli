@@ -1168,10 +1168,12 @@ export class App extends Container {
 			// before building the new one — a /model switch must not leak.
 			this.bundle.mcp.dispose();
 			this.bundle.checkpoints.dispose();
+			this.bundle.toolContext.tasks.dispose();
 			const next = createAgent({
 				cwd: this.bundle.toolContext.cwd,
 				modelOverride: spec ?? undefined,
 				initialMessages: previousMessages,
+				taskListId: this.bundle.sessions.id,
 				resume: false,
 			});
 			this.adoptBundle(next);

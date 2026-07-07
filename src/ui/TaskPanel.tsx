@@ -41,6 +41,9 @@ export function TaskPanel({ tasks, maxVisible = 8 }: TaskPanelProps) {
 	const sorted = [...visibleSet].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]);
 	const shown = sorted.slice(0, maxVisible);
 	const hidden = sorted.length - shown.length;
+	const openTaskIds = new Set(
+		visibleSet.filter((task) => task.status !== "completed" && task.status !== "cancelled").map((task) => task.id),
+	);
 
 	return (
 		<Box flexDirection="column" paddingX={1} marginBottom={1}>
@@ -48,21 +51,27 @@ export function TaskPanel({ tasks, maxVisible = 8 }: TaskPanelProps) {
 				tasks
 			</Text>
 			{shown.map((task) => (
-				<TaskLine key={task.id} task={task} />
+				<TaskLine key={task.id} task={task} openBlockers={task.blockedBy.filter((id) => openTaskIds.has(id))} />
 			))}
 			{hidden > 0 ? <Text dimColor>{`  …+${hidden} more`}</Text> : null}
 		</Box>
 	);
 }
 
-function TaskLine({ task }: { task: Task }) {
+function TaskLine({ task, openBlockers }: { task: Task; openBlockers: string[] }) {
 	const glyph = STATUS_GLYPH[task.status];
-	const color = STATUS_COLOR[task.status];
+	const color = openBlockers.length > 0 ? "yellow" : STATUS_COLOR[task.status];
 	const label = task.status === "in_progress" && task.activeForm ? task.activeForm : task.title;
+	const owner = task.owner ? ` @${task.owner}` : "";
+	const blocked = openBlockers.length > 0 ? ` blocked by ${openBlockers.join(",")}` : "";
+	const blocks = task.blocks.length > 0 ? ` blocks ${task.blocks.join(",")}` : "";
 	return (
 		<Box>
 			<Text color={color}>
 				{glyph} {label}
+				{owner}
+				{blocked}
+				{blocks}
 			</Text>
 		</Box>
 	);
