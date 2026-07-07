@@ -5,8 +5,8 @@ and the reports in `polyvibe-poc/docs/benchmarks/` — run real LLM calls
 against fixed scenarios, capture metrics, write markdown reports.
 
 This is the **only** thing that proves the CLI actually works as a
-coding agent. Vitest covers the wiring (487 tests pass), but a unit
-test never sees the LLM round-trip, the tool-call dispatch, the file
+coding agent. Vitest covers the wiring, but a unit test never sees the
+LLM round-trip, the tool-call dispatch, the file
 mutations end-to-end. This harness does.
 
 ## What it measures
@@ -138,6 +138,29 @@ node bench/aggregate.mjs sweep-foo \
 The aggregator computes per-scenario means over the **passing runs
 only** so a single failure doesn't poison the timing data; outcome
 counts are reported separately.
+
+The first table is the public scorecard. It is meant to be readable by a
+launch reviewer without opening the JSONL:
+
+- **overall**: every scenario in the sweep
+- **core edits**: `add-test`, `fix-typo`, `multi-file-rename`,
+  `read-only-explain`
+- **task fidelity**: `task-list-fidelity`,
+  `durable-task-dependencies`, `complex-issue-recovery`
+- **memory hygiene**: `memory-secret-hygiene`
+- **complex recovery**: `complex-issue-recovery`
+
+The public scorecard reports pass rate, reliable receipt health, task evidence,
+fresh post-mutation verification, median passing time, and average passing cost.
+Receipt columns show `not collected` unless the sweep used `--reliable true`.
+For launch-facing claims, prefer:
+
+```sh
+npm run build
+sweep_id=launch-$(date +%Y-%m-%d)
+node bench/run.mjs --scenario all --runs 3 --reliable true --sweep-id "$sweep_id"
+node bench/aggregate.mjs "$sweep_id" --out "docs/benchmarks/$sweep_id.md"
+```
 
 When a sweep includes reliable-mode receipts, the report also includes a
 receipt scorecard: receipt pass count, task lifecycle pass count, task evidence

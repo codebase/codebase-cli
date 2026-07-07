@@ -21,6 +21,24 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const RESULTS_DIR = join(__dirname, "results");
+const CAPABILITY_DIMENSIONS = [
+	{
+		label: "core edits",
+		scenarios: new Set(["add-test", "fix-typo", "multi-file-rename", "read-only-explain"]),
+	},
+	{
+		label: "task fidelity",
+		scenarios: new Set(["task-list-fidelity", "durable-task-dependencies", "complex-issue-recovery"]),
+	},
+	{
+		label: "memory hygiene",
+		scenarios: new Set(["memory-secret-hygiene"]),
+	},
+	{
+		label: "complex recovery",
+		scenarios: new Set(["complex-issue-recovery"]),
+	},
+];
 
 const args = parseArgs(process.argv.slice(2));
 const positional = args._;
@@ -71,6 +89,8 @@ function renderReport(sweeps) {
 	for (const sweep of sweeps) {
 		lines.push(`## ${sweep.id}`);
 		lines.push("");
+		lines.push(...renderPublicScorecard(sweep.runs));
+		lines.push("");
 		lines.push(...renderOutcomesTable(sweep.runs));
 		lines.push("");
 		lines.push(...renderReceiptScorecard(sweep.runs));
@@ -89,11 +109,54 @@ function renderReport(sweeps) {
 	return lines.join("\n");
 }
 
+function renderPublicScorecard(runs) {
+	const out = [
+		"### Public scorecard",
+		"",
+		"Launch-facing summary across all runs. Receipt columns show `not collected` unless the sweep used `--reliable true`.",
+		"",
+		"| scope | runs | pass rate | receipt ok | task evidence | fresh verified | median pass time | avg pass cost |",
+		"|---|---|---|---|---|---|---|---|",
+		renderPublicScorecardRow("overall", runs),
+	];
+
+	for (const dimension of CAPABILITY_DIMENSIONS) {
+		const items = runs.filter((run) => dimension.scenarios.has(run.scenario));
+		if (items.length === 0) continue;
+		out.push(renderPublicScorecardRow(dimension.label, items));
+	}
+
+	return out;
+}
+
+function renderPublicScorecardRow(label, runs) {
+	const passing = runs.filter(isPassingRun);
+	const medianElapsed = median(passing.map((run) => run.elapsedMs / 1000));
+	const passCosts = passing
+		.map((run) => run.usage?.cost?.total)
+		.filter((value) => Number.isFinite(value));
+	const avgCost = passCosts.length > 0 ? mean(passCosts) : null;
+	return [
+		label,
+		runs.length,
+		formatRatio(passing.length, runs.length),
+		formatReceiptRatio(runs, (receipt) => receipt.ok === true),
+		formatReceiptRatio(runs, (receipt) => hasCompletedTaskEvidence(receipt)),
+		formatReceiptRatio(runs, (receipt) => hasFreshVerification(receipt)),
+		medianElapsed == null ? "—" : `${medianElapsed.toFixed(1)}s`,
+		avgCost == null ? "—" : `$${avgCost.toFixed(4)}`,
+	]
+		.map((value) => escapePipes(value))
+		.join(" | ")
+		.replace(/^/, "| ")
+		.replace(/$/, " |");
+}
+
 function renderOutcomesTable(runs) {
 	const grouped = groupBy(runs, (r) => r.scenario);
 	const out = ["### Outcomes", "", "| scenario | n | passed | failed | harness-errored |", "|---|---|---|---|---|"];
 	for (const [scenario, items] of grouped) {
-		const passed = items.filter((r) => r.ok && r.verifyPassed).length;
+		const passed = items.filter((r) => isPassingRun(r)).length;
 		const failed = items.filter((r) => !r.harnessError && (!r.ok || !r.verifyPassed)).length;
 		const errored = items.filter((r) => r.harnessError).length;
 		out.push(`| ${scenario} | ${items.length} | ${passed} | ${failed} | ${errored} |`);
@@ -169,7 +232,7 @@ function renderPerScenarioTable(runs) {
 		"|---|---|---|---|---|---|---|---|",
 	];
 	for (const [scenario, items] of grouped) {
-		const passing = items.filter((r) => r.ok && r.verifyPassed);
+		const passing = items.filter((r) => isPassingRun(r));
 		if (passing.length === 0) {
 			out.push(`| ${scenario} | 0 | — | — | — | — | — | — |`);
 			continue;
@@ -229,8 +292,8 @@ function renderComparison(sweeps) {
 		"|---|---|---|---|---|---|---|---|---|---|",
 	];
 	for (const scenario of aGrouped.keys()) {
-		const aPass = (aGrouped.get(scenario) ?? []).filter((r) => r.ok && r.verifyPassed);
-		const bPass = (bGrouped.get(scenario) ?? []).filter((r) => r.ok && r.verifyPassed);
+		const aPass = (aGrouped.get(scenario) ?? []).filter((r) => isPassingRun(r));
+		const bPass = (bGrouped.get(scenario) ?? []).filter((r) => isPassingRun(r));
 		if (aPass.length === 0 || bPass.length === 0) {
 			out.push(`| ${scenario} | — | — | — | — | — | — | — | — | — |`);
 			continue;
@@ -263,6 +326,31 @@ function groupBy(items, keyFn) {
 function mean(arr) {
 	if (arr.length === 0) return 0;
 	return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function median(arr) {
+	const values = arr.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+	if (values.length === 0) return null;
+	const middle = Math.floor(values.length / 2);
+	if (values.length % 2 === 1) return values[middle];
+	return (values[middle - 1] + values[middle]) / 2;
+}
+
+function isPassingRun(run) {
+	return run.ok === true && run.verifyPassed === true && !run.harnessError;
+}
+
+function formatRatio(count, total) {
+	if (total === 0) return "—";
+	return `${count}/${total} (${Math.round((count / total) * 100)}%)`;
+}
+
+function formatReceiptRatio(runs, predicate) {
+	const receipts = runs.map((run) => run.receipt).filter(Boolean);
+	if (receipts.length === 0) return "not collected";
+	const ratio = formatRatio(receipts.filter(predicate).length, receipts.length);
+	if (receipts.length === runs.length) return ratio;
+	return `${ratio}; ${receipts.length}/${runs.length} collected`;
 }
 
 function fmt(n) {
