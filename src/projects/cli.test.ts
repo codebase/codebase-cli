@@ -76,6 +76,13 @@ describe("runProjectSubcommand", () => {
 		expect(stderr).toEqual([]);
 	});
 
+	it("prints web-build alias in build help", async () => {
+		const result = await runProject(["project", "build", "--help"], fakeClient());
+
+		expect(result.code).toBe(0);
+		expect(result.stdout.join("\n")).toContain("alias: codebase web-build");
+	});
+
 	it("defaults project list to 25 entries and puts titled indexed projects first", async () => {
 		const projects: PlatformProject[] = [
 			{ id: "storage-a", source: "storage-only" },

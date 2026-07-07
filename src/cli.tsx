@@ -80,6 +80,8 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runSshSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "project" || argv[0] === "projects") {
 	runProjectSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "web-build") {
+	runProjectSubcommand(["project", "build", ...argv.slice(1)]).then((code) => process.exit(code));
 } else if (argv[0] === "usage") {
 	if (argv[1] === "--help" || argv[1] === "-h") {
 		process.stdout.write("usage: codebase usage\n\nShow Codebase plan credits, reset date, and build turns.\n");
@@ -269,6 +271,7 @@ function printHelp(): void {
 			"  codebase project pull <id>   download a project as a ZIP",
 			"  codebase project build <prompt>",
 			"                               start a web build on codebase.design",
+			"  codebase web-build <prompt>  shortcut for project build",
 			"  codebase doctor              diagnose runtime, auth, config, MCP, storage",
 			"  codebase mcp                 show MCP setup help",
 			"  codebase director list       manage trained directors (hire, status, fire)",

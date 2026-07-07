@@ -491,6 +491,7 @@ function printProjectHelp(out: (msg: string) => void): void {
 
 function printBuildHelp(out: (msg: string) => void): void {
 	out("usage: codebase project build [--wait] [--model MODEL] [--scaffold ID] [--project ID] <prompt>");
+	out("alias: codebase web-build [--wait] [--model MODEL] [--scaffold ID] [--project ID] <prompt>");
 	out("");
 	out("Start an async web build on codebase.design using your OAuth session.");
 	out("");
