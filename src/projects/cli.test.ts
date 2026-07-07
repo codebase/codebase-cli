@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runProjectSubcommand } from "./cli.js";
-import type { ProjectClient } from "./client.js";
+import { type ProjectClient, ProjectClientError } from "./client.js";
 import type {
 	BuildCancelResponse,
 	BuildPreviewResponse,
@@ -158,6 +158,21 @@ describe("runProjectSubcommand", () => {
 		});
 		expect(result.stdout.join("\n")).toContain("session: sess-1");
 		expect(result.stdout.join("\n")).toContain("codebase project status sess-1");
+	});
+
+	it("explains payment challenges from the web build endpoint", async () => {
+		const client = {
+			startBuild: async () => {
+				throw new ProjectClientError("request failed: 402", 402);
+			},
+			hasCredentials: () => true,
+		} as unknown as ProjectClient;
+
+		const result = await runProject(["project", "build", "Build", "it"], client);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr.join("\n")).toContain("payment challenge");
+		expect(result.stderr.join("\n")).toContain("web build OAuth gate");
 	});
 
 	it("waits for a completed build and prints its preview URL", async () => {

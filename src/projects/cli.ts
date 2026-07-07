@@ -65,6 +65,11 @@ export async function runProjectSubcommand(argv: string[], options: ProjectCliOp
 		}
 		if (e instanceof ProjectClientError) {
 			err(`error: ${e.message}`);
+			if (e.status === 402) {
+				err(
+					"hint: codebase.design returned a payment challenge before accepting OAuth. Run `codebase auth login`; if this persists, the web build OAuth gate needs to be deployed.",
+				);
+			}
 			if (e.status === 403) {
 				err("hint: run `codebase auth login` again so the CLI can request builds:read/builds:write.");
 			}
