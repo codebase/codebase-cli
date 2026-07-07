@@ -49,6 +49,36 @@ describe("runReceiptSubcommand", () => {
 		expect(text).toContain("Tasks: 1/1 completed, 1 with evidence");
 		expect(text).toContain("Verification: 1/1 fresh after final mutation, 1/1 completed tasks verified");
 		expect(text).toContain("Final answer: named fresh verification");
+		expect(text).toContain("Gates:");
+		expect(text).toContain("- [ok] Verification:");
+	});
+
+	it("shows failed receipt gates and next actions", async () => {
+		const record = store.save(makeFailedInput());
+
+		expect(await run(["receipt", "list"])).toBe(0);
+		const listText = out.join("");
+		expect(listText).toContain(record.id);
+		expect(listText).toContain("fail");
+		expect(listText).toContain("no completed task captured verification evidence");
+
+		out.length = 0;
+		expect(await run(["receipt", "show", record.id])).toBe(0);
+		const text = out.join("");
+		expect(text).toContain("Status: FAILED");
+		expect(text).toContain("Gates:");
+		expect(text).toContain("- [fail] Verification:");
+		expect(text).toContain("- [fail] Final proof:");
+		expect(text).toContain("Next actions:");
+		expect(text).toContain("Run verification while the implementation task is in_progress");
+		expect(text).toContain("End with a positive final proof sentence");
+
+		out.length = 0;
+		expect(await run(["receipt", "export", record.id])).toBe(0);
+		const markdown = out.join("");
+		expect(markdown).toContain("## Gates");
+		expect(markdown).toContain("**Verification:** FAIL");
+		expect(markdown).toContain("## Next Actions");
 	});
 
 	it("prints full json", async () => {
@@ -88,6 +118,41 @@ function makeInput(): Parameters<ReceiptStore["save"]>[0] {
 		},
 		finalText: "done",
 		receipt: makeReceipt(),
+	};
+}
+
+function makeFailedInput(): Parameters<ReceiptStore["save"]>[0] {
+	const receipt = makeReceipt();
+	return {
+		...makeInput(),
+		ok: false,
+		exitCode: 1,
+		code: "reliable_gate_failed",
+		error: "Reliable mode failed: no completed task captured verification evidence; final answer did not name a fresh passing verification command: npm test.",
+		receipt: {
+			...receipt,
+			ok: false,
+			summary: {
+				...receipt.summary,
+				completedTasksWithVerification: 0,
+				finalAnswerMentionsFreshVerification: false,
+			},
+			taskEvidence: [
+				{
+					id: "task-1",
+					title: "Fix it",
+					status: "completed",
+					toolCalls: [{ id: "call-2", name: "write_file", args: {}, status: "done", order: 2, startedAt: 1 }],
+					mutations: [],
+					verification: [],
+				},
+			],
+			finalAnswer: { mentionsFreshVerification: false, matchedVerificationCommands: [] },
+			failures: [
+				"no completed task captured verification evidence",
+				"final answer did not name a fresh passing verification command: npm test",
+			],
+		},
 	};
 }
 

@@ -49,6 +49,8 @@ answer to positively name the fresh verification command. With `--output json`,
 the result includes a receipt: task lifecycle, per-task evidence, file
 mutations, verification evidence, final-answer proof, usage, and rewind
 checkpoints.
+Failed receipt summaries show gate status and next actions instead of only
+dumping raw audit strings.
 Inspect the latest one with `codebase receipt`, list saved runs with
 `codebase receipt list`, or export markdown with
 `codebase receipt export --out receipt.md`.
