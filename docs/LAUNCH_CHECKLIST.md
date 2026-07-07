@@ -141,6 +141,7 @@ In an interactive session:
 - [ ] `/model` — opens picker, can select, swap takes effect
 - [ ] `/models` — lists available models
 - [ ] `/clear` — wipes visible transcript
+- [ ] `/context` and `/context explain` — show context budget, tasks, memory, compaction state
 - [ ] `/cost` — shows running cost
 - [ ] `/copy` — copies last assistant message
 - [ ] `/diff` — shows working-tree diff

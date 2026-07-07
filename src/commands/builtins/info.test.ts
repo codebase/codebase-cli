@@ -47,7 +47,23 @@ function makeCtx(): { ctx: CommandContext; emits: string[] } {
 			compactionMonitor: { current: () => ({ active: false, startedAt: null, messageCount: 0 }) },
 			toolContext: {
 				tasks: {
-					list: () => [{ status: "completed" }, { status: "pending" }, { status: "cancelled" }],
+					list: () => [
+						{
+							id: "task-1",
+							title: "Verify context command",
+							status: "completed",
+							blockedBy: [],
+							owner: "main-agent",
+						},
+						{
+							id: "task-2",
+							title: "Explain context pressure",
+							status: "pending",
+							blockedBy: ["task-1"],
+							owner: null,
+						},
+						{ id: "task-3", title: "Abandoned spike", status: "cancelled", blockedBy: [], owner: null },
+					],
 				},
 			},
 			memory: { index: () => "- project fact\n- user preference\n" },
@@ -72,6 +88,44 @@ describe("/context", () => {
 		expect(emits[0]).toContain("tasks:      1/3 complete, 1 open, 1 cancelled");
 		expect(emits[0]).toContain("memory:     2 MEMORY.md index lines");
 		expect(emits[0]).toContain("tools:      2 seen, 1 running, 1 error");
+		expect(emits[0]).toContain("last summary: summary");
 		expect(emits[0]).toContain("Largest messages:");
+		expect(emits[0]).toContain("Use /context explain for details");
+	});
+
+	it("explains context pressure, recent messages, tasks, compaction, and inline files", () => {
+		const { ctx, emits } = makeCtx();
+		ctx.state.messages.push({
+			role: "user",
+			content:
+				"Attached files (auto-inlined from @ mentions):\n\n### src/app.ts\n```\nconst app = true;\n```\n\n---\nfix @src/app.ts",
+		} as never);
+		ctx.state.messages.push({
+			role: "assistant",
+			content: [{ type: "toolCall", id: "call-3", name: "read_file", arguments: { path: "src/app.ts" } }],
+		} as never);
+
+		context.handler("explain", ctx);
+
+		expect(emits).toHaveLength(1);
+		expect(emits[0]).toContain("Context explanation:");
+		expect(emits[0]).toContain("Budget:");
+		expect(emits[0]).toContain("Top context contributors:");
+		expect(emits[0]).toContain("tool calls: read_file");
+		expect(emits[0]).toContain("Recent messages still in context:");
+		expect(emits[0]).toContain("Open tasks:");
+		expect(emits[0]).toContain("task-2 Explain context pressure [pending blocked_by:task-1]");
+		expect(emits[0]).toContain("Last summary: summary");
+		expect(emits[0]).toContain("Attached/imported files detected:");
+		expect(emits[0]).toContain("src/app.ts");
+		expect(emits[0]).toContain("What is at risk:");
+	});
+
+	it("shows usage for unknown /context arguments", () => {
+		const { ctx, emits } = makeCtx();
+
+		context.handler("wat", ctx);
+
+		expect(emits).toEqual(["Usage: /context [explain]"]);
 	});
 });

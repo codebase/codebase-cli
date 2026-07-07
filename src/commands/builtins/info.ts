@@ -1,4 +1,4 @@
-import { estimateContextTokens, messageChars } from "../../agent/context-estimate.js";
+import { estimateContextTokens, messageChars, STATIC_CONTEXT_TOKENS } from "../../agent/context-estimate.js";
 import { copyToClipboard } from "../../clipboard/copy.js";
 import type { Command } from "../types.js";
 
@@ -110,56 +110,164 @@ export const debug: Command = {
 
 export const context: Command = {
 	name: "context",
-	description: "Inspect context usage, compaction threshold, memory, tasks, and large messages.",
-	handler: (_args, ctx) => {
-		const used = estimateContextTokens(ctx.state);
-		const usageReported = Boolean(
-			ctx.state.turnUsage && ctx.state.turnUsage.input + ctx.state.turnUsage.cacheRead > 0,
-		);
-		const window = ctx.bundle.model.contextWindow ?? 200_000;
-		const compactAt = ctx.bundle.compaction.threshold();
-		const internal = ctx.bundle.agent.state.messages;
-		const display = ctx.state.messages;
-		const tasks = ctx.bundle.toolContext.tasks.list();
-		const taskStats = summarizeTasks(tasks);
-		const memoryIndex = ctx.bundle.memory.index();
-		const memoryLines = memoryIndex ? memoryIndex.split("\n").filter((line) => line.trim()).length : 0;
-		const memoryBytes = Buffer.byteLength(memoryIndex, "utf8");
-		const tools = Array.from(ctx.state.tools.values());
-		const toolErrors = tools.filter((t) => t.status === "error").length;
-		const toolRunning = tools.filter((t) => t.status === "running").length;
-		const compaction = ctx.bundle.compactionMonitor.current();
-		const summaryCount = internal.filter(hasCompactionSummary).length;
-		const largest = largestMessages(internal, 3);
+	aliases: ["ctx"],
+	description:
+		"Inspect context usage, compaction threshold, memory, tasks, and large messages. Use /context explain for detail.",
+	handler: (args, ctx) => {
+		const mode = args.trim().toLowerCase();
+		if (mode === "explain" || mode === "why") {
+			ctx.emit(renderContextExplanation(ctx));
+			return { handled: true };
+		}
+		if (mode && mode !== "summary") {
+			ctx.emit("Usage: /context [explain]");
+			return { handled: true };
+		}
+		const snapshot = contextSnapshot(ctx);
 		const lines = [
 			"Context:",
-			`  ${contextBar(used, window, compactAt)}`,
-			`  used:       ${used.toLocaleString()} / ${window.toLocaleString()} tokens (${pct(used, window)})`,
-			`  estimate:   ${usageReported ? "last model-reported input + streaming estimate" : "transcript estimate + static prompt budget"}`,
-			`  compacts:   at ${compactAt.toLocaleString()} tokens (${pct(compactAt, window)})${
-				compaction.active ? `; compacting ${compaction.messageCount} messages now` : ""
+			`  ${contextBar(snapshot.used, snapshot.window, snapshot.compactAt)}`,
+			`  used:       ${snapshot.used.toLocaleString()} / ${snapshot.window.toLocaleString()} tokens (${pct(snapshot.used, snapshot.window)})`,
+			`  estimate:   ${snapshot.usageReported ? "last model-reported input + streaming estimate" : "transcript estimate + static prompt budget"}`,
+			`  compacts:   at ${snapshot.compactAt.toLocaleString()} tokens (${pct(snapshot.compactAt, snapshot.window)})${
+				snapshot.compaction.active ? `; compacting ${snapshot.compaction.messageCount} messages now` : ""
 			}`,
-			`  messages:   ${internal.length} agent / ${display.length} display (${roleCounts(internal)})`,
-			`  summaries:  ${summaryCount} compaction summar${summaryCount === 1 ? "y" : "ies"} in context`,
-			`  tasks:      ${taskStats.completed}/${taskStats.total} complete, ${taskStats.open} open, ${taskStats.cancelled} cancelled`,
-			`  memory:     ${memoryLines} MEMORY.md index line${memoryLines === 1 ? "" : "s"} (${memoryBytes.toLocaleString()} bytes)`,
-			`  tools:      ${tools.length} seen, ${toolRunning} running, ${toolErrors} error${toolErrors === 1 ? "" : "s"}`,
+			`  messages:   ${snapshot.internal.length} agent / ${snapshot.display.length} display (${roleCounts(snapshot.internal)})`,
+			`  summaries:  ${snapshot.summaryCount} compaction summar${snapshot.summaryCount === 1 ? "y" : "ies"} in context`,
+			`  tasks:      ${snapshot.taskStats.completed}/${snapshot.taskStats.total} complete, ${snapshot.taskStats.open} open, ${snapshot.taskStats.cancelled} cancelled`,
+			`  memory:     ${snapshot.memoryLines} MEMORY.md index line${snapshot.memoryLines === 1 ? "" : "s"} (${snapshot.memoryBytes.toLocaleString()} bytes)`,
+			`  tools:      ${snapshot.tools.length} seen, ${snapshot.toolRunning} running, ${snapshot.toolErrors} error${snapshot.toolErrors === 1 ? "" : "s"}`,
 		];
-		if (largest.length > 0) {
+		if (snapshot.lastSummary) {
+			lines.push(`  last summary: ${truncateOneLine(snapshot.lastSummary, 96)}`);
+		}
+		if (snapshot.largest.length > 0) {
 			lines.push("");
 			lines.push("Largest messages:");
-			for (const item of largest) {
+			for (const item of snapshot.largest) {
 				lines.push(`  #${item.index + 1} ${item.role}: ${item.tokens.toLocaleString()} est tokens`);
 			}
 		}
 		lines.push("");
 		lines.push(
-			"Use /compact to summarize older context, /memory to inspect durable notes, and the task panel to inspect active work.",
+			"Use /context explain for details, /compact to summarize older context, /memory to inspect durable notes, and the task panel to inspect active work.",
 		);
 		ctx.emit(lines.join("\n"));
 		return { handled: true };
 	},
 };
+
+type ContextCommandContext = Parameters<Command["handler"]>[1];
+type ContextMessage = Parameters<typeof messageChars>[0];
+
+function renderContextExplanation(ctx: ContextCommandContext): string {
+	const snapshot = contextSnapshot(ctx);
+	const remainingToCompact = snapshot.compactAt - snapshot.used;
+	const lines = [
+		"Context explanation:",
+		"",
+		"Budget:",
+		`  ${snapshot.used.toLocaleString()} / ${snapshot.window.toLocaleString()} tokens used (${pct(snapshot.used, snapshot.window)})`,
+		`  compaction threshold: ${snapshot.compactAt.toLocaleString()} tokens (${remainingToCompact > 0 ? `${remainingToCompact.toLocaleString()} left` : `${Math.abs(remainingToCompact).toLocaleString()} over`})`,
+		`  pressure: ${contextPressure(snapshot.used, snapshot.window, snapshot.compactAt)}`,
+		`  estimate source: ${
+			snapshot.usageReported
+				? "provider-reported input/cache plus streaming estimate"
+				: "local transcript estimate plus static prompt budget"
+		}`,
+		`  static prompt/tool/memory-index budget: about ${STATIC_CONTEXT_TOKENS.toLocaleString()} tokens`,
+		"",
+		"Top context contributors:",
+	];
+	if (snapshot.largest.length === 0) {
+		lines.push("  No large transcript messages yet; static prompt, tools, and memory index dominate.");
+	} else {
+		for (const item of snapshot.largest) {
+			lines.push(
+				`  #${item.index + 1} ${item.role}: ${item.tokens.toLocaleString()} est tokens - ${messagePreview(item.message, 110)}`,
+			);
+		}
+	}
+	lines.push("");
+	lines.push("Recent messages still in context:");
+	for (const item of recentMessages(snapshot.internal, 5)) {
+		lines.push(`  #${item.index + 1} ${item.role}: ${messagePreview(item.message, 90)}`);
+	}
+	if (snapshot.internal.length === 0) lines.push("  none");
+	lines.push("");
+	lines.push("Tasks and memory:");
+	if (snapshot.openTasks.length === 0) {
+		lines.push("  Open tasks: none");
+	} else {
+		lines.push("  Open tasks:");
+		for (const task of snapshot.openTasks.slice(0, 6)) lines.push(`    ${formatTaskLine(task)}`);
+		if (snapshot.openTasks.length > 6) lines.push(`    ...and ${snapshot.openTasks.length - 6} more`);
+	}
+	lines.push(
+		`  MEMORY.md index: ${snapshot.memoryLines} line${snapshot.memoryLines === 1 ? "" : "s"}; full memory bodies are recalled only when relevant to the prompt.`,
+	);
+	lines.push("");
+	lines.push("Compaction:");
+	if (snapshot.lastSummary) {
+		lines.push(`  Last summary: ${truncateOneLine(snapshot.lastSummary, 180)}`);
+	} else {
+		lines.push("  No full compaction summary is currently in the transcript.");
+	}
+	lines.push("  Microcompaction may still clear old read/grep/list tool results before full summarization.");
+	lines.push("");
+	lines.push("Attached/imported files detected:");
+	if (snapshot.inlineFiles.length === 0) {
+		lines.push("  none detected in current transcript");
+	} else {
+		for (const file of snapshot.inlineFiles.slice(0, 8)) lines.push(`  ${file}`);
+		if (snapshot.inlineFiles.length > 8) lines.push(`  ...and ${snapshot.inlineFiles.length - 8} more`);
+	}
+	lines.push("");
+	lines.push("What is at risk:");
+	for (const risk of contextRisks(snapshot)) lines.push(`  ${risk}`);
+	return lines.join("\n");
+}
+
+function contextSnapshot(ctx: ContextCommandContext) {
+	const used = estimateContextTokens(ctx.state);
+	const usageReported = Boolean(ctx.state.turnUsage && ctx.state.turnUsage.input + ctx.state.turnUsage.cacheRead > 0);
+	const window = ctx.bundle.model.contextWindow ?? 200_000;
+	const compactAt = ctx.bundle.compaction.threshold();
+	const internal = ctx.bundle.agent.state.messages;
+	const display = ctx.state.messages;
+	const tasks = ctx.bundle.toolContext.tasks.list();
+	const taskStats = summarizeTasks(tasks);
+	const openTasks = tasks.filter((task) => task.status === "pending" || task.status === "in_progress");
+	const memoryIndex = ctx.bundle.memory.index();
+	const memoryLines = memoryIndex ? memoryIndex.split("\n").filter((line) => line.trim()).length : 0;
+	const memoryBytes = Buffer.byteLength(memoryIndex, "utf8");
+	const tools = Array.from(ctx.state.tools.values());
+	const toolErrors = tools.filter((t) => t.status === "error").length;
+	const toolRunning = tools.filter((t) => t.status === "running").length;
+	const compaction = ctx.bundle.compactionMonitor.current();
+	const summaries = compactionSummaries(internal);
+	return {
+		used,
+		usageReported,
+		window,
+		compactAt,
+		internal,
+		display,
+		tasks,
+		taskStats,
+		openTasks,
+		memoryLines,
+		memoryBytes,
+		tools,
+		toolErrors,
+		toolRunning,
+		compaction,
+		summaryCount: summaries.length,
+		lastSummary: summaries.at(-1) ?? null,
+		largest: largestMessages(internal, 5),
+		inlineFiles: detectInlineFiles(internal),
+	};
+}
 
 function contextBar(used: number, window: number, compactAt: number): string {
 	const barWidth = 40;
@@ -208,16 +316,149 @@ function largestMessages(
 	index: number;
 	role: string;
 	tokens: number;
+	message: ContextMessage;
 }[] {
 	return messages
-		.map((message, index) => ({ index, role: message.role, tokens: Math.round(messageChars(message) / 4) }))
+		.map((message, index) => ({
+			index,
+			role: message.role,
+			tokens: Math.round(messageChars(message) / 4),
+			message,
+		}))
 		.filter((item) => item.tokens > 0)
 		.sort((a, b) => b.tokens - a.tokens)
 		.slice(0, count);
 }
 
-function hasCompactionSummary(message: Parameters<typeof messageChars>[0]): boolean {
-	if (typeof message.content === "string") return message.content.includes("[Conversation compacted");
-	if (!Array.isArray(message.content)) return false;
-	return message.content.some((block) => block.type === "text" && block.text.includes("[Conversation compacted"));
+function compactionSummaries(messages: readonly ContextMessage[]): string[] {
+	return messages.map(compactionSummaryText).filter((summary): summary is string => summary !== null);
+}
+
+function compactionSummaryText(message: ContextMessage): string | null {
+	const text = messageText(message);
+	const marker = "[Conversation compacted";
+	const idx = text.indexOf(marker);
+	if (idx === -1) return null;
+	const after = text.slice(idx + marker.length);
+	const firstBreak = after.indexOf("\n");
+	const summary = firstBreak === -1 ? after : after.slice(firstBreak + 1);
+	return summary.trim() || text.slice(idx).trim();
+}
+
+function recentMessages(
+	messages: readonly ContextMessage[],
+	count: number,
+): Array<{
+	index: number;
+	role: string;
+	message: ContextMessage;
+}> {
+	return messages.slice(-count).map((message, offset) => ({
+		index: messages.length - Math.min(count, messages.length) + offset,
+		role: message.role,
+		message,
+	}));
+}
+
+function contextPressure(used: number, window: number, compactAt: number): string {
+	if (used >= compactAt) return "over compaction threshold; the next turn may summarize older context";
+	const ratio = window > 0 ? used / window : 0;
+	if (ratio >= 0.85) return "high; older details are close to being summarized";
+	if (ratio >= 0.6) return "moderate; large tool results and attachments are worth watching";
+	return "low; transcript still has plenty of room";
+}
+
+function contextRisks(snapshot: ReturnType<typeof contextSnapshot>): string[] {
+	const risks: string[] = [];
+	if (snapshot.used >= snapshot.compactAt) {
+		risks.push("Older detailed messages are eligible for full compaction on the next model turn.");
+	} else if (snapshot.used / snapshot.window >= 0.75) {
+		risks.push(
+			"Large file reads, grep output, shell output, and attachments are the first things likely to pressure context.",
+		);
+	} else {
+		risks.push("No immediate context pressure; static prompt/tool schemas are the main fixed cost.");
+	}
+	if (snapshot.openTasks.length > 0) {
+		risks.push(
+			"Open task titles persist in the task store, but details buried only in chat can still be summarized.",
+		);
+	}
+	if (snapshot.memoryLines > 0) {
+		risks.push(
+			"Only the MEMORY.md index is always present; stale or unmatched memory bodies need an explicit prompt or /memory inspection.",
+		);
+	}
+	if (snapshot.inlineFiles.length > 0) {
+		risks.push(
+			"Inline @file attachments stay as transcript text until compaction; reattach files if exact contents matter later.",
+		);
+	}
+	return risks;
+}
+
+function detectInlineFiles(messages: readonly ContextMessage[]): string[] {
+	const files = new Set<string>();
+	for (const message of messages) {
+		const text = messageText(message);
+		if (!text) continue;
+		for (const match of text.matchAll(/^### ([^\n]+)$/gm)) {
+			if (text.includes("Attached files (auto-inlined from @ mentions):")) files.add(match[1].trim());
+		}
+		for (const match of text.matchAll(/<!-- imported from ([^>]+) -->/g)) {
+			files.add(match[1].trim());
+		}
+	}
+	return [...files].filter(Boolean).sort();
+}
+
+function formatTaskLine(task: {
+	id?: string;
+	title?: string;
+	status: string;
+	owner?: string | null;
+	blockedBy?: readonly string[];
+}): string {
+	const title = task.title?.trim() || "(untitled task)";
+	const owner = task.owner ? ` owner:${task.owner}` : "";
+	const blockers = task.blockedBy && task.blockedBy.length > 0 ? ` blocked_by:${task.blockedBy.join(",")}` : "";
+	return `${task.id ? `${task.id} ` : ""}${title} [${task.status}${owner}${blockers}]`;
+}
+
+function messagePreview(message: ContextMessage, maxChars: number): string {
+	const calls = toolCallNames(message);
+	if (calls.length > 0) return truncateOneLine(`tool calls: ${calls.join(", ")}`, maxChars);
+	const toolName =
+		message.role === "toolResult" && "toolName" in message && typeof message.toolName === "string"
+			? `${message.toolName} result: `
+			: "";
+	return truncateOneLine(`${toolName}${messageText(message) || "(no text)"}`, maxChars);
+}
+
+function toolCallNames(message: ContextMessage): string[] {
+	if (!Array.isArray(message.content)) return [];
+	const names: string[] = [];
+	for (const block of message.content) {
+		if (block.type !== "toolCall") continue;
+		const name = (block as { name?: unknown }).name;
+		if (typeof name === "string") names.push(name);
+	}
+	return names;
+}
+
+function messageText(message: ContextMessage): string {
+	if (typeof message.content === "string") return message.content;
+	if (!Array.isArray(message.content)) return "";
+	const parts: string[] = [];
+	for (const block of message.content) {
+		if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
+		else if (block.type === "thinking" && typeof block.thinking === "string") parts.push(block.thinking);
+	}
+	return parts.join("\n");
+}
+
+function truncateOneLine(value: string, maxChars: number): string {
+	const oneLine = value.replace(/\s+/g, " ").trim();
+	if (oneLine.length <= maxChars) return oneLine;
+	return `${oneLine.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }

@@ -83,7 +83,7 @@ OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash)
 ## Cheat sheet
 
 ```
-/model /effort /plan /tournament /rewind /resume /permissions /mcp /agents /help
+/model /effort /plan /context /tournament /rewind /resume /permissions /mcp /help
 !cmd     run a shell command without spending a turn
 @path    pin a file into the next prompt
 #note    save a memory   ·   \<Enter>  multi-line   ·   Ctrl-C  stop turn / exit
