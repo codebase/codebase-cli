@@ -63,13 +63,13 @@ Recommended next work:
 
 Claude's `/context` command shows what the model actually sees after transforms, microcompaction, and context analysis (`src/commands/context/context.tsx`). Its compaction system also strips/reinjects special blocks, budgets post-compact restoration, has failure tracking, and surfaces token-warning state (`src/services/compact/*`).
 
-Codebase has a solid compaction core in `src/compaction/engine.ts`, plus a context meter in the TUI, but less user-facing control. Users can see "ctx 0%" but cannot yet ask "what context are you holding, what got compacted, and what is at risk of being forgotten?"
+Codebase now has `/context` and `/context explain` wired into the slash-command surface. The command shows token pressure, compaction threshold, recent/largest messages, task state, memory inventory, latest-prompt memory matches, retained memory reminders, inline files, tools, and compaction summaries. The remaining gap is less "can users inspect context?" and more "can we prove context continuity under ugly long-task pressure?"
 
 Recommended next work:
 
-- Add `/context` with a compact visual: recent messages, pinned files, memory index lines, task state, estimated token use, and last compaction summary.
-- Add `/context explain` to show why context is high and which artifacts dominate.
 - Add a benchmark scenario where a long task must survive compaction and still complete from preserved task/memory state.
+- Add a smoke-test fixture for `/context` and `/context explain` in a built CLI, not only unit tests.
+- Keep tightening the post-transform visibility story so users can distinguish persisted transcript from transient model-call reminders.
 
 ### 3. Task Lifecycle Enforcement
 
@@ -88,13 +88,13 @@ Recommended next work:
 
 Claude's memory system is more productized. The `memdir` prompt defines typed memory files, a `MEMORY.md` index, and careful "write/update/remove" rules. `findRelevantMemories.ts` asks a side model to select up to five clearly useful memory files from headers. Team memory sync is repo-scoped, OAuth-gated, API-backed, size-limited, and guarded by secret scanning before upload (`src/memdir/*`, `src/services/teamMemorySync/*`, `src/services/extractMemories/*`).
 
-Codebase's memory is cleaner and safer than many OSS agents: typed files, index injection, background extraction, manual `#note`, and high-confidence secret redaction. But today it injects only the truncated index (`src/memory/inject.ts`) and exposes explicit `read_memory`; it does not proactively retrieve relevant full memory bodies.
+Codebase's memory is cleaner and safer than many OSS agents: typed files, index injection, background extraction, manual `#note`, high-confidence secret redaction, and prompt-time relevant-memory recall. The system prompt carries the truncated index, then `src/memory/inject.ts` selects matching full memory bodies with filename/type/source/timestamps/stale markers before the model call.
 
 Recommended next work:
 
-- Add relevant-memory retrieval before each turn: scan headers, select 3-5 likely memories, inject their bodies with provenance.
 - Add `forget_memory` / `update_memory` as explicit tools and slash commands.
 - Store source session id, creation time, last-used time, and optional expiry/reverify hints in memory frontmatter.
+- Add a memory-retrieval benchmark with distractor memories and stale facts.
 - Add optional web/team memory sync only after local provenance and secret boundaries are crisp.
 
 ### 5. Permissions And Shell Safety
@@ -143,7 +143,7 @@ These are the highest leverage items before a public push:
    - Assert `codebase --help`, `auth --help`, `project --help`, `ssh --help`, `usage --help`, `doctor --help`, `director --help`, `mcp --help`, `run --help`, and `auto --help` all exit without entering the TUI.
 
 2. `/context`.
-   - Users need to see what the agent is carrying, especially after compaction and memory injection.
+   - Keep this as a launch smoke gate: summary and explain should show context budget, compaction state, task state, memory inventory, and latest-prompt memory matches.
 
 3. Task verification guard.
    - Do not let complex work end with a pretty final answer and no evidence. Nudge before final when task tools are active and no verifier ran.
@@ -151,8 +151,8 @@ These are the highest leverage items before a public push:
 4. App-server model switching and usage events.
    - The web app/CLI bridge should demonstrate a complete OAuth -> prompt -> permission -> build -> usage update path.
 
-5. Relevant memory retrieval.
-   - The memory system should use the memory bodies, not only the index, when the request clearly matches prior project facts.
+5. Memory update/forget + provenance hardening.
+   - Relevant body recall now exists; the launch gap is explicit update/delete UX plus stronger source session, last-used, and stale/reverify metadata.
 
 6. Permission UX polish.
    - Better trust suggestions and clearer irreversible/reversible/read-only language will make the CLI feel safer than a generic autonomous shell.

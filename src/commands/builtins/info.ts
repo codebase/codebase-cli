@@ -1,5 +1,7 @@
 import { estimateContextTokens, messageChars, STATIC_CONTEXT_TOKENS } from "../../agent/context-estimate.js";
 import { copyToClipboard } from "../../clipboard/copy.js";
+import { findRelevantMemories, isMemoryStale, type RelevantMemoryMatch } from "../../memory/inject.js";
+import type { MemoryRecord } from "../../memory/types.js";
 import type { Command } from "../types.js";
 
 export const help: Command = {
@@ -135,7 +137,7 @@ export const context: Command = {
 			`  messages:   ${snapshot.internal.length} agent / ${snapshot.display.length} display (${roleCounts(snapshot.internal)})`,
 			`  summaries:  ${snapshot.summaryCount} compaction summar${snapshot.summaryCount === 1 ? "y" : "ies"} in context`,
 			`  tasks:      ${snapshot.taskStats.completed}/${snapshot.taskStats.total} complete, ${snapshot.taskStats.open} open, ${snapshot.taskStats.cancelled} cancelled`,
-			`  memory:     ${snapshot.memoryLines} MEMORY.md index line${snapshot.memoryLines === 1 ? "" : "s"} (${snapshot.memoryBytes.toLocaleString()} bytes)`,
+			`  memory:     ${formatMemorySummary(snapshot)}`,
 			`  tools:      ${snapshot.tools.length} seen, ${snapshot.toolRunning} running, ${snapshot.toolErrors} error${snapshot.toolErrors === 1 ? "" : "s"}`,
 		];
 		if (snapshot.lastSummary) {
@@ -195,7 +197,7 @@ function renderContextExplanation(ctx: ContextCommandContext): string {
 	}
 	if (snapshot.internal.length === 0) lines.push("  none");
 	lines.push("");
-	lines.push("Tasks and memory:");
+	lines.push("Tasks:");
 	if (snapshot.openTasks.length === 0) {
 		lines.push("  Open tasks: none");
 	} else {
@@ -203,9 +205,41 @@ function renderContextExplanation(ctx: ContextCommandContext): string {
 		for (const task of snapshot.openTasks.slice(0, 6)) lines.push(`    ${formatTaskLine(task)}`);
 		if (snapshot.openTasks.length > 6) lines.push(`    ...and ${snapshot.openTasks.length - 6} more`);
 	}
+	lines.push("");
+	lines.push("Memory:");
 	lines.push(
-		`  MEMORY.md index: ${snapshot.memoryLines} line${snapshot.memoryLines === 1 ? "" : "s"}; full memory bodies are recalled only when relevant to the prompt.`,
+		`  MEMORY.md index: ${snapshot.memoryLines} line${snapshot.memoryLines === 1 ? "" : "s"} (${snapshot.memoryBytes.toLocaleString()} bytes) injected at launch.`,
 	);
+	if (snapshot.memoryRecords.length === 0) {
+		lines.push("  Available memory files: none");
+	} else {
+		lines.push(
+			`  Available memory files: ${snapshot.memoryRecords.length} (${memoryTypeSummary(snapshot.memoryRecords) || "uncategorized"})`,
+		);
+		for (const record of snapshot.memoryRecords.slice(0, 6)) lines.push(`    ${formatMemoryRecordLine(record)}`);
+		if (snapshot.memoryRecords.length > 6) lines.push(`    ...and ${snapshot.memoryRecords.length - 6} more`);
+	}
+	if (!snapshot.latestUserPrompt) {
+		lines.push("  Matching latest prompt: none (no user prompt in agent context yet)");
+	} else if (snapshot.relevantMemories.length === 0) {
+		lines.push("  Matching latest prompt: none; full memory bodies would not be recalled for the current prompt.");
+	} else {
+		lines.push("  Matching latest prompt (would be recalled on the next model turn):");
+		for (const match of snapshot.relevantMemories) lines.push(`    ${formatRelevantMemoryLine(match)}`);
+	}
+	if (snapshot.retainedMemoryReminders.length === 0) {
+		lines.push("  Memory reminder messages retained: none detected; prompt-time reminders are usually transient.");
+	} else {
+		lines.push("  Memory reminder messages retained in transcript:");
+		for (const reminder of snapshot.retainedMemoryReminders.slice(0, 6)) {
+			lines.push(
+				`    ${reminder.filename} [${reminder.type || "unknown"}; source: ${truncateOneLine(reminder.source || "unknown", 54)}]`,
+			);
+		}
+		if (snapshot.retainedMemoryReminders.length > 6) {
+			lines.push(`    ...and ${snapshot.retainedMemoryReminders.length - 6} more`);
+		}
+	}
 	lines.push("");
 	lines.push("Compaction:");
 	if (snapshot.lastSummary) {
@@ -241,6 +275,10 @@ function contextSnapshot(ctx: ContextCommandContext) {
 	const memoryIndex = ctx.bundle.memory.index();
 	const memoryLines = memoryIndex ? memoryIndex.split("\n").filter((line) => line.trim()).length : 0;
 	const memoryBytes = Buffer.byteLength(memoryIndex, "utf8");
+	const memoryRecords = ctx.bundle.memory.list();
+	const latestUserPrompt = latestRealUserMessageText(internal);
+	const relevantMemories = latestUserPrompt ? findRelevantMemories(ctx.bundle.memory, latestUserPrompt) : [];
+	const retainedMemoryReminders = detectMemoryReminders(internal);
 	const tools = Array.from(ctx.state.tools.values());
 	const toolErrors = tools.filter((t) => t.status === "error").length;
 	const toolRunning = tools.filter((t) => t.status === "running").length;
@@ -258,6 +296,10 @@ function contextSnapshot(ctx: ContextCommandContext) {
 		openTasks,
 		memoryLines,
 		memoryBytes,
+		memoryRecords,
+		latestUserPrompt,
+		relevantMemories,
+		retainedMemoryReminders,
 		tools,
 		toolErrors,
 		toolRunning,
@@ -301,6 +343,49 @@ function summarizeTasks(tasks: readonly { status: string }[]): {
 		open: tasks.filter((t) => t.status === "pending" || t.status === "in_progress").length,
 		cancelled: tasks.filter((t) => t.status === "cancelled").length,
 	};
+}
+
+function formatMemorySummary(snapshot: ReturnType<typeof contextSnapshot>): string {
+	const index = `${snapshot.memoryLines} MEMORY.md index line${snapshot.memoryLines === 1 ? "" : "s"} (${snapshot.memoryBytes.toLocaleString()} bytes)`;
+	const files = `${snapshot.memoryRecords.length} memory file${snapshot.memoryRecords.length === 1 ? "" : "s"}`;
+	const types = memoryTypeSummary(snapshot.memoryRecords);
+	const parts = [index, types ? `${files} (${types})` : files];
+	if (snapshot.relevantMemories.length > 0) {
+		parts.push(
+			`${snapshot.relevantMemories.length} matching latest prompt${snapshot.relevantMemories.length === 1 ? "" : "s"}`,
+		);
+	}
+	if (snapshot.retainedMemoryReminders.length > 0) {
+		parts.push(
+			`${snapshot.retainedMemoryReminders.length} reminder file${snapshot.retainedMemoryReminders.length === 1 ? "" : "s"} retained`,
+		);
+	}
+	return parts.join(", ");
+}
+
+function memoryTypeSummary(records: readonly MemoryRecord[]): string {
+	const counts = new Map<string, number>();
+	for (const record of records) counts.set(record.type, (counts.get(record.type) ?? 0) + 1);
+	const order = ["user", "feedback", "project", "reference"];
+	return [...counts.entries()]
+		.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]) || a[0].localeCompare(b[0]))
+		.map(([type, count]) => `${type}:${count}`)
+		.join(", ");
+}
+
+function formatMemoryRecordLine(record: MemoryRecord): string {
+	const stale = isMemoryStale(record) ? "yes" : "no";
+	const label = truncateOneLine(`${record.name} - ${record.description}`, 96);
+	const source = truncateOneLine(record.source, 54);
+	const bodyBytes = Buffer.byteLength(record.body, "utf8").toLocaleString();
+	return `${record.filename} [${record.type}; source: ${source}; updated: ${formatShortDate(record.updatedAt)}; stale: ${stale}] ${label} (${bodyBytes} bytes)`;
+}
+
+function formatRelevantMemoryLine(match: RelevantMemoryMatch): string {
+	const record = match.record;
+	const label = truncateOneLine(record.name, 72);
+	const source = truncateOneLine(record.source, 54);
+	return `${record.filename} score:${match.score} [${record.type}; source: ${source}; stale: ${match.stale ? "yes" : "no"}] ${label}`;
 }
 
 function roleCounts(messages: readonly { role: string }[]): string {
@@ -384,9 +469,9 @@ function contextRisks(snapshot: ReturnType<typeof contextSnapshot>): string[] {
 			"Open task titles persist in the task store, but details buried only in chat can still be summarized.",
 		);
 	}
-	if (snapshot.memoryLines > 0) {
+	if (snapshot.memoryRecords.length > 0) {
 		risks.push(
-			"Only the MEMORY.md index is always present; stale or unmatched memory bodies need an explicit prompt or /memory inspection.",
+			"Memory bodies are selected by latest-prompt relevance; stale or unmatched notes still need explicit /memory inspection.",
 		);
 	}
 	if (snapshot.inlineFiles.length > 0) {
@@ -412,6 +497,40 @@ function detectInlineFiles(messages: readonly ContextMessage[]): string[] {
 	return [...files].filter(Boolean).sort();
 }
 
+interface RetainedMemoryReminder {
+	filename: string;
+	type: string;
+	source: string;
+}
+
+function detectMemoryReminders(messages: readonly ContextMessage[]): RetainedMemoryReminder[] {
+	const reminders = new Map<string, RetainedMemoryReminder>();
+	for (const message of messages) {
+		const text = messageText(message);
+		if (!text.includes("Relevant project memories for this prompt")) continue;
+		for (const match of text.matchAll(/^\s*file:\s*([^;]+);\s*type:\s*([^;]+);\s*source:\s*([^;\n]+)/gm)) {
+			const filename = match[1]?.trim() ?? "";
+			if (!filename) continue;
+			const type = match[2]?.trim() ?? "";
+			const source = match[3]?.trim() ?? "";
+			reminders.set(`${filename}\0${type}\0${source}`, { filename, type, source });
+		}
+	}
+	return [...reminders.values()].sort((a, b) => a.filename.localeCompare(b.filename));
+}
+
+function latestRealUserMessageText(messages: readonly ContextMessage[]): string | null {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message.role !== "user") continue;
+		const text = messageText(message).trim();
+		if (!text || text.startsWith("<system-reminder>")) continue;
+		if (text.startsWith("[Conversation compacted")) continue;
+		return text;
+	}
+	return null;
+}
+
 function formatTaskLine(task: {
 	id?: string;
 	title?: string;
@@ -423,6 +542,11 @@ function formatTaskLine(task: {
 	const owner = task.owner ? ` owner:${task.owner}` : "";
 	const blockers = task.blockedBy && task.blockedBy.length > 0 ? ` blocked_by:${task.blockedBy.join(",")}` : "";
 	return `${task.id ? `${task.id} ` : ""}${title} [${task.status}${owner}${blockers}]`;
+}
+
+function formatShortDate(ms: number): string {
+	const date = new Date(ms);
+	return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "unknown";
 }
 
 function messagePreview(message: ContextMessage, maxChars: number): string {

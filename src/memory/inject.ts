@@ -31,6 +31,12 @@ const STOPWORDS = new Set([
 	"you",
 ]);
 
+export interface RelevantMemoryMatch {
+	record: MemoryRecord;
+	score: number;
+	stale: boolean;
+}
+
 /**
  * Build the MEMORY.md system-prompt addendum. Returns "" when the
  * project has no memories yet — callers concat unconditionally so a
@@ -53,16 +59,8 @@ export function buildRelevantMemoryReminder(
 	query: string,
 	options: { now?: number; max?: number } = {},
 ): string {
-	const queryTokens = tokenize(query);
-	if (queryTokens.size === 0) return "";
 	const now = options.now ?? Date.now();
-	const max = options.max ?? MAX_RELEVANT_MEMORIES;
-	const scored = store
-		.list()
-		.map((record) => ({ record, score: scoreMemory(record, queryTokens) }))
-		.filter((item) => item.score > 0)
-		.sort((a, b) => b.score - a.score || b.record.updatedAt - a.record.updatedAt)
-		.slice(0, max);
+	const scored = findRelevantMemories(store, query, { ...options, now });
 	if (scored.length === 0) return "";
 
 	const lines = [
@@ -77,8 +75,30 @@ export function buildRelevantMemoryReminder(
 	return lines.join("\n");
 }
 
+export function findRelevantMemories(
+	store: MemoryStore,
+	query: string,
+	options: { now?: number; max?: number } = {},
+): RelevantMemoryMatch[] {
+	const queryTokens = tokenize(query);
+	if (queryTokens.size === 0) return [];
+	const now = options.now ?? Date.now();
+	const max = options.max ?? MAX_RELEVANT_MEMORIES;
+	return store
+		.list()
+		.map((record) => ({ record, score: scoreMemory(record, queryTokens) }))
+		.filter((item) => item.score > 0)
+		.sort((a, b) => b.score - a.score || b.record.updatedAt - a.record.updatedAt)
+		.slice(0, max)
+		.map((item) => ({ ...item, stale: isMemoryStale(item.record, now) }));
+}
+
+export function isMemoryStale(record: MemoryRecord, now = Date.now()): boolean {
+	return now - record.updatedAt > STALE_AFTER_MS;
+}
+
 function formatMemory(index: number, record: MemoryRecord, now: number): string {
-	const stale = now - record.updatedAt > STALE_AFTER_MS;
+	const stale = isMemoryStale(record, now);
 	const body = truncate(record.body.trim(), MAX_MEMORY_BODY_CHARS);
 	const lines = [
 		`${index}. ${record.name}`,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { MemoryRecord } from "../../memory/types.js";
 import type { ChatState, ToolExecution } from "../../types.js";
 import type { CommandContext } from "../types.js";
 import { context } from "./info.js";
@@ -14,6 +15,7 @@ const usage = {
 
 function makeCtx(): { ctx: CommandContext; emits: string[] } {
 	const emits: string[] = [];
+	const now = Date.now();
 	const messages = [
 		{ role: "user", content: "please inspect this project" },
 		{
@@ -37,6 +39,28 @@ function makeCtx(): { ctx: CommandContext; emits: string[] } {
 		turnUsage: usage,
 		model: { provider: "faux", id: "test-model", name: "Test Model" },
 	} satisfies ChatState;
+	const memoryRecords: MemoryRecord[] = [
+		{
+			filename: "project_notes.md",
+			name: "Project inspection",
+			description: "Project context workflow",
+			type: "project",
+			source: "local project memory",
+			createdAt: now,
+			body: "When you inspect this project or edit src/app.ts, surface context UX gaps.",
+			updatedAt: now,
+		},
+		{
+			filename: "user_preference.md",
+			name: "User response preference",
+			description: "Final answer style",
+			type: "user",
+			source: "manual note",
+			createdAt: now,
+			body: "Keep launch-readiness summaries concise.",
+			updatedAt: now,
+		},
+	];
 	const ctx = {
 		state,
 		emit: (text: string) => emits.push(text),
@@ -66,7 +90,7 @@ function makeCtx(): { ctx: CommandContext; emits: string[] } {
 					],
 				},
 			},
-			memory: { index: () => "- project fact\n- user preference\n" },
+			memory: { index: () => "- project fact\n- user preference\n", list: () => memoryRecords },
 		},
 	} as unknown as CommandContext;
 	return { ctx, emits };
@@ -87,6 +111,8 @@ describe("/context", () => {
 		expect(emits[0]).toContain("summaries:  1 compaction summary in context");
 		expect(emits[0]).toContain("tasks:      1/3 complete, 1 open, 1 cancelled");
 		expect(emits[0]).toContain("memory:     2 MEMORY.md index lines");
+		expect(emits[0]).toContain("2 memory files (user:1, project:1)");
+		expect(emits[0]).toContain("1 matching latest prompt");
 		expect(emits[0]).toContain("tools:      2 seen, 1 running, 1 error");
 		expect(emits[0]).toContain("last summary: summary");
 		expect(emits[0]).toContain("Largest messages:");
@@ -115,6 +141,12 @@ describe("/context", () => {
 		expect(emits[0]).toContain("Recent messages still in context:");
 		expect(emits[0]).toContain("Open tasks:");
 		expect(emits[0]).toContain("task-2 Explain context pressure [pending blocked_by:task-1]");
+		expect(emits[0]).toContain("Memory:");
+		expect(emits[0]).toContain("Available memory files: 2 (user:1, project:1)");
+		expect(emits[0]).toContain("project_notes.md [project; source: local project memory");
+		expect(emits[0]).toContain("Matching latest prompt (would be recalled on the next model turn):");
+		expect(emits[0]).toContain("project_notes.md score:");
+		expect(emits[0]).toContain("Memory reminder messages retained: none detected");
 		expect(emits[0]).toContain("Last summary: summary");
 		expect(emits[0]).toContain("Attached/imported files detected:");
 		expect(emits[0]).toContain("src/app.ts");
