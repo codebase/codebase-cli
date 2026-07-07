@@ -27,6 +27,9 @@
  *   # Custom CLI path (default: dist/cli.js, falls back to bin/codebase)
  *   node bench/run.mjs --cli /usr/local/bin/codebase --scenario all
  *
+ *   # Public receipt sweep: requires reliable-mode task + verification evidence
+ *   node bench/run.mjs --scenario all --reliable true
+ *
  * Requires an LLM API key in env (ANTHROPIC_API_KEY, OPENAI_API_KEY,
  * etc.) OR a saved credential at ~/.codebase/credentials.json. The
  * runner does not log in for you — that's a one-time setup step.
@@ -65,6 +68,7 @@ const sweepDir = join(RESULTS_DIR, sweepId);
 const timeoutMs = positiveInt(args.timeout, 5 * 60_000);
 const keepTmp = args["keep-tmp"] === "true" || args["keep-tmp"] === "1";
 const isolateHome = args["isolate-home"] !== "false";
+const reliable = args.reliable === "true" || args.reliable === "1";
 
 mkdirSync(sweepDir, { recursive: true });
 const jsonlPath = join(sweepDir, "runs.jsonl");
@@ -81,6 +85,7 @@ console.log(`bench sweep ${sweepId}`);
 console.log(`  scenarios: ${scenarios.join(", ")}`);
 console.log(`  runs each: ${runs}`);
 console.log(`  cli:       ${cliPath}`);
+console.log(`  reliable: ${reliable ? "yes" : "no"}`);
 console.log(`  results:   ${jsonlPath}`);
 console.log("");
 
@@ -167,6 +172,8 @@ async function runOne(scenarioName, runIndex) {
 		messageCount: agentJson?.messageCount,
 		toolCalls: countToolCalls(agentJson),
 		toolNames: collectToolNames(agentJson),
+		receipt: agentJson?.receipt,
+		receiptPassed: agentJson?.receipt?.ok,
 		finalText: agentJson?.finalText?.slice(0, 1000),
 		agentParseError,
 		// verify
@@ -227,15 +234,14 @@ function invokeCli({ tmpProject, tmpHome, prompt }) {
 		// at the terminal to answer permission prompts, and without it the
 		// agent hangs the moment a write tool fires. The harness is the
 		// trust boundary; verify.sh is what catches misuse.
-		const child = spawn(
-			process.execPath,
-			[cliPath, "run", "--output", "json", "--auto-approve", prompt],
-			{
-				cwd: tmpProject,
-				env,
-				stdio: ["ignore", "pipe", "pipe"],
-			},
-		);
+		const cliArgs = [cliPath, "run", "--output", "json", "--auto-approve"];
+		if (reliable) cliArgs.push("--reliable");
+		cliArgs.push(prompt);
+		const child = spawn(process.execPath, cliArgs, {
+			cwd: tmpProject,
+			env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 
 		let stdout = "";
 		let stderr = "";
@@ -342,7 +348,9 @@ function printSummary(r) {
 	const tools = r.toolNames?.length ? ` tools=${r.toolNames.length} (${[...new Set(r.toolNames)].join(",")})` : "";
 	const cost = r.usage?.cost?.total != null ? ` $${r.usage.cost.total.toFixed(4)}` : "";
 	const elapsed = ` ${(r.elapsedMs / 1000).toFixed(1)}s`;
-	console.log(`  [${r.scenario} #${r.run}] ${status}${elapsed}${cost}${tools}`);
+	const receipt =
+		r.receiptPassed === true ? " receipt=ok" : r.receiptPassed === false ? " receipt=fail" : "";
+	console.log(`  [${r.scenario} #${r.run}] ${status}${elapsed}${cost}${tools}${receipt}`);
 }
 
 function buildSweepId() {

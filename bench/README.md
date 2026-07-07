@@ -20,6 +20,8 @@ Per-run metrics captured into `bench/results/<sweep>/runs.jsonl`:
 - **Cost**: `$total` from pi-ai's per-message Usage envelope
 - **Tool calls**: count + the list of tool names used
 - **Model + source** (proxy / explicit env / auto / byok)
+- **Reliability receipt** when run with `--reliable true`: task completion,
+  verification evidence, failed tool count, checkpoints, and failure reasons
 - **Final assistant text** (truncated to 1KB for readability)
 - **Verify exit code + last 500 bytes of stderr** when it failed
 - **Verify stdout** tail when scenario verifiers emit extra diagnostics
@@ -77,6 +79,12 @@ All scenarios, N=3 each:
 node bench/run.mjs --scenario all --runs 3
 ```
 
+Public receipt sweep (requires task lifecycle + passing verification evidence):
+
+```sh
+node bench/run.mjs --scenario all --runs 3 --reliable true
+```
+
 Pin a model (overrides auto-detect):
 
 ```sh
@@ -129,6 +137,11 @@ node bench/aggregate.mjs sweep-foo \
 The aggregator computes per-scenario means over the **passing runs
 only** so a single failure doesn't poison the timing data; outcome
 counts are reported separately.
+
+When a sweep includes reliable-mode receipts, the report also includes a
+receipt scorecard: receipt pass count, task lifecycle pass count, verification
+count, average checkpoints, and common failure reasons. This is the
+launch-facing table to publish when comparing agent builds.
 
 ## Add a new scenario
 

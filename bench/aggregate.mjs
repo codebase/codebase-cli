@@ -73,6 +73,8 @@ function renderReport(sweeps) {
 		lines.push("");
 		lines.push(...renderOutcomesTable(sweep.runs));
 		lines.push("");
+		lines.push(...renderReceiptScorecard(sweep.runs));
+		lines.push("");
 		lines.push(...renderPerScenarioTable(sweep.runs));
 		lines.push("");
 		lines.push(...renderToolUsage(sweep.runs));
@@ -95,6 +97,40 @@ function renderOutcomesTable(runs) {
 		const failed = items.filter((r) => !r.harnessError && (!r.ok || !r.verifyPassed)).length;
 		const errored = items.filter((r) => r.harnessError).length;
 		out.push(`| ${scenario} | ${items.length} | ${passed} | ${failed} | ${errored} |`);
+	}
+	return out;
+}
+
+function renderReceiptScorecard(runs) {
+	const withReceipt = runs.filter((r) => r.receipt);
+	if (withReceipt.length === 0) {
+		return [
+			"### Reliability receipts",
+			"",
+			"No reliable-mode receipts in this sweep. Run `node bench/run.mjs --scenario all --reliable true` to collect them.",
+		];
+	}
+	const grouped = groupBy(runs, (r) => r.scenario);
+	const out = [
+		"### Reliability receipts",
+		"",
+		"| scenario | n | receipt ok | task ok | verified | avg verifies | avg checkpoints | common failures |",
+		"|---|---|---|---|---|---|---|---|",
+	];
+	for (const [scenario, items] of grouped) {
+		const receipts = items.map((r) => r.receipt).filter(Boolean);
+		if (receipts.length === 0) {
+			out.push(`| ${scenario} | ${items.length} | — | — | — | — | — | — |`);
+			continue;
+		}
+		const receiptOk = receipts.filter((r) => r.ok).length;
+		const taskOk = receipts.filter((r) => (r.summary?.completedTasks ?? 0) > 0 && (r.summary?.openTasks ?? 0) === 0).length;
+		const verified = receipts.filter((r) => (r.summary?.verificationCount ?? 0) > 0).length;
+		const avgVerifies = mean(receipts.map((r) => r.summary?.verificationCount ?? 0));
+		const avgCheckpoints = mean(receipts.map((r) => r.summary?.checkpoints ?? 0));
+		out.push(
+			`| ${scenario} | ${receipts.length}/${items.length} | ${receiptOk} | ${taskOk} | ${verified} | ${avgVerifies.toFixed(2)} | ${avgCheckpoints.toFixed(2)} | ${commonFailures(receipts)} |`,
+		);
 	}
 	return out;
 }
@@ -124,6 +160,21 @@ function renderPerScenarioTable(runs) {
 		);
 	}
 	return out;
+}
+
+function commonFailures(receipts) {
+	const counts = new Map();
+	for (const receipt of receipts) {
+		for (const failure of receipt.failures ?? []) {
+			counts.set(failure, (counts.get(failure) ?? 0) + 1);
+		}
+	}
+	if (counts.size === 0) return "—";
+	return [...counts.entries()]
+		.sort((a, b) => b[1] - a[1])
+		.slice(0, 2)
+		.map(([failure, count]) => `${escapePipes(failure)} (${count})`)
+		.join("<br>");
 }
 
 function renderToolUsage(runs) {
@@ -192,6 +243,10 @@ function mean(arr) {
 function fmt(n) {
 	if (!Number.isFinite(n)) return "—";
 	return Math.round(n).toLocaleString();
+}
+
+function escapePipes(value) {
+	return String(value).replaceAll("|", "\\|");
 }
 
 function pctDelta(a, b) {
