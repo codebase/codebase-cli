@@ -48,7 +48,7 @@ describe("runAuthSubcommand", () => {
 	it("status with credentials prints the source + scopes", async () => {
 		store.save({
 			accessToken: "tok",
-			scopes: ["inference", "credits"],
+			scopes: ["inference", "credits", "builds:read", "builds:write"],
 			source: "codebase",
 			email: "user@example.com",
 			expiresAt: Date.now() + 60_000,
@@ -57,7 +57,36 @@ describe("runAuthSubcommand", () => {
 		expect(code).toBe(0);
 		expect(stdout.join("\n")).toMatch(/signed in via codebase/);
 		expect(stdout.join("\n")).toMatch(/user@example.com/);
-		expect(stdout.join("\n")).toMatch(/inference credits/);
+		expect(stdout.join("\n")).toMatch(/inference credits builds:read builds:write/);
+		expect(stdout.join("\n")).toMatch(/web build: ready/);
+	});
+
+	it("status explains older OAuth tokens that lack web build scopes", async () => {
+		store.save({
+			accessToken: "tok",
+			scopes: ["inference", "projects", "credits"],
+			source: "codebase",
+			expiresAt: Date.now() + 60_000,
+		});
+		const code = await run(["auth", "status"]);
+		expect(code).toBe(0);
+		const out = stdout.join("\n");
+		expect(out).toContain("web build: missing build scopes: builds:read builds:write");
+		expect(out).toContain("fix: run `codebase auth login`");
+	});
+
+	it("status explains that BYOK cannot start web builds", async () => {
+		store.save({
+			accessToken: "sk-ant-fake",
+			scopes: [],
+			source: "byok",
+			provider: "anthropic",
+		});
+		const code = await run(["auth", "status"]);
+		expect(code).toBe(0);
+		const out = stdout.join("\n");
+		expect(out).toContain("web build: requires codebase.design OAuth");
+		expect(out).toContain("fix: run `codebase auth login` to use web builds");
 	});
 
 	it("logout clears credentials", async () => {

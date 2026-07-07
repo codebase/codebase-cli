@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { CredentialsStore } from "../auth/credentials.js";
+import { webBuildScopeReadiness } from "../auth/scopes.js";
 import { VERSION } from "../version.js";
 
 export interface DoctorReportOptions {
@@ -51,6 +52,14 @@ export function buildDoctorReport(options: DoctorReportOptions): string[] {
 	} else {
 		const until = creds.expiresAt ? ` until ${new Date(creds.expiresAt).toLocaleString()}` : "";
 		lines.push(check(true, `signed in (${creds.source})${until}`, ""));
+		const webBuild = webBuildScopeReadiness(creds);
+		if (webBuild.status === "ready") {
+			lines.push(check(true, "web build OAuth scopes present", ""));
+		} else if (webBuild.status === "missing-scopes") {
+			lines.push(check(false, "", `web build ${webBuild.message}; fix: ${webBuild.fix}`));
+		} else {
+			lines.push(info(`web build: ${webBuild.message}; ${webBuild.fix}`));
+		}
 	}
 
 	if (options.model) {

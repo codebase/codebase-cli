@@ -1,8 +1,8 @@
 import { CredentialsStore } from "./credentials.js";
 import { type OAuthConfig, refreshAccessToken, revokeToken, runOAuthLogin } from "./flow.js";
+import { DEFAULT_CODEBASE_SCOPES, parseScopeList, webBuildScopeReadiness } from "./scopes.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
-const DEFAULT_CODEBASE_SCOPES = "inference projects credits builds:read builds:write";
 
 /**
  * Resolves the OAuth config the CLI uses against the codebase web app.
@@ -29,7 +29,7 @@ export function defaultOAuthConfig(env: NodeJS.ProcessEnv = process.env): OAuthC
 		refreshUrl: `${base}/api/oauth/token`,
 		revokeUrl: `${base}/api/oauth/revoke`,
 		clientId: env.CODEBASE_CLIENT_ID ?? "codebase-cli",
-		scopes: (env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES).split(/\s+/).filter(Boolean),
+		scopes: parseScopeList(env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES.join(" ")),
 	};
 }
 
@@ -109,6 +109,9 @@ function statusCmd(store: CredentialsStore, out: (m: string) => void): number {
 	if (creds.email) out(`  email:  ${creds.email}`);
 	if (creds.userId) out(`  userId: ${creds.userId}`);
 	out(`  scopes: ${creds.scopes.join(" ")}`);
+	const webBuild = webBuildScopeReadiness(creds);
+	out(`  web build: ${webBuild.message}`);
+	if (webBuild.status !== "ready") out(`             fix: ${webBuild.fix}`);
 	out(`  ${expiry}`);
 	out(`  file:   ${store.filePath} (mode ${(store.mode() ?? 0).toString(8)})`);
 	return 0;

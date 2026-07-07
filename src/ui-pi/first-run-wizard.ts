@@ -2,11 +2,11 @@ import { type Component, Container, Input, SelectList, Text, type TUI } from "@e
 import { validateByokApiKey } from "../auth/byok-key.js";
 import { CredentialsStore } from "../auth/credentials.js";
 import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
+import { DEFAULT_CODEBASE_SCOPES, parseScopeList } from "../auth/scopes.js";
 import { type DiscoveredServer, formatContextWindow, SCAN_PORTS, scanLocalEndpoints } from "../config/local-llm.js";
 import { ansi, selectListTheme } from "./theme.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
-const DEFAULT_CODEBASE_SCOPES = "inference projects credits builds:read builds:write";
 
 interface ProviderChoice {
 	id: string;
@@ -507,6 +507,6 @@ function oauthConfigForBase(base: string): OAuthConfig {
 		refreshUrl: `${trimmed}/api/oauth/token`,
 		revokeUrl: `${trimmed}/api/oauth/revoke`,
 		clientId: process.env.CODEBASE_CLIENT_ID ?? "codebase-cli",
-		scopes: (process.env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES).split(/\s+/).filter(Boolean),
+		scopes: parseScopeList(process.env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES.join(" ")),
 	};
 }

@@ -44,7 +44,7 @@ describe("buildDoctorReport", () => {
 		writeFileSync(join(cwd, ".codebase", "config.json"), "{nope");
 		new CredentialsStore({ dataRoot }).save({
 			accessToken: "token",
-			scopes: ["inference"],
+			scopes: ["inference", "projects", "credits", "builds:read", "builds:write"],
 			source: "codebase",
 			expiresAt: Date.now() + 3_600_000,
 		});
@@ -61,6 +61,7 @@ describe("buildDoctorReport", () => {
 		}).join("\n");
 
 		expect(out).toContain("✓ signed in (codebase)");
+		expect(out).toContain("✓ web build OAuth scopes present");
 		expect(out).toContain("model: Codebase Auto (codebase/d4f) via proxy");
 		expect(out).toContain("config ");
 		expect(out).toContain("is not valid JSON");
@@ -68,5 +69,25 @@ describe("buildDoctorReport", () => {
 		expect(out).toContain("✓ web_search configured");
 		expect(out).toContain("sessions for this directory: 3");
 		expect(out).toContain("subagent types: general");
+	});
+
+	it("reports missing web build scopes on older OAuth tokens", () => {
+		new CredentialsStore({ dataRoot }).save({
+			accessToken: "token",
+			scopes: ["inference", "projects", "credits"],
+			source: "codebase",
+			expiresAt: Date.now() + 3_600_000,
+		});
+
+		const out = buildDoctorReport({
+			cwd,
+			dataRoot,
+			env: {},
+			version: "test-version",
+			nodeVersion: "20.1.0",
+		}).join("\n");
+
+		expect(out).toContain("✗ web build missing build scopes: builds:read builds:write");
+		expect(out).toContain("fix: run `codebase auth login`");
 	});
 });
