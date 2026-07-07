@@ -97,7 +97,9 @@ export interface PendingPermission {
 	id: string;
 	tool: string;
 	summary: string;
+	reason?: string;
 	detail?: string;
+	trustScope?: string;
 	risk: "low" | "medium" | "high";
 }
 

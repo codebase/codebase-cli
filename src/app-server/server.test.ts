@@ -1,6 +1,6 @@
 import { PassThrough } from "node:stream";
 import type { Model } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAppServer } from "./server.js";
 
@@ -24,7 +24,7 @@ interface Harness {
 	close: () => Promise<number>;
 }
 
-function makeHarness(opts: { model: Model<string> }): Harness {
+function makeHarness(opts: { model: Model<string>; autoApprove?: boolean }): Harness {
 	const stdin = new PassThrough();
 	const stdout = new PassThrough();
 	const stderr = new PassThrough();
@@ -50,7 +50,7 @@ function makeHarness(opts: { model: Model<string> }): Harness {
 		stdin,
 		stdout,
 		stderr,
-		autoApprove: true,
+		autoApprove: opts.autoApprove ?? true,
 		configOverride: { model: opts.model, apiKey: "faux-key", source: "byok" },
 	});
 
@@ -187,6 +187,36 @@ describe("runAppServer", () => {
 		const resp = await h.waitFor((m) => m.type === "response" && m.id === "p2");
 		expect(resp.success).toBe(false);
 		expect(resp.error).toMatch(/in flight/i);
+		await h.close();
+	});
+
+	it("forwards permission reason and trust scope to app clients", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("shell", { command: 'git commit -m "bridge"' }, { id: "call-1" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Permission denied, so I stopped."),
+		]);
+		const h = makeHarness({ model, autoApprove: false });
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
+		h.send({ id: "init", type: "initialize" });
+		await h.waitFor((m) => m.type === "response" && m.id === "init");
+		h.send({ id: "p1", type: "prompt", message: "commit the change" });
+		await h.waitFor((m) => m.type === "response" && m.id === "p1");
+
+		const event = await h.waitFor(
+			(m) => m.type === "event" && (m.event as { type: string }).type === "permission_request",
+			5000,
+		);
+		const request = (event.event as { request: Record<string, unknown> }).request;
+		expect(request.tool).toBe("shell");
+		expect(request.reason).toContain("not in the read-only allowlist");
+		expect(request.trustScope).toBe("shell:git commit*");
+
+		h.send({ id: "perm", type: "permission_respond", requestId: request.id, choice: "deny" });
+		const response = await h.waitFor((m) => m.type === "response" && m.id === "perm");
+		expect(response.success).toBe(true);
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "permission_cleared");
 		await h.close();
 	});
 

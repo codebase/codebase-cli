@@ -131,7 +131,9 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 			id: req.id,
 			tool: req.tool,
 			summary: req.summary,
+			reason: req.reason,
 			detail: req.detail,
+			trustScope: req.trustScope,
 			risk: req.risk,
 		};
 		status = "awaiting-permission";
@@ -211,12 +213,25 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 					return buildErrorResponse(c.id, c.type, "a prompt is already in flight — abort first");
 				}
 				// Fire-and-forget; the response just acknowledges receipt.
-				// The real work surfaces via the agent event stream. Pi's
-				// `prompt(text, images?)` overload handles multimodal input
-				// transparently — base64-encoded image bytes plus mimeType.
+				// The real work surfaces via the agent event stream. Route
+				// through submitUserPrompt so prompt hooks and user-facing
+				// policy apply to web/IDE clients too.
 				const images = c.images && c.images.length > 0 ? [...c.images] : undefined;
-				inFlightPrompt = bundle.agent
-					.prompt(c.message, images)
+				inFlightPrompt = bundle
+					.submitUserPrompt(c.message, images)
+					.then((result) => {
+						if (!result.submitted) {
+							send(
+								buildErrorResponse(
+									undefined,
+									"prompt",
+									`prompt blocked: ${result.reason ?? "refused by hook"}`,
+								),
+							);
+						} else if (result.error) {
+							send(buildErrorResponse(undefined, "prompt", result.error));
+						}
+					})
 					.catch((err: unknown) => {
 						send(buildErrorResponse(undefined, "prompt", err instanceof Error ? err.message : String(err)));
 					})
