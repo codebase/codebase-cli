@@ -41,10 +41,11 @@ codebase auto "build a small dashboard and run the tests"
 codebase auto --reliable "fix the auth refresh race and prove it"
 ```
 
-`--reliable` fails the run unless the agent keeps a task list, completes the
-tasks, and records a passing verification command. With `--output json`, the
-result includes a receipt: tasks, tool calls, verification evidence, usage, and
-rewind checkpoints.
+`--reliable` fails the run unless the agent keeps a task list, moves completed
+tasks through `in_progress` without overlapping active work, and records a
+passing verification command. With `--output json`, the result includes a
+receipt: task lifecycle, tool calls, verification evidence, usage, and rewind
+checkpoints.
 
 ## Pick your LLM
 

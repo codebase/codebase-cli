@@ -235,6 +235,101 @@ describe("runHeadless", () => {
 		expect(parsed.receipt.failures).toContain("no successful verification command was recorded");
 	});
 
+	it("reliable json mode fails when completed tasks skip in_progress", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-lifecycle-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Do work" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[]; taskLifecycle: Array<{ id: string; transitions: unknown[] }> };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("completed task skipped in_progress: task-1");
+		expect(parsed.receipt.taskLifecycle[0]).toMatchObject({
+			id: "task-1",
+			transitions: [{ status: "pending" }, { status: "completed" }],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when active tasks overlap", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-overlap-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage(
+				[fauxToolCall("create_task", { title: "Do first" }), fauxToolCall("create_task", { title: "Do second" })],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-2", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage(
+				[
+					fauxToolCall("update_task", { id: "task-1", status: "completed" }),
+					fauxToolCall("update_task", { id: "task-2", status: "completed" }),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[] };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("multiple tasks were in_progress at once: task-1, task-2");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
 	it("json mode exits non-zero when the assistant turn ends with a provider error", async () => {
 		faux.setResponses([
 			fauxAssistantMessage([], {

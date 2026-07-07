@@ -1,6 +1,6 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { CheckpointEntry } from "../checkpoint/store.js";
-import type { Task } from "../tools/task-store.js";
+import type { Task, TaskStatus } from "../tools/task-store.js";
 
 export const RELIABLE_MODE_PROMPT = `# Reliable mode
 
@@ -31,6 +31,16 @@ export interface VerificationEvidence {
 	durationMs?: number;
 }
 
+export interface TaskLifecycleEvidence {
+	id: string;
+	title?: string;
+	transitions: Array<{
+		toolCallId: string;
+		status: TaskStatus;
+		at: number;
+	}>;
+}
+
 export interface ReliabilityReceipt {
 	mode: "reliable";
 	ok: boolean;
@@ -46,6 +56,7 @@ export interface ReliabilityReceipt {
 		durationMs: number;
 	};
 	tasks: Task[];
+	taskLifecycle: TaskLifecycleEvidence[];
 	tools: ReceiptToolCall[];
 	verification: VerificationEvidence[];
 	checkpoints: Pick<CheckpointEntry, "seq" | "display" | "tool" | "existed" | "tooLarge" | "timestamp">[];
@@ -95,6 +106,7 @@ export class ReliabilityRecorder {
 		const completedTasks = tasks.filter((t) => t.status === "completed");
 		const cancelledTasks = tasks.filter((t) => t.status === "cancelled");
 		const verification = collectVerification(tools);
+		const lifecycle = analyzeTaskLifecycle(tools);
 		const failures: string[] = [];
 		const warnings: string[] = [];
 
@@ -102,6 +114,14 @@ export class ReliabilityRecorder {
 		if (tasks.length > 0 && completedTasks.length === 0) failures.push("no tasks were completed");
 		if (openTasks.length > 0) failures.push(`open tasks remain: ${openTasks.map((t) => t.id).join(", ")}`);
 		if (verification.length === 0) failures.push("no successful verification command was recorded");
+		if (lifecycle.completedWithoutInProgress.length > 0) {
+			failures.push(
+				`completed task${lifecycle.completedWithoutInProgress.length === 1 ? "" : "s"} skipped in_progress: ${lifecycle.completedWithoutInProgress.join(", ")}`,
+			);
+		}
+		if (lifecycle.activeOverlaps.length > 0) {
+			failures.push(`multiple tasks were in_progress at once: ${lifecycle.activeOverlaps[0]?.join(", ")}`);
+		}
 		if (failedToolCalls > 0)
 			warnings.push(`${failedToolCalls} tool call${failedToolCalls === 1 ? "" : "s"} failed before the run ended`);
 
@@ -120,6 +140,7 @@ export class ReliabilityRecorder {
 				durationMs: input.durationMs,
 			},
 			tasks,
+			taskLifecycle: lifecycle.tasks,
 			tools,
 			verification,
 			checkpoints: input.checkpoints.map((entry) => ({
@@ -134,6 +155,77 @@ export class ReliabilityRecorder {
 			warnings,
 		};
 	}
+}
+
+interface TaskLifecycleAnalysis {
+	tasks: TaskLifecycleEvidence[];
+	completedWithoutInProgress: string[];
+	activeOverlaps: string[][];
+}
+
+function analyzeTaskLifecycle(tools: ReceiptToolCall[]): TaskLifecycleAnalysis {
+	const byId = new Map<string, TaskLifecycleEvidence>();
+	const statuses = new Map<string, TaskStatus>();
+	const sawInProgress = new Set<string>();
+	const completedWithoutInProgress: string[] = [];
+	const active = new Set<string>();
+	const activeOverlaps: string[][] = [];
+
+	for (const tool of [...tools].sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt))) {
+		const status = taskStatusFromTool(tool);
+		if (!status) continue;
+		const id = taskIdFromTool(tool);
+		if (!id) continue;
+		const evidence = byId.get(id) ?? {
+			id,
+			title: typeof tool.details?.title === "string" ? tool.details.title : undefined,
+			transitions: [],
+		};
+		if (!evidence.title && typeof tool.details?.title === "string") evidence.title = tool.details.title;
+		evidence.transitions.push({ toolCallId: tool.id, status, at: tool.endedAt ?? tool.startedAt });
+		byId.set(id, evidence);
+
+		if (statuses.get(id) === status && tool.name !== "create_task") continue;
+		statuses.set(id, status);
+		if (status === "in_progress") {
+			sawInProgress.add(id);
+			const overlap = [...active].filter((activeId) => activeId !== id);
+			if (overlap.length > 0) activeOverlaps.push([...overlap, id]);
+			active.add(id);
+		} else {
+			active.delete(id);
+			if (status === "completed" && !sawInProgress.has(id)) completedWithoutInProgress.push(id);
+		}
+	}
+
+	return {
+		tasks: [...byId.values()].sort((a, b) => taskNumber(a.id) - taskNumber(b.id)),
+		completedWithoutInProgress: [...new Set(completedWithoutInProgress)],
+		activeOverlaps: activeOverlaps.map((ids) => [...new Set(ids)]),
+	};
+}
+
+function taskStatusFromTool(tool: ReceiptToolCall): TaskStatus | undefined {
+	if (tool.name === "create_task") return "pending";
+	if (tool.name !== "update_task") return undefined;
+	const requested = tool.args.status;
+	return isTaskStatus(requested) ? requested : undefined;
+}
+
+function taskIdFromTool(tool: ReceiptToolCall): string | undefined {
+	const detailId = tool.details?.id;
+	if (typeof detailId === "string" && detailId.trim()) return detailId;
+	const argId = tool.args.id;
+	return typeof argId === "string" && argId.trim() ? argId : undefined;
+}
+
+function isTaskStatus(value: unknown): value is TaskStatus {
+	return value === "pending" || value === "in_progress" || value === "completed" || value === "cancelled";
+}
+
+function taskNumber(id: string): number {
+	const match = /^task-(\d+)$/.exec(id);
+	return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 export function formatReliabilityFailure(receipt: ReliabilityReceipt): string {
