@@ -34,7 +34,7 @@
  * etc.) OR a saved credential at ~/.codebase/credentials.json. The
  * runner does not log in for you — that's a one-time setup step.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
 	copyFileSync,
 	cpSync,
@@ -69,6 +69,7 @@ const timeoutMs = positiveInt(args.timeout, 5 * 60_000);
 const keepTmp = args["keep-tmp"] === "true" || args["keep-tmp"] === "1";
 const isolateHome = args["isolate-home"] !== "false";
 const reliable = args.reliable === "true" || args.reliable === "1";
+const baseBenchMetadata = buildBaseBenchMetadata();
 
 mkdirSync(sweepDir, { recursive: true });
 const jsonlPath = join(sweepDir, "runs.jsonl");
@@ -85,6 +86,10 @@ console.log(`bench sweep ${sweepId}`);
 console.log(`  scenarios: ${scenarios.join(", ")}`);
 console.log(`  runs each: ${runs}`);
 console.log(`  cli:       ${cliPath}`);
+console.log(`  cli ver:   ${baseBenchMetadata.cliVersion ?? "unknown"}`);
+console.log(
+	`  commit:    ${baseBenchMetadata.repoCommit ?? "unknown"}${baseBenchMetadata.repoDirty ? " (dirty)" : ""}`,
+);
 console.log(`  reliable: ${reliable ? "yes" : "no"}`);
 console.log(`  results:   ${jsonlPath}`);
 console.log("");
@@ -130,6 +135,7 @@ async function runOne(scenarioName, runIndex) {
 	}
 
 	const startedAt = Date.now();
+	const startedAtIso = new Date(startedAt).toISOString();
 	const cliResult = await invokeCli({ tmpProject, tmpHome, prompt });
 	const elapsedMs = Date.now() - startedAt;
 
@@ -161,6 +167,7 @@ async function runOne(scenarioName, runIndex) {
 		scenario: scenarioName,
 		run: runIndex,
 		sweepId,
+		bench: runBenchMetadata(scenarioName, runIndex, startedAtIso, new Date().toISOString()),
 		model: agentJson?.model ?? { provider: "?", id: modelOverride ?? "?", name: "?" },
 		source: agentJson?.source,
 		ok: cliResult.exitCode === 0,
@@ -206,10 +213,12 @@ async function runOne(scenarioName, runIndex) {
 }
 
 function errorResult(scenarioName, runIndex, message) {
+	const now = new Date().toISOString();
 	return {
 		scenario: scenarioName,
 		run: runIndex,
 		sweepId,
+		bench: runBenchMetadata(scenarioName, runIndex, now, now),
 		ok: false,
 		exitCode: -1,
 		elapsedMs: 0,
@@ -388,6 +397,54 @@ function prepareBenchHome(tmpHome) {
 			// Env-var API keys still work when this copy fails.
 		}
 	}
+}
+
+function buildBaseBenchMetadata() {
+	const gitStatus = gitText(["status", "--porcelain"]);
+	return {
+		schemaVersion: 1,
+		runner: "bench/run.mjs",
+		cliPath,
+		cliVersion: cliVersion(cliPath),
+		reliable,
+		isolateHome,
+		timeoutMs,
+		nodeVersion: process.version,
+		repoRoot: REPO_ROOT,
+		repoCommit: gitText(["rev-parse", "--short=12", "HEAD"]),
+		repoDirty: gitStatus == null ? null : gitStatus.trim().length > 0,
+	};
+}
+
+function runBenchMetadata(scenarioName, runIndex, startedAt, endedAt) {
+	return {
+		...baseBenchMetadata,
+		scenario: scenarioName,
+		run: runIndex,
+		startedAt,
+		endedAt,
+	};
+}
+
+function cliVersion(path) {
+	const result = spawnSync(process.execPath, [path, "--version"], {
+		cwd: REPO_ROOT,
+		encoding: "utf8",
+		timeout: 10_000,
+	});
+	if (result.status !== 0) return null;
+	const version = result.stdout.trim();
+	return version || null;
+}
+
+function gitText(args) {
+	const result = spawnSync("git", args, {
+		cwd: REPO_ROOT,
+		encoding: "utf8",
+		timeout: 10_000,
+	});
+	if (result.status !== 0) return null;
+	return result.stdout.trim();
 }
 
 function parseArgs(argv) {

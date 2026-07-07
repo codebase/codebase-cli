@@ -150,8 +150,10 @@ node bench/aggregate.mjs "$sweep_id" \
 Verify the markdown report includes Methodology, Claim-ready summary,
 Public scorecard, Reliability receipts, task fidelity, memory hygiene,
 p50 pass time, average pass cost, task verified, final proof, and fresh
-verified columns. Verify the JSON scorecard exposes the same values for
-the web app or docs pipeline without scraping markdown.
+verified columns. Methodology must include CLI build/version, repo commit,
+dirty-state count, reliable-mode count, isolated-HOME count, and Node version.
+Verify the JSON scorecard exposes the same values for the web app or docs
+pipeline without scraping markdown.
 
 ## Slash commands (smoke test the obvious ones)
 

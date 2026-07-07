@@ -103,6 +103,7 @@ function buildScorecardJson(sweeps, generatedAt) {
 				scenarioCount: scenarios.length,
 				scenarios,
 				models: summarizeModels(sweep.runs),
+				provenance: summarizeProvenance(sweep.runs),
 				reliableReceiptRuns: sweep.runs.filter((run) => run.receipt).length,
 				publicScorecard,
 				claims: {
@@ -158,17 +159,30 @@ function renderReport(sweeps, scorecard) {
 }
 
 function renderMethodology(scorecard) {
-	return [
+	const lines = [
 		"### Methodology",
 		"",
-		[
-			`- Source: \`bench/results/${scorecard.id}/runs.jsonl\``,
-			`- Runs: ${scorecard.runCount} across ${scorecard.scenarioCount} scenario${scorecard.scenarioCount === 1 ? "" : "s"}`,
-			`- Scenarios: ${scorecard.scenarios.join(", ") || "none"}`,
-			`- Models: ${scorecard.models.map((model) => `${model.name} (${model.provider}/${model.id}) x${model.runs}`).join(", ") || "unknown"}`,
-			`- Reliable receipts: ${scorecard.reliableReceiptRuns}/${scorecard.runCount} runs`,
-		].join("\n"),
 	];
+	const items = [
+		`- Source: \`bench/results/${scorecard.id}/runs.jsonl\``,
+		`- Runs: ${scorecard.runCount} across ${scorecard.scenarioCount} scenario${scorecard.scenarioCount === 1 ? "" : "s"}`,
+		`- Scenarios: ${scorecard.scenarios.join(", ") || "none"}`,
+		`- Models: ${scorecard.models.map((model) => `${model.name} (${model.provider}/${model.id}) x${model.runs}`).join(", ") || "unknown"}`,
+		`- Reliable receipts: ${scorecard.reliableReceiptRuns}/${scorecard.runCount} runs`,
+	];
+	if (scorecard.provenance?.recordedRuns > 0) {
+		const p = scorecard.provenance;
+		items.push(
+			`- CLI builds: ${formatCountedValues(p.cliBuilds)}`,
+			`- Repo commits: ${formatCountedValues(p.repoCommits)}; dirty runs ${p.repoDirtyRuns}/${p.recordedRuns}`,
+			`- Runner flags: reliable ${p.reliableRuns}/${p.recordedRuns}, isolated HOME ${p.isolatedHomeRuns}/${p.recordedRuns}`,
+			`- Node versions: ${formatCountedValues(p.nodeVersions)}`,
+		);
+	} else {
+		items.push("- Run provenance: not recorded in this sweep (older harness output)");
+	}
+	lines.push(items.join("\n"));
+	return lines;
 }
 
 function renderLaunchClaims(scorecard) {
@@ -235,6 +249,32 @@ function publicScorecardRow(label, runs) {
 		freshVerifiedCount: receipts.filter((receipt) => hasFreshVerification(receipt)).length,
 		medianPassSeconds: medianElapsed,
 		avgPassCost: avgCost,
+	};
+}
+
+function summarizeProvenance(runs) {
+	const benches = runs.map((run) => run.bench).filter(Boolean);
+	const recordedRuns = benches.length;
+	return {
+		recordedRuns,
+		cliBuilds: countedValues(
+			benches.map((bench) => {
+				const version = bench.cliVersion ?? "unknown";
+				const path = bench.cliPath ?? "unknown path";
+				return `${version} @ ${path}`;
+			}),
+		),
+		repoCommits: countedValues(
+			benches.map((bench) => {
+				const commit = bench.repoCommit ?? "unknown";
+				return bench.repoDirty === true ? `${commit} (dirty)` : commit;
+			}),
+		),
+		repoDirtyRuns: benches.filter((bench) => bench.repoDirty === true).length,
+		reliableRuns: benches.filter((bench) => bench.reliable === true).length,
+		isolatedHomeRuns: benches.filter((bench) => bench.isolateHome === true).length,
+		nodeVersions: countedValues(benches.map((bench) => bench.nodeVersion ?? "unknown")),
+		timeoutsMs: countedValues(benches.map((bench) => bench.timeoutMs ?? "unknown")),
 	};
 }
 
@@ -475,6 +515,22 @@ function summarizeModels(runs) {
 		counts.set(key, existing);
 	}
 	return [...counts.values()].sort((a, b) => b.runs - a.runs || a.name.localeCompare(b.name));
+}
+
+function countedValues(values) {
+	const counts = new Map();
+	for (const value of values) {
+		const key = String(value ?? "unknown");
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.map(([value, runs]) => ({ value, runs }))
+		.sort((a, b) => b.runs - a.runs || a.value.localeCompare(b.value));
+}
+
+function formatCountedValues(values) {
+	if (!Array.isArray(values) || values.length === 0) return "unknown";
+	return values.map((item) => `${item.value} x${item.runs}`).join(", ");
 }
 
 function ratio(count, total) {

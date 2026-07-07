@@ -20,6 +20,8 @@ Per-run metrics captured into `bench/results/<sweep>/runs.jsonl`:
 - **Cost**: `$total` from pi-ai's per-message Usage envelope
 - **Tool calls**: count + the list of tool names used
 - **Model + source** (proxy / explicit env / auto / byok)
+- **Run provenance**: CLI path/version, repo commit and dirty state,
+  Node.js version, reliable-mode flag, isolated-HOME flag, and timeout
 - **Reliability receipt** when run with `--reliable true`: task completion,
   per-task evidence, file-mutation evidence, post-mutation verification
   evidence, completed-task verification evidence, final-answer proof, failed
@@ -148,6 +150,11 @@ The aggregator computes per-scenario means over the **passing runs
 only** so a single failure doesn't poison the timing data; outcome
 counts are reported separately.
 
+The methodology section is part of the evidence, not filler. New sweeps record
+the CLI build, repo commit, dirty state, Node version, reliable-mode flag, and
+home-isolation flag in each JSONL row; the markdown and JSON scorecard surface
+those values so launch claims can be traced back to the exact build tested.
+
 The first table is the public scorecard. It is meant to be readable by a
 launch reviewer without opening the JSONL:
 
@@ -247,17 +254,15 @@ bench/
 
 ## Self-test (no LLM required)
 
-The harness ships with a fake-CLI smoke test that exercises the
-JSON-parsing + verify-running paths without a real LLM call:
+The aggregate report has a no-LLM Vitest smoke test that creates a synthetic
+JSONL sweep and verifies markdown + JSON scorecard provenance:
 
 ```sh
-# Implementing as a vitest spec lives next.
+npx vitest --run bench/aggregate.test.mjs
 ```
 
-Right now the self-test is documented inline only — see the smoke
-run in commit history (`/tmp/fake-codebase-cli.mjs`). When the
-project promotes the harness to `npm run check`, that fake CLI moves
-to `bench/_self-test/fake-cli.mjs` and gets a vitest spec.
+A future runner self-test should add a fake CLI that exercises
+JSON-parsing + `verify.sh` execution without a real LLM call.
 
 ## CI integration (future)
 
