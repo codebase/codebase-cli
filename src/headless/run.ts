@@ -275,6 +275,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 			tasks: bundle.toolContext.tasks.list(),
 			checkpoints: bundle.checkpoints.list(),
 			durationMs: Date.now() - startedAt,
+			finalText: latestAssistantText(bundle.agent.state.messages),
 		});
 		if (format === "stream-json") {
 			out(`${JSON.stringify({ type: "reliability_receipt", receipt, ts: Date.now() })}\n`);

@@ -13,6 +13,7 @@ Rules:
 - Use create_task/update_task for any non-trivial work. Keep exactly one task in_progress at a time.
 - Do not mark a task completed until its work is actually done.
 - Make completed tasks auditable: while each task is in_progress, use tools that leave evidence (file reads/writes, shell commands, searches, or other relevant tool calls).
+- Track verification as task work: either keep the implementation task in_progress until verification passes, or create a separate verification task and run the check while that task is in_progress.
 - Run a meaningful verification command after the final file change and before the final answer (tests, build, lint, typecheck, or a project-specific verify script).
 - If verification fails, fix the underlying issue and run verification again.
 - In the final answer, name the verification command that passed.`;
@@ -73,6 +74,11 @@ export interface TaskEvidence {
 	verification: VerificationEvidence[];
 }
 
+export interface FinalAnswerEvidence {
+	mentionsFreshVerification: boolean;
+	matchedVerificationCommands: string[];
+}
+
 export interface ReliabilityReceipt {
 	mode: "reliable";
 	ok: boolean;
@@ -87,6 +93,8 @@ export interface ReliabilityReceipt {
 		verificationCount: number;
 		verificationAfterLastMutationCount: number;
 		completedTasksWithEvidence: number;
+		completedTasksWithVerification: number;
+		finalAnswerMentionsFreshVerification: boolean;
 		checkpoints: number;
 		durationMs: number;
 	};
@@ -96,6 +104,7 @@ export interface ReliabilityReceipt {
 	tools: ReceiptToolCall[];
 	mutations: MutationEvidence[];
 	verification: VerificationEvidence[];
+	finalAnswer: FinalAnswerEvidence;
 	checkpoints: Pick<CheckpointEntry, "seq" | "display" | "tool" | "existed" | "tooLarge" | "timestamp">[];
 	failures: string[];
 	warnings: string[];
@@ -138,7 +147,12 @@ export class ReliabilityRecorder {
 		});
 	}
 
-	build(input: { tasks: Task[]; checkpoints: readonly CheckpointEntry[]; durationMs: number }): ReliabilityReceipt {
+	build(input: {
+		tasks: Task[];
+		checkpoints: readonly CheckpointEntry[];
+		durationMs: number;
+		finalText: string;
+	}): ReliabilityReceipt {
 		const tasks = [...input.tasks];
 		const tools = Array.from(this.tools.values());
 		const failedToolCalls = tools.filter((t) => t.status === "error").length;
@@ -152,12 +166,16 @@ export class ReliabilityRecorder {
 		const verificationAfterLastMutation = lastMutation
 			? verification.filter((item) => happenedAfter(item, lastMutation))
 			: verification;
+		const finalAnswer = collectFinalAnswerEvidence(input.finalText, verificationAfterLastMutation);
 		const taskEvidence = collectTaskEvidence(tasks, lifecycle.tasks, tools, mutations, verification);
 		const completedTasksWithEvidence = taskEvidence.filter(
 			(item) => item.status === "completed" && hasTaskEvidence(item),
 		);
 		const completedTasksWithoutEvidence = taskEvidence.filter(
 			(item) => item.status === "completed" && !hasTaskEvidence(item),
+		);
+		const completedTasksWithVerification = taskEvidence.filter(
+			(item) => item.status === "completed" && item.verification.length > 0,
 		);
 		const failures: string[] = [];
 		const warnings: string[] = [];
@@ -166,8 +184,16 @@ export class ReliabilityRecorder {
 		if (tasks.length > 0 && completedTasks.length === 0) failures.push("no tasks were completed");
 		if (openTasks.length > 0) failures.push(`open tasks remain: ${openTasks.map((t) => t.id).join(", ")}`);
 		if (verification.length === 0) failures.push("no successful verification command was recorded");
+		if (verification.length > 0 && completedTasksWithVerification.length === 0) {
+			failures.push("no completed task captured verification evidence");
+		}
 		if (mutations.length > 0 && verification.length > 0 && verificationAfterLastMutation.length === 0) {
 			failures.push("successful verification ran before the last file mutation");
+		}
+		if (verificationAfterLastMutation.length > 0 && !finalAnswer.mentionsFreshVerification) {
+			failures.push(
+				`final answer did not name a fresh passing verification command: ${verificationAfterLastMutation.map((item) => item.command).join(", ")}`,
+			);
 		}
 		if (completedTasksWithoutEvidence.length > 0) {
 			failures.push(
@@ -199,6 +225,8 @@ export class ReliabilityRecorder {
 				verificationCount: verification.length,
 				verificationAfterLastMutationCount: verificationAfterLastMutation.length,
 				completedTasksWithEvidence: completedTasksWithEvidence.length,
+				completedTasksWithVerification: completedTasksWithVerification.length,
+				finalAnswerMentionsFreshVerification: finalAnswer.mentionsFreshVerification,
 				checkpoints: input.checkpoints.length,
 				durationMs: input.durationMs,
 			},
@@ -208,6 +236,7 @@ export class ReliabilityRecorder {
 			tools,
 			mutations,
 			verification,
+			finalAnswer,
 			checkpoints: input.checkpoints.map((entry) => ({
 				seq: entry.seq,
 				display: entry.display,
@@ -220,6 +249,16 @@ export class ReliabilityRecorder {
 			warnings,
 		};
 	}
+}
+
+function collectFinalAnswerEvidence(finalText: string, freshVerification: VerificationEvidence[]): FinalAnswerEvidence {
+	const matchedVerificationCommands = freshVerification
+		.map((item) => item.command)
+		.filter((command) => mentionsCommand(finalText, command));
+	return {
+		mentionsFreshVerification: matchedVerificationCommands.length > 0,
+		matchedVerificationCommands,
+	};
 }
 
 interface TaskLifecycleAnalysis {
@@ -464,6 +503,14 @@ function sortedTools(tools: ReceiptToolCall[]): ReceiptToolCall[] {
 		if (aTime !== bTime) return aTime - bTime;
 		return a.order - b.order;
 	});
+}
+
+function mentionsCommand(text: string, command: string): boolean {
+	return normalizeCommandText(text).includes(normalizeCommandText(command));
+}
+
+function normalizeCommandText(text: string): string {
+	return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 export function isVerificationCommand(command: string): boolean {

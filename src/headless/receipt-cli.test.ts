@@ -47,7 +47,8 @@ describe("runReceiptSubcommand", () => {
 		const text = out.join("");
 		expect(text).toContain(`Receipt: ${record.id}`);
 		expect(text).toContain("Tasks: 1/1 completed, 1 with evidence");
-		expect(text).toContain("Verification: 1/1 fresh");
+		expect(text).toContain("Verification: 1/1 fresh after final mutation, 1/1 completed tasks verified");
+		expect(text).toContain("Final answer: named fresh verification");
 	});
 
 	it("prints full json", async () => {
@@ -105,6 +106,8 @@ function makeReceipt(): ReliabilityReceipt {
 			verificationCount: 1,
 			verificationAfterLastMutationCount: 1,
 			completedTasksWithEvidence: 1,
+			completedTasksWithVerification: 1,
+			finalAnswerMentionsFreshVerification: true,
 			checkpoints: 1,
 			durationMs: 1234,
 		},
@@ -123,6 +126,7 @@ function makeReceipt(): ReliabilityReceipt {
 		tools: [],
 		mutations: [],
 		verification: [{ toolCallId: "call-1", command: "npm test", exitCode: 0, order: 1, startedAt: 1, endedAt: 2 }],
+		finalAnswer: { mentionsFreshVerification: true, matchedVerificationCommands: ["npm test"] },
 		checkpoints: [],
 		failures: [],
 		warnings: [],

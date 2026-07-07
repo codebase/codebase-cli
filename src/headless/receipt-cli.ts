@@ -163,6 +163,7 @@ function renderReceipt(record: ReceiptRecord, format: ParsedReceiptArgs["format"
 
 function renderText(record: ReceiptRecord, path: string): string {
 	const s = record.receipt.summary;
+	const completedTasksWithVerification = completedTaskVerificationCount(record);
 	const lines = [
 		`Receipt: ${record.id}`,
 		`Status: ${record.ok ? "OK" : "FAILED"} (exit ${record.exitCode})`,
@@ -171,7 +172,8 @@ function renderText(record: ReceiptRecord, path: string): string {
 		`Model: ${record.model.name} (${record.model.provider}/${record.model.id})`,
 		`Duration: ${formatMs(record.durationMs)}`,
 		`Tasks: ${s.completedTasks}/${s.taskCount} completed, ${s.completedTasksWithEvidence} with evidence`,
-		`Verification: ${s.verificationAfterLastMutationCount}/${s.verificationCount} fresh after final mutation`,
+		`Verification: ${s.verificationAfterLastMutationCount}/${s.verificationCount} fresh after final mutation, ${completedTasksWithVerification}/${s.completedTasks} completed tasks verified`,
+		`Final answer: ${s.finalAnswerMentionsFreshVerification ? "named fresh verification" : "missing fresh verification"}`,
 		`Mutations: ${s.mutationCount}, checkpoints: ${s.checkpoints}`,
 		`File: ${path}`,
 	];
@@ -197,6 +199,7 @@ function renderText(record: ReceiptRecord, path: string): string {
 
 function renderMarkdown(record: ReceiptRecord, path: string): string {
 	const s = record.receipt.summary;
+	const completedTasksWithVerification = completedTaskVerificationCount(record);
 	const lines = [
 		`# Codebase Reliable Receipt`,
 		"",
@@ -211,7 +214,8 @@ function renderMarkdown(record: ReceiptRecord, path: string): string {
 		"## Summary",
 		"",
 		`- Tasks: ${s.completedTasks}/${s.taskCount} completed, ${s.completedTasksWithEvidence} with evidence`,
-		`- Verification: ${s.verificationAfterLastMutationCount}/${s.verificationCount} fresh after final mutation`,
+		`- Verification: ${s.verificationAfterLastMutationCount}/${s.verificationCount} fresh after final mutation, ${completedTasksWithVerification}/${s.completedTasks} completed tasks verified`,
+		`- Final answer: ${s.finalAnswerMentionsFreshVerification ? "named fresh verification" : "missing fresh verification"}`,
 		`- Mutations: ${s.mutationCount}`,
 		`- Checkpoints: ${s.checkpoints}`,
 	];
@@ -233,6 +237,13 @@ function renderMarkdown(record: ReceiptRecord, path: string): string {
 			lines.push(`- \`${item.command}\` (${formatMs(item.durationMs)})`);
 	}
 	return `${lines.join("\n")}\n`;
+}
+
+function completedTaskVerificationCount(record: ReceiptRecord): number {
+	const summary = record.receipt.summary as { completedTasksWithVerification?: unknown };
+	if (typeof summary.completedTasksWithVerification === "number") return summary.completedTasksWithVerification;
+	return record.receipt.taskEvidence.filter((item) => item.status === "completed" && item.verification.length > 0)
+		.length;
 }
 
 function formatMs(value: number | undefined): string {

@@ -173,7 +173,13 @@ describe("runHeadless", () => {
 			receiptPath: string;
 			receipt: {
 				ok: boolean;
-				summary: { completedTasks: number; completedTasksWithEvidence: number; verificationCount: number };
+				summary: {
+					completedTasks: number;
+					completedTasksWithEvidence: number;
+					completedTasksWithVerification: number;
+					verificationCount: number;
+				};
+				finalAnswer: { mentionsFreshVerification: boolean; matchedVerificationCommands: string[] };
 				taskEvidence: Array<{
 					id: string;
 					toolCalls: Array<{ name: string }>;
@@ -186,7 +192,12 @@ describe("runHeadless", () => {
 		expect(parsed.receipt.ok).toBe(true);
 		expect(parsed.receipt.summary.completedTasks).toBe(1);
 		expect(parsed.receipt.summary.completedTasksWithEvidence).toBe(1);
+		expect(parsed.receipt.summary.completedTasksWithVerification).toBe(1);
 		expect(parsed.receipt.summary.verificationCount).toBe(1);
+		expect(parsed.receipt.finalAnswer).toEqual({
+			mentionsFreshVerification: true,
+			matchedVerificationCommands: ["npm test"],
+		});
 		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
 			id: "task-1",
 			toolCalls: [{ name: "shell" }],
@@ -199,6 +210,129 @@ describe("runHeadless", () => {
 		const saved = JSON.parse(readFileSync(parsed.receiptPath, "utf8")) as { id: string; receipt: { ok: boolean } };
 		expect(saved.id).toBe(parsed.receiptId);
 		expect(saved.receipt.ok).toBe(true);
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when verification is not tied to a completed task", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-detached-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit file" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				summary: {
+					completedTasksWithEvidence: number;
+					completedTasksWithVerification: number;
+					verificationAfterLastMutationCount: number;
+					finalAnswerMentionsFreshVerification: boolean;
+				};
+				taskEvidence: Array<{ id: string; mutations: unknown[]; verification: unknown[] }>;
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("no completed task captured verification evidence");
+		expect(parsed.receipt.summary).toMatchObject({
+			completedTasksWithEvidence: 1,
+			completedTasksWithVerification: 0,
+			verificationAfterLastMutationCount: 1,
+			finalAnswerMentionsFreshVerification: true,
+		});
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			mutations: [{ tool: "write_file" }],
+			verification: [],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when the final answer omits fresh verification", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-final-proof-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit and verify" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				finalAnswer: { mentionsFreshVerification: boolean; matchedVerificationCommands: string[] };
+				summary: { finalAnswerMentionsFreshVerification: boolean };
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain(
+			"final answer did not name a fresh passing verification command: npm test",
+		);
+		expect(parsed.receipt.finalAnswer).toEqual({
+			mentionsFreshVerification: false,
+			matchedVerificationCommands: [],
+		});
+		expect(parsed.receipt.summary.finalAnswerMentionsFreshVerification).toBe(false);
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
@@ -304,6 +438,7 @@ describe("runHeadless", () => {
 				summary: {
 					mutationCount: number;
 					completedTasksWithEvidence: number;
+					completedTasksWithVerification: number;
 					verificationCount: number;
 					verificationAfterLastMutationCount: number;
 				};
@@ -322,6 +457,7 @@ describe("runHeadless", () => {
 		expect(parsed.receipt.summary).toMatchObject({
 			mutationCount: 1,
 			completedTasksWithEvidence: 1,
+			completedTasksWithVerification: 1,
 			verificationCount: 1,
 			verificationAfterLastMutationCount: 1,
 		});
