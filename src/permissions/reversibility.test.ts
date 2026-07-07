@@ -134,3 +134,21 @@ describe("Verdict shape", () => {
 		}
 	});
 });
+
+describe("classifyReversibility — compound shell commands", () => {
+	it("does not let a reversible prefix shadow an irreversible tail", () => {
+		expect(shell("git commit -am wip && git push")).toBe("irreversible");
+		expect(shell("cd repo && terraform apply")).toBe("irreversible");
+		expect(shell("echo ok && npm publish")).toBe("irreversible");
+		expect(shell("git add -A; git commit -m x && docker push acme/app")).toBe("irreversible");
+	});
+
+	it("keeps all-reversible compounds reversible", () => {
+		expect(shell("git add -A && git commit -m x")).toBe("reversible");
+		expect(shell("mkdir build && cargo build")).toBe("reversible");
+	});
+
+	it("escalates when any compound segment is unclassified", () => {
+		expect(shell("git commit -m x && curl -X POST https://example.com/hook")).toBe("unknown");
+	});
+});

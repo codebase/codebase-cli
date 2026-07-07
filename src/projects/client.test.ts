@@ -13,11 +13,11 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Response | Prom
 	}) as unknown as typeof fetch;
 }
 
-function makeStore(dataRoot: string, accessToken = "abc"): CredentialsStore {
+function makeStore(dataRoot: string, accessToken = "abc", scopes = ["projects", "inference"]): CredentialsStore {
 	const store = new CredentialsStore({ dataRoot });
 	store.save({
 		accessToken,
-		scopes: ["projects", "inference"],
+		scopes,
 		source: "codebase",
 	});
 	return store;
@@ -155,7 +155,7 @@ describe("ProjectClient build endpoints", () => {
 	});
 
 	it("starts a web build with OAuth bearer auth", async () => {
-		const credentials = makeStore(dataRoot, "build-token");
+		const credentials = makeStore(dataRoot, "build-token", ["projects", "inference", "builds:read", "builds:write"]);
 		const fetchFn = mockFetch((url, init) => {
 			expect(url).toBe("https://codebase.design/api/v1/builds");
 			expect(init?.method).toBe("POST");
@@ -184,6 +184,19 @@ describe("ProjectClient build endpoints", () => {
 		});
 
 		expect(result).toMatchObject({ sessionId: "sess-1", projectId: "proj-1", status: "building" });
+	});
+
+	it("rejects web build start before network when OAuth token lacks build scopes", async () => {
+		const credentials = makeStore(dataRoot, "old-token", ["projects", "inference", "credits"]);
+		const fetchFn = vi.fn(async () => new Response("should not be called")) as unknown as typeof fetch;
+		const client = new ProjectClient({ credentials, fetchFn });
+
+		await expect(client.startBuild({ prompt: "Ship it" })).rejects.toMatchObject({
+			name: "ProjectClientError",
+			status: 403,
+			message: expect.stringContaining("missing build scopes: builds:read builds:write"),
+		});
+		expect(fetchFn).not.toHaveBeenCalled();
 	});
 
 	it("reads build status, preview, and cancel endpoints", async () => {

@@ -284,7 +284,6 @@ async function buildCmd(
 		return 2;
 	}
 
-	out("starting web build on codebase.design...");
 	const started = await client.startBuild({
 		prompt: opts.prompt,
 		model: opts.model,

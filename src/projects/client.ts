@@ -6,6 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { defaultOAuthConfig } from "../auth/cli.js";
 import { CredentialsStore } from "../auth/credentials.js";
 import type { OAuthConfig } from "../auth/flow.js";
+import { webBuildScopeReadiness } from "../auth/scopes.js";
 import { TokenManager } from "../auth/token-manager.js";
 import type {
 	BuildCancelResponse,
@@ -147,6 +148,7 @@ export class ProjectClient {
 		scaffold?: string;
 		projectId?: string;
 	}): Promise<BuildStartResponse> {
+		this.requireWebBuildScopes("start a web build");
 		return await this.postJson<BuildStartResponse>("/api/v1/builds", {
 			prompt: input.prompt,
 			model: input.model,
@@ -224,6 +226,14 @@ export class ProjectClient {
 			}
 			throw new ProjectClientError(`could not refresh codebase.design credentials: ${message}`);
 		}
+	}
+
+	private requireWebBuildScopes(action: string): void {
+		const creds = this.credStore.load();
+		if (!creds) throw new NotAuthenticatedError();
+		const readiness = webBuildScopeReadiness(creds);
+		if (readiness.status === "ready") return;
+		throw new ProjectClientError(`cannot ${action}: ${readiness.message}. ${readiness.fix}`, 403);
 	}
 }
 

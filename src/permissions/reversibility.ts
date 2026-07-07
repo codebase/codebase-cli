@@ -153,23 +153,30 @@ export function classifyReversibility(tool: string, args: unknown): Verdict {
 	return v("unknown", "medium", `no reversibility rule for ${tool}`);
 }
 
+function shellSegments(cmd: string): string[] {
+	return cmd
+		.split(/&&|\|\||;|\||\n/)
+		.map((seg) => seg.trim())
+		.filter(Boolean);
+}
+
 function classifyShell(rawCommand: string): Verdict {
 	const cmd = rawCommand.trim();
 	if (!cmd) return v("unknown", "medium", "empty shell command");
 	if (DANGEROUS_PATTERNS.some((re) => re.test(cmd))) {
 		return v("irreversible", "high", "matches a hard-block destructive shell pattern");
 	}
-	const prefix = commandPrefix(cmd);
-	if (prefix && IRREVERSIBLE_SHELL_PREFIXES.has(prefix)) {
-		return v("irreversible", "high", `\`${prefix}\` can't be undone`);
-	}
+	const prefixes = shellSegments(cmd).map((seg) => commandPrefix(seg));
+	const irreversible = prefixes.find((p) => p !== null && IRREVERSIBLE_SHELL_PREFIXES.has(p));
+	if (irreversible) return v("irreversible", "high", `\`${irreversible}\` can't be undone`);
 	// shellNeedsPermission is the existing single source of truth for "this
 	// command is read-only" — reuse it rather than re-deriving the allowlist.
 	if (!shellNeedsPermission(cmd)) return v("reversible", "low", "read-only shell command");
-	if (prefix && REVERSIBLE_SHELL_PREFIXES.has(prefix)) {
-		return v("reversible", "low", `\`${prefix}\` only changes local/git state`);
+	if (prefixes.length > 0 && prefixes.every((p) => p !== null && REVERSIBLE_SHELL_PREFIXES.has(p))) {
+		return v("reversible", "low", "only local/git-state changes");
 	}
-	return v("unknown", "medium", prefix ? `unclassified shell command \`${prefix}\`` : "unclassified shell command");
+	const lead = prefixes[0] ?? null;
+	return v("unknown", "medium", lead ? `unclassified shell command \`${lead}\`` : "unclassified shell command");
 }
 
 function classifyMcp(tool: string): Verdict {

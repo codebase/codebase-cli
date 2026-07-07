@@ -86,6 +86,20 @@ challenging OAuth build requests before accepting Bearer auth. A missing
 scope failure means the tester needs to re-login after the deployed OAuth
 seed includes `builds:read` and `builds:write`.
 
+2026-07-07 live production E2E result:
+
+- `codebase auth login` with current default scopes opened
+  `codebase.design/login` but production web returned
+  `Authentication failed` / `Invalid scopes: builds:read, builds:write`.
+- `codebase auth login` with `CODEBASE_SCOPES='inference projects credits'`
+  completed OAuth and saved credentials in a fresh temp `HOME`.
+- `codebase usage` with that token returned `Plan: Free`, `Credits left: 50`,
+  and `Build turns remaining: 5`.
+- `codebase web-build --wait ...` cannot complete against production until
+  the web OAuth build-scope seed and OAuth Bearer/x402 bypass are deployed.
+  The CLI now preflights missing build scopes before POSTing to
+  `/api/v1/builds`, so old tokens get an actionable re-login/deploy hint.
+
 ## BYOK flow (no web auth)
 
 For each platform:
