@@ -506,11 +506,34 @@ function sortedTools(tools: ReceiptToolCall[]): ReceiptToolCall[] {
 }
 
 function mentionsCommand(text: string, command: string): boolean {
-	return normalizeCommandText(text).includes(normalizeCommandText(command));
+	const haystack = normalizeCommandText(text);
+	const needle = normalizeCommandText(command);
+	if (!needle) return false;
+	let index = haystack.indexOf(needle);
+	while (index !== -1) {
+		const before = haystack.slice(Math.max(0, index - 90), index);
+		const after = haystack.slice(index + needle.length, index + needle.length + 90);
+		if (!isNegatedCommandMention(before, after)) return true;
+		index = haystack.indexOf(needle, index + needle.length);
+	}
+	return false;
 }
 
 function normalizeCommandText(text: string): string {
 	return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function isNegatedCommandMention(before: string, after: string): boolean {
+	if (
+		/(^|[\s.;:,(])(?:did not|didn't|do not|don't|never|not|without|skipped|could not|couldn't|cannot|can't|unable to|failed to)\s+(?:successfully\s+)?(?:run|ran|execute|executed|verify|verified|rerun|re-run|use|used)?\s*$/.test(
+			before,
+		)
+	) {
+		return true;
+	}
+	return /^(?:[\s`'".,:;)-]*)(?:was|is|did|does|had)?\s*(?:not|never|failed|failing|fail|missing|skipped|unverified|not run|not pass|didn't pass|did not pass|wasn't run|was not run)\b/.test(
+		after,
+	);
 }
 
 export function isVerificationCommand(command: string): boolean {

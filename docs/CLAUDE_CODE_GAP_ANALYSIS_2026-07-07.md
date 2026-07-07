@@ -241,16 +241,16 @@ Add a mode users can trust on scary tasks:
 codebase auto --reliable "fix the auth refresh race and prove it"
 ```
 
-Reliable mode would require:
+Reliable mode now requires:
 
 - task list for non-trivial work
 - one active task at a time
-- verification task
+- verification evidence tied to task work
 - no final success claim while tests fail
 - no unresolved blockers
 - evidence receipt attached to final answer
 
-This is easy to understand and hard to fake.
+This is easy to understand and hard to fake. The next upgrades are broader public receipt sweeps, richer receipt presentation, and benchmark scenarios that try to trick final-answer proof, task evidence, and fresh-verification checks.
 
 ### 6. Memory With Provenance And Expiry
 

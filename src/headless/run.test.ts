@@ -336,6 +336,61 @@ describe("runHeadless", () => {
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
+	it("reliable json mode rejects negated final-answer verification mentions", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-negated-proof-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit and verify" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. I did not run npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				finalAnswer: { mentionsFreshVerification: boolean; matchedVerificationCommands: string[] };
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain(
+			"final answer did not name a fresh passing verification command: npm test",
+		);
+		expect(parsed.receipt.finalAnswer).toEqual({
+			mentionsFreshVerification: false,
+			matchedVerificationCommands: [],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
 	it("reliable json mode fails when verification ran before the last file mutation", async () => {
 		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-stale-verify-"));
 		writeFileSync(
