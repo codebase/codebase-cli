@@ -1,4 +1,5 @@
 import { type Component, Container, Input, SelectList, Text, type TUI } from "@earendil-works/pi-tui";
+import { validateByokApiKey } from "../auth/byok-key.js";
 import { CredentialsStore } from "../auth/credentials.js";
 import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
 import { type DiscoveredServer, formatContextWindow, SCAN_PORTS, scanLocalEndpoints } from "../config/local-llm.js";
@@ -277,7 +278,11 @@ export class FirstRunWizard extends Container {
 		const input = new MaskedInput();
 		input.onSubmit = (value) => {
 			const trimmed = value.trim();
-			if (trimmed.length === 0) return;
+			const validationError = validateByokApiKey(provider.id, trimmed);
+			if (validationError) {
+				this.setMode({ kind: "error", message: validationError });
+				return;
+			}
 			try {
 				this.store.save({
 					accessToken: trimmed,
@@ -294,7 +299,11 @@ export class FirstRunWizard extends Container {
 		this.keyInput = input;
 		this.addChild(input);
 		this.addChild(
-			new Text(ansi.dim("Stored at ~/.codebase/credentials.json (mode 0600). Enter to save, Esc to go back."), 1, 1),
+			new Text(
+				ansi.dim("Will be stored at ~/.codebase/credentials.json (mode 0600). Enter to save, Esc to go back."),
+				1,
+				1,
+			),
 		);
 	}
 

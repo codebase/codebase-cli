@@ -30,6 +30,12 @@ describe("runDirectorSubcommand", () => {
 		});
 	}
 
+	it("prints help", async () => {
+		expect(await run(["director", "--help"])).toBe(0);
+		expect(out.join("")).toMatch(/usage: codebase director/);
+		expect(err.join("")).toBe("");
+	});
+
 	it("hire with flags creates a cautious director", async () => {
 		expect(await run(["director", "hire", "--title", "Director of Marketing", "--owns", "the funnel"])).toBe(0);
 		expect(out.join("")).toMatch(/Hired Director of Marketing.*training/s);

@@ -20,7 +20,7 @@ fi
 # under setup/, sorted, hashed once. Same for the tmp project. Match
 # means the tree is byte-identical to setup/.
 expected="$(cd "$SETUP_DIR" && find . -type f | sort | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
-actual="$(find . -type f -not -path './.codebase/*' -not -path './node_modules/*' | sort | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
+actual="$(find . -type f -not -path './.codebase/*' -not -path './.codebase-bench/*' -not -path './node_modules/*' | sort | xargs sha256sum 2>/dev/null | sha256sum | awk '{print $1}')"
 
 if [ "$expected" != "$actual" ]; then
 	echo "FAIL: working tree differs from setup — agent modified files in a read-only scenario" >&2

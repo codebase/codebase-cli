@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { validateByokApiKey } from "../auth/byok-key.js";
 import { CredentialsStore } from "../auth/credentials.js";
 import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
 import { type DiscoveredServer, formatContextWindow, SCAN_PORTS, scanLocalEndpoints } from "../config/local-llm.js";
@@ -273,7 +274,11 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 				}
 				if (key.return) {
 					const trimmed = mode.buffer.trim();
-					if (trimmed.length === 0) return;
+					const validationError = validateByokApiKey(mode.provider.id, trimmed);
+					if (validationError) {
+						setMode({ kind: "error", message: validationError });
+						return;
+					}
 					try {
 						credStore.save({
 							accessToken: trimmed,
@@ -595,7 +600,7 @@ function renderBody(
 				</Box>
 				<Box marginTop={1}>
 					<Text dimColor>
-						Stored at ~/.codebase/credentials.json (mode 0600). Press Enter to save, Esc to go back.
+						Will be stored at ~/.codebase/credentials.json (mode 0600). Press Enter to save, Esc to go back.
 					</Text>
 				</Box>
 			</Box>

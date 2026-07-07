@@ -23,6 +23,11 @@ export async function runDirectorSubcommand(argv: string[], deps: DirectorCliDep
 	const sub = argv[1];
 
 	switch (sub) {
+		case "--help":
+		case "-h":
+		case "help":
+			printHelp(out);
+			return 0;
 		case "hire":
 			return hire(argv.slice(2), store, out, err);
 		case "list":
@@ -36,6 +41,23 @@ export async function runDirectorSubcommand(argv: string[], deps: DirectorCliDep
 			err(`unknown director command "${sub}" — try: hire | list | status <slug> | fire <slug>\n`);
 			return 2;
 	}
+}
+
+function printHelp(out: (s: string) => void): void {
+	out(
+		[
+			"usage: codebase director [hire | list | status <slug> | fire <slug>]",
+			"",
+			"Manage trained directors.",
+			"",
+			"Commands:",
+			"  hire --title <title> --owns <mandate>  create a director",
+			"  list                                  show directors",
+			"  status <slug>                         show training/activity",
+			"  fire <slug>                           remove a director",
+			"",
+		].join("\n"),
+	);
 }
 
 async function hire(
