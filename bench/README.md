@@ -21,7 +21,8 @@ Per-run metrics captured into `bench/results/<sweep>/runs.jsonl`:
 - **Tool calls**: count + the list of tool names used
 - **Model + source** (proxy / explicit env / auto / byok)
 - **Reliability receipt** when run with `--reliable true`: task completion,
-  verification evidence, failed tool count, checkpoints, and failure reasons
+  file-mutation evidence, post-mutation verification evidence, failed tool
+  count, checkpoints, and failure reasons
 - **Final assistant text** (truncated to 1KB for readability)
 - **Verify exit code + last 500 bytes of stderr** when it failed
 - **Verify stdout** tail when scenario verifiers emit extra diagnostics
@@ -140,7 +141,9 @@ counts are reported separately.
 
 When a sweep includes reliable-mode receipts, the report also includes a
 receipt scorecard: receipt pass count, task lifecycle pass count, verification
-count, average checkpoints, and common failure reasons. This is the
+count, fresh post-mutation verification count, average mutations, average
+checkpoints, and common failure reasons. Reliable receipts also flag stale
+verification that ran before the final file mutation. This is the
 launch-facing table to publish when comparing agent builds.
 
 ## Add a new scenario

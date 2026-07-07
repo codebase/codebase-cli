@@ -114,25 +114,35 @@ function renderReceiptScorecard(runs) {
 	const out = [
 		"### Reliability receipts",
 		"",
-		"| scenario | n | receipt ok | task ok | verified | avg verifies | avg checkpoints | common failures |",
-		"|---|---|---|---|---|---|---|---|",
+		"| scenario | n | receipt ok | task ok | verified | fresh verified | avg mutations | avg verifies | avg checkpoints | common failures |",
+		"|---|---|---|---|---|---|---|---|---|---|",
 	];
 	for (const [scenario, items] of grouped) {
 		const receipts = items.map((r) => r.receipt).filter(Boolean);
 		if (receipts.length === 0) {
-			out.push(`| ${scenario} | ${items.length} | — | — | — | — | — | — |`);
+			out.push(`| ${scenario} | ${items.length} | — | — | — | — | — | — | — | — |`);
 			continue;
 		}
 		const receiptOk = receipts.filter((r) => r.ok).length;
 		const taskOk = receipts.filter((r) => (r.summary?.completedTasks ?? 0) > 0 && (r.summary?.openTasks ?? 0) === 0).length;
 		const verified = receipts.filter((r) => (r.summary?.verificationCount ?? 0) > 0).length;
+		const freshVerified = receipts.filter((r) => hasFreshVerification(r)).length;
+		const avgMutations = mean(receipts.map((r) => r.summary?.mutationCount ?? r.mutations?.length ?? 0));
 		const avgVerifies = mean(receipts.map((r) => r.summary?.verificationCount ?? 0));
 		const avgCheckpoints = mean(receipts.map((r) => r.summary?.checkpoints ?? 0));
 		out.push(
-			`| ${scenario} | ${receipts.length}/${items.length} | ${receiptOk} | ${taskOk} | ${verified} | ${avgVerifies.toFixed(2)} | ${avgCheckpoints.toFixed(2)} | ${commonFailures(receipts)} |`,
+			`| ${scenario} | ${receipts.length}/${items.length} | ${receiptOk} | ${taskOk} | ${verified} | ${freshVerified} | ${avgMutations.toFixed(2)} | ${avgVerifies.toFixed(2)} | ${avgCheckpoints.toFixed(2)} | ${commonFailures(receipts)} |`,
 		);
 	}
 	return out;
+}
+
+function hasFreshVerification(receipt) {
+	const verificationCount = receipt.summary?.verificationCount ?? 0;
+	const mutationCount = receipt.summary?.mutationCount ?? receipt.mutations?.length ?? 0;
+	if (verificationCount === 0) return false;
+	if (mutationCount === 0) return true;
+	return (receipt.summary?.verificationAfterLastMutationCount ?? 0) > 0;
 }
 
 function renderPerScenarioTable(runs) {

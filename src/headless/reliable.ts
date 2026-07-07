@@ -2,6 +2,8 @@ import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { CheckpointEntry } from "../checkpoint/store.js";
 import type { Task, TaskStatus } from "../tools/task-store.js";
 
+const MUTATING_FILE_TOOLS = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
+
 export const RELIABLE_MODE_PROMPT = `# Reliable mode
 
 This headless run is being audited for reliability. Treat the user's request as work that must be proven, not just attempted.
@@ -9,7 +11,7 @@ This headless run is being audited for reliability. Treat the user's request as 
 Rules:
 - Use create_task/update_task for any non-trivial work. Keep exactly one task in_progress at a time.
 - Do not mark a task completed until its work is actually done.
-- Run a meaningful verification command before the final answer (tests, build, lint, typecheck, or a project-specific verify script).
+- Run a meaningful verification command after the final file change and before the final answer (tests, build, lint, typecheck, or a project-specific verify script).
 - If verification fails, fix the underlying issue and run verification again.
 - In the final answer, name the verification command that passed.`;
 
@@ -18,6 +20,7 @@ export interface ReceiptToolCall {
 	name: string;
 	args: Record<string, unknown>;
 	status: "running" | "done" | "error";
+	order: number;
 	startedAt: number;
 	endedAt?: number;
 	durationMs?: number;
@@ -28,7 +31,20 @@ export interface VerificationEvidence {
 	toolCallId: string;
 	command: string;
 	exitCode: number;
+	order: number;
+	startedAt: number;
+	endedAt: number;
 	durationMs?: number;
+}
+
+export interface MutationEvidence {
+	toolCallId: string;
+	tool: string;
+	path?: string;
+	order: number;
+	startedAt: number;
+	endedAt: number;
+	checkpoints: Array<Pick<CheckpointEntry, "seq" | "display" | "timestamp">>;
 }
 
 export interface TaskLifecycleEvidence {
@@ -51,13 +67,16 @@ export interface ReliabilityReceipt {
 		cancelledTasks: number;
 		toolCalls: number;
 		failedToolCalls: number;
+		mutationCount: number;
 		verificationCount: number;
+		verificationAfterLastMutationCount: number;
 		checkpoints: number;
 		durationMs: number;
 	};
 	tasks: Task[];
 	taskLifecycle: TaskLifecycleEvidence[];
 	tools: ReceiptToolCall[];
+	mutations: MutationEvidence[];
 	verification: VerificationEvidence[];
 	checkpoints: Pick<CheckpointEntry, "seq" | "display" | "tool" | "existed" | "tooLarge" | "timestamp">[];
 	failures: string[];
@@ -66,6 +85,7 @@ export interface ReliabilityReceipt {
 
 export class ReliabilityRecorder {
 	private readonly tools = new Map<string, ReceiptToolCall>();
+	private nextOrder = 1;
 
 	record(event: AgentEvent): void {
 		if (event.type === "tool_execution_start") {
@@ -74,6 +94,7 @@ export class ReliabilityRecorder {
 				name: event.toolName,
 				args: summarizeArgs(event.toolName, event.args),
 				status: "running",
+				order: this.nextOrder++,
 				startedAt: Date.now(),
 			});
 			return;
@@ -86,6 +107,7 @@ export class ReliabilityRecorder {
 				name: event.toolName,
 				args: {},
 				status: "running",
+				order: this.nextOrder++,
 				startedAt: Date.now(),
 			} satisfies ReceiptToolCall);
 		const endedAt = Date.now();
@@ -107,6 +129,11 @@ export class ReliabilityRecorder {
 		const cancelledTasks = tasks.filter((t) => t.status === "cancelled");
 		const verification = collectVerification(tools);
 		const lifecycle = analyzeTaskLifecycle(tools);
+		const mutations = collectMutations(tools, input.checkpoints);
+		const lastMutation = mutations[mutations.length - 1];
+		const verificationAfterLastMutation = lastMutation
+			? verification.filter((item) => happenedAfter(item, lastMutation))
+			: verification;
 		const failures: string[] = [];
 		const warnings: string[] = [];
 
@@ -114,6 +141,9 @@ export class ReliabilityRecorder {
 		if (tasks.length > 0 && completedTasks.length === 0) failures.push("no tasks were completed");
 		if (openTasks.length > 0) failures.push(`open tasks remain: ${openTasks.map((t) => t.id).join(", ")}`);
 		if (verification.length === 0) failures.push("no successful verification command was recorded");
+		if (mutations.length > 0 && verification.length > 0 && verificationAfterLastMutation.length === 0) {
+			failures.push("successful verification ran before the last file mutation");
+		}
 		if (lifecycle.completedWithoutInProgress.length > 0) {
 			failures.push(
 				`completed task${lifecycle.completedWithoutInProgress.length === 1 ? "" : "s"} skipped in_progress: ${lifecycle.completedWithoutInProgress.join(", ")}`,
@@ -135,13 +165,16 @@ export class ReliabilityRecorder {
 				cancelledTasks: cancelledTasks.length,
 				toolCalls: tools.length,
 				failedToolCalls,
+				mutationCount: mutations.length,
 				verificationCount: verification.length,
+				verificationAfterLastMutationCount: verificationAfterLastMutation.length,
 				checkpoints: input.checkpoints.length,
 				durationMs: input.durationMs,
 			},
 			tasks,
 			taskLifecycle: lifecycle.tasks,
 			tools,
+			mutations,
 			verification,
 			checkpoints: input.checkpoints.map((entry) => ({
 				seq: entry.seq,
@@ -205,6 +238,54 @@ function analyzeTaskLifecycle(tools: ReceiptToolCall[]): TaskLifecycleAnalysis {
 	};
 }
 
+function collectMutations(tools: ReceiptToolCall[], checkpoints: readonly CheckpointEntry[]): MutationEvidence[] {
+	const matchedCheckpointSeqs = new Set<number>();
+	const sortedCheckpoints = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp || a.seq - b.seq);
+	const mutations: MutationEvidence[] = [];
+
+	for (const tool of sortedTools(tools)) {
+		if (!MUTATING_FILE_TOOLS.has(tool.name) || tool.status !== "done") continue;
+		const endedAt = tool.endedAt ?? tool.startedAt;
+		const matched = sortedCheckpoints.filter((checkpoint) => {
+			if (matchedCheckpointSeqs.has(checkpoint.seq)) return false;
+			if (checkpoint.tool !== tool.name) return false;
+			return checkpoint.timestamp >= tool.startedAt && checkpoint.timestamp <= endedAt;
+		});
+		for (const checkpoint of matched) matchedCheckpointSeqs.add(checkpoint.seq);
+		mutations.push({
+			toolCallId: tool.id,
+			tool: tool.name,
+			path: typeof tool.args.path === "string" ? tool.args.path : undefined,
+			order: tool.order,
+			startedAt: tool.startedAt,
+			endedAt,
+			checkpoints: matched.map((checkpoint) => ({
+				seq: checkpoint.seq,
+				display: checkpoint.display,
+				timestamp: checkpoint.timestamp,
+			})),
+		});
+	}
+
+	return mutations.sort(compareEvidence);
+}
+
+function happenedAfter(
+	later: Pick<VerificationEvidence, "endedAt" | "order">,
+	earlier: Pick<MutationEvidence, "endedAt" | "order">,
+): boolean {
+	if (later.endedAt !== earlier.endedAt) return later.endedAt > earlier.endedAt;
+	return later.order > earlier.order;
+}
+
+function compareEvidence(
+	a: Pick<MutationEvidence, "endedAt" | "order">,
+	b: Pick<MutationEvidence, "endedAt" | "order">,
+): number {
+	if (a.endedAt !== b.endedAt) return a.endedAt - b.endedAt;
+	return a.order - b.order;
+}
+
 function taskStatusFromTool(tool: ReceiptToolCall): TaskStatus | undefined {
 	if (tool.name === "create_task") return "pending";
 	if (tool.name !== "update_task") return undefined;
@@ -235,7 +316,7 @@ export function formatReliabilityFailure(receipt: ReliabilityReceipt): string {
 
 function collectVerification(tools: ReceiptToolCall[]): VerificationEvidence[] {
 	const evidence: VerificationEvidence[] = [];
-	for (const tool of tools) {
+	for (const tool of sortedTools(tools)) {
 		if (tool.name !== "shell" || tool.status !== "done") continue;
 		const command = typeof tool.details?.command === "string" ? tool.details.command : undefined;
 		const exitCode = typeof tool.details?.exitCode === "number" ? tool.details.exitCode : undefined;
@@ -244,10 +325,22 @@ function collectVerification(tools: ReceiptToolCall[]): VerificationEvidence[] {
 			toolCallId: tool.id,
 			command,
 			exitCode,
+			order: tool.order,
+			startedAt: tool.startedAt,
+			endedAt: tool.endedAt ?? tool.startedAt,
 			durationMs: typeof tool.details?.durationMs === "number" ? tool.details.durationMs : undefined,
 		});
 	}
 	return evidence;
+}
+
+function sortedTools(tools: ReceiptToolCall[]): ReceiptToolCall[] {
+	return [...tools].sort((a, b) => {
+		const aTime = a.endedAt ?? a.startedAt;
+		const bTime = b.endedAt ?? b.startedAt;
+		if (aTime !== bTime) return aTime - bTime;
+		return a.order - b.order;
+	});
 }
 
 export function isVerificationCommand(command: string): boolean {

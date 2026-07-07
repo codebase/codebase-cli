@@ -183,6 +183,126 @@ describe("runHeadless", () => {
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
+	it("reliable json mode fails when verification ran before the last file mutation", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-stale-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit and verify" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				summary: { mutationCount: number; verificationCount: number; verificationAfterLastMutationCount: number };
+				mutations: Array<{ tool: string; path?: string; checkpoints: unknown[] }>;
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("successful verification ran before the last file mutation");
+		expect(parsed.receipt.summary).toMatchObject({
+			mutationCount: 1,
+			verificationCount: 1,
+			verificationAfterLastMutationCount: 0,
+		});
+		expect(parsed.receipt.mutations[0]).toMatchObject({
+			tool: "write_file",
+			path: "result.txt",
+			checkpoints: [{ display: "result.txt" }],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode accepts verification after the last file mutation", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-fresh-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit and verify" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			receipt: {
+				ok: boolean;
+				summary: { mutationCount: number; verificationCount: number; verificationAfterLastMutationCount: number };
+				mutations: Array<{ tool: string; path?: string; checkpoints: unknown[] }>;
+				verification: Array<{ command: string; endedAt: number }>;
+			};
+		};
+		expect(parsed.ok).toBe(true);
+		expect(parsed.receipt.ok).toBe(true);
+		expect(parsed.receipt.summary).toMatchObject({
+			mutationCount: 1,
+			verificationCount: 1,
+			verificationAfterLastMutationCount: 1,
+		});
+		expect(parsed.receipt.mutations[0]).toMatchObject({
+			tool: "write_file",
+			path: "result.txt",
+			checkpoints: [{ display: "result.txt" }],
+		});
+		expect(parsed.receipt.verification[0]?.command).toBe("npm test");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
 	it("reliable json mode fails when no task list was created", async () => {
 		faux.setResponses([fauxAssistantMessage("done without tasks")]);
 		const { capture, write } = makeCapture();

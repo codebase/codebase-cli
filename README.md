@@ -43,9 +43,9 @@ codebase auto --reliable "fix the auth refresh race and prove it"
 
 `--reliable` fails the run unless the agent keeps a task list, moves completed
 tasks through `in_progress` without overlapping active work, and records a
-passing verification command. With `--output json`, the result includes a
-receipt: task lifecycle, tool calls, verification evidence, usage, and rewind
-checkpoints.
+passing verification command after the final file change. With `--output json`,
+the result includes a receipt: task lifecycle, file mutations, verification
+evidence, usage, and rewind checkpoints.
 
 ## Pick your LLM
 
