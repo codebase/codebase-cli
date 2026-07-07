@@ -95,6 +95,8 @@ export interface CreateAgentOptions {
 	 * doesn't lose context, but we don't want to disk-roundtrip.
 	 */
 	initialMessages?: AgentMessage[];
+	/** Extra behavior guidance appended after the default tool-aware prompt. */
+	systemPromptAddendum?: string;
 	/** Reuse an existing task-list id while rebuilding an in-memory agent. */
 	taskListId?: string;
 }
@@ -358,6 +360,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		buildSystemPrompt({
 			tools: tools.map((t) => ({ name: t.name, description: t.description })),
 		});
+	const systemPromptAddendum = opts.systemPromptAddendum?.trim() ? `\n\n${opts.systemPromptAddendum.trim()}` : "";
 
 	// MEMORY.md gets concatenated onto the system prompt at agent creation;
 	// edits during a session don't take effect until next launch.
@@ -367,6 +370,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// after — it's the user's accumulated long-term notes.
 	const fullSystemPrompt =
 		systemPrompt +
+		systemPromptAddendum +
 		buildProjectFilesAddendum(cwd) +
 		buildMemoryAddendum(memory) +
 		buildOutputStyleAddendum(persistedConfig, cwd);

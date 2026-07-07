@@ -3,6 +3,12 @@ import type { Usage } from "@earendil-works/pi-ai";
 import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
 import { userFacingErrorMessage } from "../errors/user-facing.js";
+import {
+	formatReliabilityFailure,
+	RELIABLE_MODE_PROMPT,
+	type ReliabilityReceipt,
+	ReliabilityRecorder,
+} from "./reliable.js";
 
 const EMPTY_USAGE: Usage = {
 	input: 0,
@@ -26,6 +32,12 @@ export interface HeadlessOptions {
 	 * time a write tool fires, since there's no TUI to answer.
 	 */
 	autoApprove?: boolean;
+	/**
+	 * Reliable mode audits the run after the agent settles. The run must
+	 * produce task state and successful verification evidence, and JSON
+	 * output includes a machine-readable receipt.
+	 */
+	reliable?: boolean;
 	stdout?: (chunk: string) => void;
 	stderr?: (chunk: string) => void;
 	/**
@@ -66,6 +78,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		bundle = createAgent({
 			resume: opts.resume,
 			autoApprove: opts.autoApprove,
+			systemPromptAddendum: opts.reliable ? RELIABLE_MODE_PROMPT : undefined,
 			configOverride: opts.configOverride,
 		});
 	} catch (e) {
@@ -130,6 +143,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	let errorExitCode = 1;
 	let totalUsage: Usage = { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost } };
 	const pendingTools = new Map<string, string>();
+	const reliability = opts.reliable ? new ReliabilityRecorder() : null;
 
 	// Connect configured MCP servers so headless runs (CI, scripts) can
 	// use MCP tools too. Best-effort: a failed server is skipped, never
@@ -145,6 +159,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		if (candidate) totalUsage = mergeUsage(totalUsage, candidate);
 	});
 	const lifecycleUnsub = bundle.subscribe((event: AgentEvent) => {
+		reliability?.record(event);
 		if (event.type === "tool_execution_start") {
 			const id = (event as { toolCallId?: string }).toolCallId;
 			if (id) pendingTools.set(id, event.toolName);
@@ -252,6 +267,33 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		bundle.checkpoints.dispose();
 	}
 
+	let receipt: ReliabilityReceipt | undefined;
+	if (reliability) {
+		receipt = reliability.build({
+			tasks: bundle.toolContext.tasks.list(),
+			checkpoints: bundle.checkpoints.list(),
+			durationMs: Date.now() - startedAt,
+		});
+		if (format === "stream-json") {
+			out(`${JSON.stringify({ type: "reliability_receipt", receipt, ts: Date.now() })}\n`);
+		}
+		if (!receipt.ok && !errored && !aborted) {
+			errored = true;
+			errorCode = "reliable_gate_failed";
+			errorMessage = formatReliabilityFailure(receipt);
+			if (format === "stream-json") {
+				out(`${JSON.stringify({ type: "error", code: errorCode, error: errorMessage, ts: Date.now() })}\n`);
+			} else if (format !== "json") {
+				err(`error: ${errorMessage}\n`);
+			}
+		} else if (receipt.ok && format === "text") {
+			err(
+				`[reliable OK] ${receipt.summary.completedTasks}/${receipt.summary.taskCount} tasks complete; ` +
+					`${receipt.summary.verificationCount} verification command${receipt.summary.verificationCount === 1 ? "" : "s"} passed.\n`,
+			);
+		}
+	}
+
 	const exitCode = aborted ? 130 : errored ? errorExitCode : 0;
 
 	if (format === "json") {
@@ -265,6 +307,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 			model: { provider: bundle.model.provider, id: bundle.model.id, name: bundle.model.name },
 			source: bundle.source,
 			durationMs: Date.now() - startedAt,
+			receipt,
 		});
 		out(`${JSON.stringify(payload)}\n`);
 	}
@@ -299,6 +342,7 @@ interface JsonResultInput {
 	model: { provider: string; id: string; name: string };
 	source: string;
 	durationMs: number;
+	receipt?: ReliabilityReceipt;
 }
 
 /** Exported for unit tests — production code reaches it through runHeadless. */
@@ -313,6 +357,7 @@ export function buildJsonResult(input: JsonResultInput): Record<string, unknown>
 		source: input.source,
 		durationMs: input.durationMs,
 		usage: input.usage,
+		...(input.receipt ? { receipt: input.receipt } : {}),
 		messageCount: input.messages.length,
 		finalText: lastAssistant ? extractText(lastAssistant) : "",
 		messages: input.messages,

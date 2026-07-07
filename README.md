@@ -38,7 +38,13 @@ For a trusted one-shot build from scripts or CI:
 
 ```sh
 codebase auto "build a small dashboard and run the tests"
+codebase auto --reliable "fix the auth refresh race and prove it"
 ```
+
+`--reliable` fails the run unless the agent keeps a task list, completes the
+tasks, and records a passing verification command. With `--output json`, the
+result includes a receipt: tasks, tool calls, verification evidence, usage, and
+rewind checkpoints.
 
 ## Pick your LLM
 
@@ -59,6 +65,7 @@ OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash)
 ## What makes it good
 
 - **🏁 Tournaments.** `/tournament <task>` races several agents on the same change in isolated worktrees, a judge ranks them, you merge the winner. `--models opus,sonnet,haiku` pits models head-to-head on *your* code.
+- **Receipts.** `codebase auto --reliable` turns a one-shot task into an audited run: task lifecycle, verification, tool calls, usage, and checkpoints are captured in JSON.
 - **↺ Rewind anything.** `/rewind` rolls the conversation *and* the files back to before any earlier prompt — a bad turn fully un-happens. Every edit is checkpointed.
 - **🧠 Remembers across sessions.** Pulls durable facts (your prefs, project decisions, the rules you set) out of a session in the background so the next one starts informed. `#note` to add one by hand.
 - **🔌 MCP.** Connect external tool servers (filesystem, Postgres, git, fetch, …) over stdio or remote HTTP, OAuth and all. Their tools splice straight into the agent.

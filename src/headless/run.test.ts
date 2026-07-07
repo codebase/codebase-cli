@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
@@ -31,12 +31,14 @@ describe("runHeadless", () => {
 	let model: Model<string>;
 	let tmpHome: string;
 	let prevHome: string | undefined;
+	let prevCwd: string;
 
 	beforeEach(() => {
 		// Isolate HOME so CredentialsStore can't pick up the dev's real
 		// ~/.codebase login — otherwise the ConfigError tests are non-hermetic
 		// and pass only when no valid credentials happen to exist on the box.
 		prevHome = process.env.HOME;
+		prevCwd = process.cwd();
 		tmpHome = mkdtempSync(join(tmpdir(), "headless-home-"));
 		process.env.HOME = tmpHome;
 		faux = registerFauxProvider({
@@ -58,6 +60,7 @@ describe("runHeadless", () => {
 
 	afterEach(() => {
 		faux.unregister();
+		process.chdir(prevCwd);
 		if (prevHome !== undefined) process.env.HOME = prevHome;
 		else delete process.env.HOME;
 		rmSync(tmpHome, { recursive: true, force: true });
@@ -130,6 +133,106 @@ describe("runHeadless", () => {
 		expect(parsed.finalText).toContain("done");
 		expect(parsed.messageCount).toBeGreaterThanOrEqual(2); // user + assistant
 		expect(parsed.model.id).toBe("test-model");
+	});
+
+	it("reliable json mode includes a receipt when tasks and verification pass", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-pass-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Add coverage" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			receipt: {
+				ok: boolean;
+				summary: { completedTasks: number; verificationCount: number };
+				verification: { command: string }[];
+			};
+		};
+		expect(parsed.ok).toBe(true);
+		expect(parsed.receipt.ok).toBe(true);
+		expect(parsed.receipt.summary.completedTasks).toBe(1);
+		expect(parsed.receipt.summary.verificationCount).toBe(1);
+		expect(parsed.receipt.verification[0]?.command).toBe("npm test");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when no task list was created", async () => {
+		faux.setResponses([fauxAssistantMessage("done without tasks")]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[] };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("no task list was created");
+	});
+
+	it("reliable json mode fails when verification never passed", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Do work" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done without verification."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[] };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("no successful verification command was recorded");
 	});
 
 	it("json mode exits non-zero when the assistant turn ends with a provider error", async () => {

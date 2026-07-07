@@ -26,6 +26,7 @@ interface ParsedRunArgs {
 	prompt?: string;
 	outputFormat?: HeadlessOutputFormat;
 	autoApprove?: boolean;
+	reliable?: boolean;
 	error?: string;
 }
 
@@ -119,33 +120,35 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 		printRunHelp();
 		process.exit(0);
 	}
-	const { prompt, outputFormat, autoApprove, error } = parseRunArgs(argv.slice(1));
+	const { prompt, outputFormat, autoApprove, reliable, error } = parseRunArgs(argv.slice(1));
 	if (error) {
 		process.stderr.write(`${error}\n`);
 		process.exit(2);
 	}
 	if (!prompt) {
-		process.stderr.write("usage: codebase run [--output text|json|stream-json] [--auto-approve] <prompt>\n");
+		process.stderr.write(
+			"usage: codebase run [--output text|json|stream-json] [--auto-approve] [--reliable] <prompt>\n",
+		);
 		process.exit(2);
 	}
 	await ensureFreshCredentials();
-	runHeadless({ prompt, outputFormat, autoApprove }).then((code) => process.exit(code));
+	runHeadless({ prompt, outputFormat, autoApprove, reliable }).then((code) => process.exit(code));
 } else if (argv[0] === "auto") {
 	if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
 		printAutoHelp();
 		process.exit(0);
 	}
-	const { prompt, outputFormat, error } = parseRunArgs(argv.slice(1));
+	const { prompt, outputFormat, reliable, error } = parseRunArgs(argv.slice(1));
 	if (error) {
 		process.stderr.write(`${error}\n`);
 		process.exit(2);
 	}
 	if (!prompt) {
-		process.stderr.write("usage: codebase auto [--output text|json|stream-json] <prompt>\n");
+		process.stderr.write("usage: codebase auto [--output text|json|stream-json] [--reliable] <prompt>\n");
 		process.exit(2);
 	}
 	await ensureFreshCredentials();
-	runHeadless({ prompt, outputFormat, autoApprove: true }).then((code) => process.exit(code));
+	runHeadless({ prompt, outputFormat, autoApprove: true, reliable }).then((code) => process.exit(code));
 } else {
 	setTerminalTitle("codebase");
 	// Print a one-line warning if any restriction is off so the user can't
@@ -187,6 +190,7 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 	const remaining: string[] = [];
 	let outputFormat: HeadlessOutputFormat | undefined;
 	let autoApprove = false;
+	let reliable = false;
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		if (a === "--output" || a === "-o") {
@@ -210,10 +214,14 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 			autoApprove = true;
 			continue;
 		}
+		if (a === "--reliable") {
+			reliable = true;
+			continue;
+		}
 		remaining.push(a);
 	}
 	const prompt = remaining.join(" ").trim();
-	return { prompt: prompt || undefined, outputFormat, autoApprove };
+	return { prompt: prompt || undefined, outputFormat, autoApprove, reliable };
 }
 
 function printUnrestrictedBanner(): void {
@@ -239,6 +247,8 @@ function printHelp(): void {
 			"                               one-shot headless run, prints to stdout",
 			"  codebase run --auto-approve --output json|stream-json <prompt>",
 			"                               one-shot run with structured output",
+			"  codebase run --auto-approve --reliable <prompt>",
+			"                               require tasks, verification, and a receipt",
 			"  codebase auto <prompt>       shortcut for run --auto-approve",
 			"                               one-shot build/change in a trusted workspace",
 			"  codebase auth login          sign in via codebase.design browser OAuth",
@@ -310,13 +320,14 @@ function printMcpHelp(): void {
 function printRunHelp(): void {
 	process.stdout.write(
 		[
-			"usage: codebase run [--output text|json|stream-json] [--auto-approve] <prompt>",
+			"usage: codebase run [--output text|json|stream-json] [--auto-approve] [--reliable] <prompt>",
 			"",
 			"Run one non-interactive agent turn and print the result to stdout.",
 			"",
 			"Options:",
 			"  --output, -o text|json|stream-json   choose stdout format (default: text)",
 			"  --auto-approve, --yes, -y            required: allow tool calls without interactive prompts",
+			"  --reliable                           fail without completed tasks + verification receipt",
 			"  --help, -h                           show this help",
 			"",
 			"Shortcut:",
@@ -329,7 +340,7 @@ function printRunHelp(): void {
 function printAutoHelp(): void {
 	process.stdout.write(
 		[
-			"usage: codebase auto [--output text|json|stream-json] <prompt>",
+			"usage: codebase auto [--output text|json|stream-json] [--reliable] <prompt>",
 			"",
 			"Run one trusted, non-interactive coding task with tool calls auto-approved.",
 			"",
@@ -338,6 +349,7 @@ function printAutoHelp(): void {
 			"",
 			"Options:",
 			"  --output, -o text|json|stream-json   choose stdout format (default: text)",
+			"  --reliable                           fail without completed tasks + verification receipt",
 			"  --help, -h                           show this help",
 			"",
 		].join("\n"),
