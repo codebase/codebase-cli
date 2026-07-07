@@ -252,17 +252,19 @@ bench/
 └── README.md            # this file
 ```
 
-## Self-test (no LLM required)
+## Self-tests (no LLM required)
 
-The aggregate report has a no-LLM Vitest smoke test that creates a synthetic
-JSONL sweep and verifies markdown + JSON scorecard provenance:
+The benchmark surface has no-LLM Vitest smoke tests:
 
 ```sh
-npx vitest --run bench/aggregate.test.mjs
+npx vitest --run bench/run.test.mjs bench/aggregate.test.mjs
 ```
 
-A future runner self-test should add a fake CLI that exercises
-JSON-parsing + `verify.sh` execution without a real LLM call.
+- `bench/run.test.mjs` runs the real `fix-typo` scenario through a fake
+  Codebase CLI and verifies setup copying, JSON parsing, `verify.sh`,
+  receipt capture, JSONL output, and provenance.
+- `bench/aggregate.test.mjs` creates a synthetic JSONL sweep and verifies
+  markdown + JSON scorecard provenance.
 
 ## CI integration (future)
 
