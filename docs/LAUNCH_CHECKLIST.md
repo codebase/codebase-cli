@@ -68,6 +68,24 @@ For SSH sessions (Linux box accessed from a desktop):
 6. Sign in in the desktop browser.
 7. Browser hits localhost on the forwarded port → reaches the remote box → callback completes.
 
+## Web build OAuth handoff
+
+Run after the web OAuth build scopes and x402 Bearer-token bypass are
+deployed to codebase.design.
+
+```sh
+codebase auth login          # refreshes local token with build scopes
+npm run build                # makes dist/cli.js current
+npm run smoke:web-build -- --dry-run
+npm run smoke:web-build
+```
+
+Verify: output ends with `WEB BUILD SMOKE OK`, plus `session:` and a
+`preview:` URL. A payment-gate failure means codebase.design is still
+challenging OAuth build requests before accepting Bearer auth. A missing
+scope failure means the tester needs to re-login after the deployed OAuth
+seed includes `builds:read` and `builds:write`.
+
 ## BYOK flow (no web auth)
 
 For each platform:
