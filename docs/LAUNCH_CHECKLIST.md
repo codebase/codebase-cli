@@ -100,6 +100,20 @@ seed includes `builds:read` and `builds:write`.
   The CLI now preflights missing build scopes before POSTing to
   `/api/v1/builds`, so old tokens get an actionable re-login/deploy hint.
 
+2026-07-08 live production E2E result:
+
+- After the production web OAuth/x402 fixes deployed, `codebase auth login`
+  minted a token with `inference projects credits builds:read builds:write`.
+- `codebase auth status` reported `web build: ready`.
+- `codebase usage` returned `Plan: Free`, `Credits left: 50`, and
+  `Build turns remaining: 5`.
+- `codebase web-build --wait ...` accepted and completed a real build:
+  session `5d4c0257-d019-4078-a583-751beda254db`, project `d71a1c97`,
+  preview `https://codebase.design/preview/d71a1c97`.
+- The first production wait attempt exposed status polling rate limits
+  (`429 rate_limited`, `Retry after 28s`). The CLI now uses a 30s default
+  poll interval and honors `Retry-After` while waiting.
+
 ## BYOK flow (no web auth)
 
 For each platform:

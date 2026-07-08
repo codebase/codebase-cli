@@ -239,6 +239,24 @@ describe("ProjectClient build endpoints", () => {
 			status: 403,
 		});
 	});
+
+	it("surfaces Retry-After from rate-limited build responses", async () => {
+		const credentials = makeStore(dataRoot);
+		const fetchFn = mockFetch(
+			() =>
+				new Response(JSON.stringify({ error: "rate_limited", error_description: "Too many requests" }), {
+					status: 429,
+					headers: { "retry-after": "28" },
+				}),
+		);
+		const client = new ProjectClient({ credentials, fetchFn });
+
+		await expect(client.getBuildStatus("sess-1")).rejects.toMatchObject({
+			name: "ProjectClientError",
+			status: 429,
+			retryAfterMs: 28_000,
+		});
+	});
 });
 
 describe("ProjectClient.hasCredentials", () => {

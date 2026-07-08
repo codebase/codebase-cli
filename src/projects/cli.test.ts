@@ -201,6 +201,48 @@ describe("runProjectSubcommand", () => {
 		expect(result.stdout.join("\n")).toContain("preview: https://codebase.design/preview/proj-1");
 	});
 
+	it("backs off and keeps waiting when build status is rate limited", async () => {
+		let calls = 0;
+		const sleeps: number[] = [];
+		const client = {
+			startBuild: async () => ({
+				sessionId: "sess-1",
+				projectId: "proj-1",
+				status: "building",
+				model: "codebase/d4f",
+			}),
+			getBuildStatus: async () => {
+				calls++;
+				if (calls === 1) throw new ProjectClientError("request failed: 429 rate_limited", 429, 28_000);
+				return {
+					sessionId: "sess-1",
+					status: "completed",
+					projectId: "proj-1",
+					filesCreated: ["index.html"],
+				};
+			},
+			ensureBuildPreview: async () => ({ ok: true, previewPath: "/preview/proj-1" }),
+			absoluteUrl: (path: string) => `https://codebase.design${path.startsWith("/") ? path : `/${path}`}`,
+			hasCredentials: () => true,
+		} as unknown as ProjectClient;
+		const stdout: string[] = [];
+		const stderr: string[] = [];
+
+		const code = await runProjectSubcommand(["project", "build", "--wait", "Build", "a", "demo"], {
+			client,
+			stdout: (m) => stdout.push(m),
+			stderr: (m) => stderr.push(m),
+			sleep: async (ms) => {
+				sleeps.push(ms);
+			},
+		});
+
+		expect(code).toBe(0);
+		expect(sleeps).toEqual([28_000]);
+		expect(stdout.join("\n")).toContain("build sess-1: completed");
+		expect(stderr).toEqual([]);
+	});
+
 	it("shows build status and cancel controls", async () => {
 		const status = await runProject(
 			["project", "status", "sess-1"],

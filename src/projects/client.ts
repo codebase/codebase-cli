@@ -44,6 +44,7 @@ export class ProjectClientError extends Error {
 	constructor(
 		message: string,
 		public readonly status?: number,
+		public readonly retryAfterMs?: number,
 	) {
 		super(message);
 		this.name = "ProjectClientError";
@@ -209,6 +210,7 @@ export class ProjectClient {
 			throw new ProjectClientError(
 				`${action} failed: ${res.status} ${await responseMessage(res)}`.trim(),
 				res.status,
+				parseRetryAfterMs(res.headers.get("retry-after")),
 			);
 		}
 		return (await res.json()) as T;
@@ -250,6 +252,15 @@ async function responseMessage(res: Response): Promise<string> {
 	} catch {
 		return text.slice(0, 300);
 	}
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+	if (!value) return undefined;
+	const seconds = Number(value);
+	if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+	const dateMs = Date.parse(value);
+	if (!Number.isFinite(dateMs)) return undefined;
+	return Math.max(0, dateMs - Date.now());
 }
 
 function defaultPullPath(projectId: string): string {

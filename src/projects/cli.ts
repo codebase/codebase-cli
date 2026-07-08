@@ -4,7 +4,7 @@ import type { BuildStatusResponse, PlatformProject } from "./types.js";
 
 const DEFAULT_LIST_LIMIT = 25;
 const DEFAULT_BUILD_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_BUILD_POLL_MS = 2_000;
+const DEFAULT_BUILD_POLL_MS = 30_000;
 
 export interface ProjectCliOptions {
 	stdout?: (msg: string) => void;
@@ -320,9 +320,21 @@ async function waitForBuild(
 	const deadline = Date.now() + timeoutMs;
 	let last: BuildStatusResponse | undefined;
 	while (Date.now() <= deadline) {
-		last = await client.getBuildStatus(sessionId);
+		try {
+			last = await client.getBuildStatus(sessionId);
+		} catch (err) {
+			if (err instanceof ProjectClientError && err.status === 429) {
+				const remaining = deadline - Date.now();
+				if (remaining <= 0) break;
+				await sleep(Math.min(err.retryAfterMs ?? pollMs, remaining));
+				continue;
+			}
+			throw err;
+		}
 		if (last.status !== "building") return last;
-		await sleep(pollMs);
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) break;
+		await sleep(Math.min(pollMs, remaining));
 	}
 	throw new ProjectClientError(
 		`timed out waiting for build ${sessionId}; run \`codebase project status ${sessionId}\` to keep watching`,
