@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,6 +26,41 @@ describe("ReceiptStore", () => {
 		expect(store.load(older.id)?.prompt).toBe("first");
 		expect(store.load("latest")?.id).toBe(newer.id);
 		expect(store.list().map((item) => item.id)).toEqual([newer.id, older.id]);
+	});
+
+	it("redacts obvious secrets from durable receipt records", () => {
+		const secret = "ghp_0123456789abcdef0123456789abcdef0123";
+		const record = store.save(
+			makeInput({
+				prompt: `fix this with ${secret}`,
+				error: `failed with ${secret}`,
+				finalText: `done, do not leak ${secret}`,
+				receipt: {
+					...makeReceipt(),
+					tools: [
+						{
+							id: "call-1",
+							name: "shell",
+							args: { command: `GITHUB_TOKEN=${secret} npm test` },
+							status: "done",
+							order: 1,
+							startedAt: 1,
+							endedAt: 2,
+							details: { command: `GITHUB_TOKEN=${secret} npm test`, exitCode: 0 },
+						},
+					],
+				},
+			}),
+		);
+		const raw = readFileSync(store.pathFor(record.id), "utf8");
+		const saved = store.load(record.id);
+
+		expect(raw).not.toContain(secret);
+		expect(raw).toContain("[REDACTED]");
+		expect(saved?.prompt).toContain("[REDACTED]");
+		expect(saved?.error).toContain("[REDACTED]");
+		expect(saved?.finalText).toContain("[REDACTED]");
+		expect(saved?.receipt.tools[0]?.args.command).toContain("[REDACTED]");
 	});
 });
 

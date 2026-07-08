@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
+import { redactSecrets } from "../memory/secrets.js";
 import type { ReliabilityReceipt } from "./reliable.js";
 
 export const RECEIPT_SCHEMA_VERSION = 1;
@@ -79,7 +80,7 @@ export class ReceiptStore {
 			schemaVersion: RECEIPT_SCHEMA_VERSION,
 			id: newReceiptId(createdAtMs),
 			createdAt: new Date(createdAtMs).toISOString(),
-			...input,
+			...redactReceiptInput(input),
 		};
 		const path = this.pathFor(record.id);
 		const tmp = `${path}.${randomBytes(4).toString("hex")}.tmp`;
@@ -132,6 +133,19 @@ export class ReceiptStore {
 			return null;
 		}
 	}
+}
+
+function redactReceiptInput(input: SaveReceiptInput): SaveReceiptInput {
+	return redactReceiptValue(input) as SaveReceiptInput;
+}
+
+function redactReceiptValue(value: unknown): unknown {
+	if (typeof value === "string") return redactSecrets(value);
+	if (Array.isArray(value)) return value.map((item) => redactReceiptValue(item));
+	if (!value || typeof value !== "object") return value;
+	return Object.fromEntries(
+		Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, redactReceiptValue(item)]),
+	);
 }
 
 function isReceiptRecord(value: unknown): value is ReceiptRecord {

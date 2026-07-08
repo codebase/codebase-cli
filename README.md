@@ -48,7 +48,8 @@ file change, ties verification to completed task work, and requires the final
 answer to positively name the fresh verification command. With `--output json`,
 the result includes a receipt: task lifecycle, per-task evidence, file
 mutations, verification evidence, final-answer proof, usage, and rewind
-checkpoints.
+checkpoints. Obvious secret-looking values are redacted before receipts are
+saved.
 Failed receipt summaries show gate status and next actions instead of only
 dumping raw audit strings.
 Inspect the latest one with `codebase receipt`, list saved runs with

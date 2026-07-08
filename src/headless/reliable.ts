@@ -1,5 +1,6 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { CheckpointEntry } from "../checkpoint/store.js";
+import { redactSecrets } from "../memory/secrets.js";
 import type { Task, TaskStatus } from "../tools/task-store.js";
 
 const MUTATING_FILE_TOOLS = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
@@ -611,11 +612,20 @@ function summarizeResult(toolName: string, result: unknown): Record<string, unkn
 function pick(input: Record<string, unknown>, keys: string[]): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
 	for (const key of keys) {
-		if (input[key] !== undefined) out[key] = input[key];
+		if (input[key] !== undefined) out[key] = redactReceiptValue(input[key]);
 	}
 	return out;
 }
 
 function byteLength(value: unknown): number | undefined {
 	return typeof value === "string" ? Buffer.byteLength(value, "utf8") : undefined;
+}
+
+function redactReceiptValue(value: unknown): unknown {
+	if (typeof value === "string") return redactSecrets(value);
+	if (Array.isArray(value)) return value.map((item) => redactReceiptValue(item));
+	if (!value || typeof value !== "object") return value;
+	return Object.fromEntries(
+		Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, redactReceiptValue(item)]),
+	);
 }

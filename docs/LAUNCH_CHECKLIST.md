@@ -160,6 +160,8 @@ for a signed-in user unless the tester explicitly switched models.
 Verify reliable mode prints a `[receipt]` path, `codebase receipt` can
 show it, and the saved summary includes task evidence, fresh post-mutation
 verification, completed-task verification evidence, and final-answer proof.
+Verify saved receipt JSON does not preserve obvious secret-looking values
+from prompts, final text, task/tool args, or tool details.
 For a forced reliable-mode failure, verify `codebase receipt` shows gate
 status plus next actions, and `codebase receipt list` includes the first
 failure reason.

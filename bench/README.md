@@ -25,7 +25,8 @@ Per-run metrics captured into `bench/results/<sweep>/runs.jsonl`:
 - **Reliability receipt** when run with `--reliable true`: task completion,
   per-task evidence, file-mutation evidence, post-mutation verification
   evidence, completed-task verification evidence, final-answer proof, failed
-  tool count, checkpoints, and failure reasons
+  tool count, checkpoints, and failure reasons. Obvious secret-looking values
+  are redacted before durable receipt storage.
 - **Final assistant text** (truncated to 1KB for readability)
 - **Verify exit code + last 500 bytes of stderr** when it failed
 - **Verify stdout** tail when scenario verifiers emit extra diagnostics
