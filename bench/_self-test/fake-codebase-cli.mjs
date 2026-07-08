@@ -17,6 +17,7 @@ const reliable = args.includes("--reliable");
 const target = join(process.cwd(), "src", "index.ts");
 const before = readFileSync(target, "utf8");
 writeFileSync(target, before.replace("helo world", "hello world"));
+const fakeSecret = "ghp_0123456789abcdef0123456789abcdef0123";
 
 const receipt = reliable
 	? {
@@ -44,10 +45,10 @@ const receipt = reliable
 					status: "completed",
 					toolCalls: [{ id: "call-3", name: "edit_file", order: 3, status: "done", startedAt: 1, endedAt: 2 }],
 					mutations: [{ toolCallId: "call-3", tool: "edit_file", path: "src/index.ts", order: 3 }],
-					verification: [{ toolCallId: "call-5", command: "npm test", exitCode: 0, order: 5 }],
+					verification: [{ toolCallId: "call-5", command: `GITHUB_TOKEN=${fakeSecret} npm test`, exitCode: 0, order: 5 }],
 				},
 			],
-			verification: [{ toolCallId: "call-5", command: "npm test", exitCode: 0, order: 5 }],
+			verification: [{ toolCallId: "call-5", command: `GITHUB_TOKEN=${fakeSecret} npm test`, exitCode: 0, order: 5 }],
 			finalAnswer: { mentionsFreshVerification: true, matchedVerificationCommands: ["npm test"] },
 			failures: [],
 			warnings: [],
@@ -83,7 +84,7 @@ const output = {
 		{ role: "assistant", content: [{ type: "text", text: "Fixed. Verified with npm test." }] },
 	],
 	messageCount: 3,
-	finalText: "Fixed. Verified with npm test.",
+	finalText: `Fixed. Verified with npm test. Debug token: ${fakeSecret}`,
 	...(receipt ? { receipt, receiptId: "fake-receipt", receiptPath: "/tmp/fake-receipt.json" } : {}),
 };
 

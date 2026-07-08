@@ -31,6 +31,14 @@ Per-run metrics captured into `bench/results/<sweep>/runs.jsonl`:
 - **Verify exit code + last 500 bytes of stderr** when it failed
 - **Verify stdout** tail when scenario verifiers emit extra diagnostics
 
+Durable/public benchmark artifacts (`runs.jsonl`, generated markdown, and JSON
+scorecards) run through a high-confidence secret redactor for obvious API keys,
+PATs, and private keys. The per-run `bench.publicArtifact.secretRedaction`
+metadata records the ruleset version and replacement count. Aggregation applies
+the same scan again so older sweeps are redacted before report generation.
+Temporary `.codebase-bench/agent.json` files stay raw while the verifier runs so
+secret-hygiene scenarios can still catch leaks in agent behavior.
+
 The runner also writes the raw agent JSON envelope into each temporary project
 at `.codebase-bench/agent.json` and exposes its path as
 `CODEBASE_BENCH_AGENT_JSON` to `verify.sh`. Scenarios can grade transcript-level
@@ -154,7 +162,8 @@ counts are reported separately.
 The methodology section is part of the evidence, not filler. New sweeps record
 the CLI build, repo commit, dirty state, Node version, reliable-mode flag, and
 home-isolation flag in each JSONL row; the markdown and JSON scorecard surface
-those values so launch claims can be traced back to the exact build tested.
+those values plus public-artifact redaction counts so launch claims can be
+traced back to the exact build tested without publishing obvious secrets.
 
 The first table is the public scorecard. It is meant to be readable by a
 launch reviewer without opening the JSONL:

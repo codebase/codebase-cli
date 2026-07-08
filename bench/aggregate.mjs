@@ -20,6 +20,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { redactBenchmarkRecord, SECRET_REDACTION_RULESET_VERSION } from "./redact.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -80,8 +81,24 @@ function loadSweep(id) {
 	const lines = readFileSync(path, "utf8")
 		.split("\n")
 		.filter((l) => l.trim().length > 0);
-	const runs = lines.map((line) => JSON.parse(line));
-	return { id, runs };
+	let reportTimeRedactions = 0;
+	let runsWithReportTimeRedactions = 0;
+	const runs = lines.map((line) => {
+		const redacted = redactBenchmarkRecord(JSON.parse(line));
+		reportTimeRedactions += redacted.replacements;
+		if (redacted.replacements > 0) runsWithReportTimeRedactions += 1;
+		return redacted.value;
+	});
+	return {
+		id,
+		runs,
+		redaction: {
+			applied: true,
+			rulesVersion: SECRET_REDACTION_RULESET_VERSION,
+			reportTimeRedactions,
+			runsWithReportTimeRedactions,
+		},
+	};
 }
 
 function writeReportFile(path, contents) {
@@ -104,6 +121,7 @@ function buildScorecardJson(sweeps, generatedAt) {
 				scenarios,
 				models: summarizeModels(sweep.runs),
 				provenance: summarizeProvenance(sweep.runs),
+				redaction: summarizeRedaction(sweep),
 				reliableReceiptRuns: sweep.runs.filter((run) => run.receipt).length,
 				publicScorecard,
 				claims: {
@@ -180,6 +198,12 @@ function renderMethodology(scorecard) {
 		);
 	} else {
 		items.push("- Run provenance: not recorded in this sweep (older harness output)");
+	}
+	if (scorecard.redaction?.applied) {
+		const r = scorecard.redaction;
+		items.push(
+			`- Public artifact redaction: ruleset v${r.rulesVersion}; writer redactions ${r.writerRedactions}; report-time redactions ${r.reportTimeRedactions}`,
+		);
 	}
 	lines.push(items.join("\n"));
 	return lines;
@@ -275,6 +299,21 @@ function summarizeProvenance(runs) {
 		isolatedHomeRuns: benches.filter((bench) => bench.isolateHome === true).length,
 		nodeVersions: countedValues(benches.map((bench) => bench.nodeVersion ?? "unknown")),
 		timeoutsMs: countedValues(benches.map((bench) => bench.timeoutMs ?? "unknown")),
+	};
+}
+
+function summarizeRedaction(sweep) {
+	const writerSummaries = sweep.runs
+		.map((run) => run.bench?.publicArtifact?.secretRedaction)
+		.filter(Boolean);
+	const writerRedactions = writerSummaries.reduce((sum, item) => sum + numeric(item.replacements), 0);
+	return {
+		applied: true,
+		rulesVersion: SECRET_REDACTION_RULESET_VERSION,
+		writerRedactions,
+		runsWithWriterRedactions: writerSummaries.filter((item) => numeric(item.replacements) > 0).length,
+		reportTimeRedactions: sweep.redaction?.reportTimeRedactions ?? 0,
+		runsWithReportTimeRedactions: sweep.redaction?.runsWithReportTimeRedactions ?? 0,
 	};
 }
 
@@ -572,6 +611,10 @@ function pctDelta(a, b) {
 	const d = ((b - a) / a) * 100;
 	const sign = d > 0 ? "+" : "";
 	return `${sign}${d.toFixed(0)}%`;
+}
+
+function numeric(value) {
+	return Number.isFinite(value) ? value : 0;
 }
 
 function parseArgs(argv) {

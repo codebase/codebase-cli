@@ -20,6 +20,7 @@ describe("bench run", () => {
 
 	it("runs a scenario through a fake CLI, verify.sh, JSONL receipts, and provenance", () => {
 		sweepId = `run-test-${process.pid}-${Date.now()}`;
+		const fakeSecret = "ghp_0123456789abcdef0123456789abcdef0123";
 
 		const stdout = execFileSync(
 			process.execPath,
@@ -45,6 +46,8 @@ describe("bench run", () => {
 
 		const jsonl = readFileSync(join(resultsDir, sweepId, "runs.jsonl"), "utf8").trim();
 		const run = JSON.parse(jsonl);
+		expect(jsonl).not.toContain(fakeSecret);
+		expect(jsonl).toContain("[REDACTED]");
 		expect(run).toMatchObject({
 			scenario: "fix-typo",
 			run: 1,
@@ -54,6 +57,13 @@ describe("bench run", () => {
 			receiptPassed: true,
 			toolCalls: 5,
 		});
+		expect(run.finalText).toContain("[REDACTED]");
+		expect(run.receipt.verification[0].command).toContain("[REDACTED]");
+		expect(run.bench.publicArtifact.secretRedaction).toMatchObject({
+			applied: true,
+			rulesVersion: 1,
+		});
+		expect(run.bench.publicArtifact.secretRedaction.replacements).toBeGreaterThanOrEqual(3);
 		expect(run.toolNames).toEqual(["create_task", "update_task", "edit_file", "shell", "update_task"]);
 		expect(run.receipt.summary).toMatchObject({
 			completedTasks: 1,

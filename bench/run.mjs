@@ -49,6 +49,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { redactBenchmarkRecord, SECRET_REDACTION_RULESET_VERSION } from "./redact.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -98,8 +99,9 @@ let allOk = true;
 for (const name of scenarios) {
 	for (let i = 1; i <= runs; i++) {
 		const result = await runOne(name, i);
-		appendJsonl(jsonlPath, result);
-		printSummary(result);
+		const publicResult = preparePublicResult(result);
+		appendJsonl(jsonlPath, publicResult);
+		printSummary(publicResult);
 		if (!result.ok || !result.verifyPassed) allOk = false;
 	}
 }
@@ -344,6 +346,25 @@ function listScenarios() {
 
 function appendJsonl(path, record) {
 	writeFileSync(path, `${JSON.stringify(record)}\n`, { flag: "a" });
+}
+
+function preparePublicResult(result) {
+	const redacted = redactBenchmarkRecord(result);
+	const record = redacted.value;
+	return {
+		...record,
+		bench: {
+			...(record.bench ?? {}),
+			publicArtifact: {
+				...(record.bench?.publicArtifact ?? {}),
+				secretRedaction: {
+					applied: true,
+					rulesVersion: SECRET_REDACTION_RULESET_VERSION,
+					replacements: redacted.replacements,
+				},
+			},
+		},
+	};
 }
 
 function printSummary(r) {

@@ -9,6 +9,7 @@
 - Benchmark scenarios must be reproducible and should document model/provider assumptions.
 - Do not treat benchmark results as marketing claims unless methodology and dates are included.
 - Keep generated result files separate from source scenarios.
+- Public benchmark JSONL, markdown, and JSON scorecards must run high-confidence secret redaction before publication; verifiers may still inspect raw temporary agent JSON to grade leak behavior.
 
 ## Work Guidance
 
