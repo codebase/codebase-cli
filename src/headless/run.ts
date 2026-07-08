@@ -6,6 +6,7 @@ import { userFacingErrorMessage } from "../errors/user-facing.js";
 import { ReceiptStore } from "./receipt-store.js";
 import {
 	formatReliabilityFailure,
+	formatReliabilityRepairPrompt,
 	RELIABLE_MODE_PROMPT,
 	type ReliabilityReceipt,
 	ReliabilityRecorder,
@@ -192,7 +193,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		// Route through the bundle helper so UserPromptSubmit hooks fire on
 		// headless runs too (CI scripts, scheduled jobs). A hook veto exits
 		// with code 1 and the reason printed to stderr.
-		const submitResult = await bundle.submitUserPrompt(opts.prompt);
+		const submittedPrompt = opts.reliable ? buildReliableUserPrompt(opts.prompt) : opts.prompt;
+		const submitResult = await bundle.submitUserPrompt(submittedPrompt);
 		if (!submitResult.submitted) {
 			errored = true;
 			errorCode = "prompt_blocked";
@@ -246,6 +248,31 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 				out(`${JSON.stringify({ type: "error", code: errorCode, error: errorMessage, ts: Date.now() })}\n`);
 			} else if (format !== "json") {
 				err(`agent error: ${errorMessage}\n`);
+			}
+		}
+		if (!errored && !aborted && reliability) {
+			const draftReceipt = reliability.build({
+				tasks: bundle.toolContext.tasks.list(),
+				checkpoints: bundle.checkpoints.list(),
+				durationMs: Date.now() - startedAt,
+				finalText: latestAssistantText(bundle.agent.state.messages),
+			});
+			if (!draftReceipt.ok) {
+				try {
+					await bundle.agent.prompt(formatReliabilityRepairPrompt(draftReceipt));
+				} catch {
+					if (format === "stream-json") {
+						out(
+							`${JSON.stringify({
+								type: "reliability_repair_error",
+								error: "Reliable-mode repair turn failed; falling back to the original receipt failure.",
+								ts: Date.now(),
+							})}\n`,
+						);
+					} else if (format !== "json") {
+						err("[reliable repair failed] falling back to the original receipt failure\n");
+					}
+				}
 			}
 		}
 	} catch (e) {
@@ -351,6 +378,23 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	}
 
 	return exitCode;
+}
+
+function buildReliableUserPrompt(prompt: string): string {
+	return [
+		"<system-reminder>",
+		"Reliable mode is enabled for this run. The run will fail unless the transcript produces an auditable receipt:",
+		"- create task entries before doing work, even for simple, read-only, or memory-only requests",
+		"- set exactly one task to in_progress before using non-task tools for that task",
+		"- complete or cancel every task before the final answer",
+		"- for file/code changes, run a passing verification or smoke command after the last file change while a task is in_progress",
+		"- do not make verification pass by hiding failures with `|| true` or `|| echo`",
+		"- for file/code changes, name the exact fresh passing command in the final answer",
+		"- for read-only or memory-only work, say no file-change verification was needed",
+		"</system-reminder>",
+		"",
+		prompt,
+	].join("\n");
 }
 
 function mergeUsage(a: Usage, b: Usage): Usage {
@@ -465,6 +509,8 @@ function latestAssistantError(messages: AgentMessage[]): string | undefined {
 }
 
 function latestAssistantText(messages: AgentMessage[]): string {
-	const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+	const lastAssistant = [...messages]
+		.reverse()
+		.find((m) => m.role === "assistant" && extractText(m).trim().length > 0);
 	return lastAssistant ? extractText(lastAssistant) : "";
 }

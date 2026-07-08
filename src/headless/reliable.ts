@@ -11,13 +11,16 @@ export const RELIABLE_MODE_PROMPT = `# Reliable mode
 This headless run is being audited for reliability. Treat the user's request as work that must be proven, not just attempted.
 
 Rules:
-- Use create_task/update_task for any non-trivial work. Keep exactly one task in_progress at a time.
+- In reliable mode, always use create_task/update_task, even for simple, read-only, or memory-only work. Keep exactly one task in_progress at a time.
+- Move a task to in_progress before using non-task tools for that task.
 - Do not mark a task completed until its work is actually done.
 - Make completed tasks auditable: while each task is in_progress, use tools that leave evidence (file reads/writes, shell commands, searches, or other relevant tool calls).
-- Track verification as task work: either keep the implementation task in_progress until verification passes, or create a separate verification task and run the check while that task is in_progress.
-- Run a meaningful verification command after the final file change and before the final answer (tests, build, lint, typecheck, or a project-specific verify script).
+- For code or file changes, track verification as task work: either keep the implementation task in_progress until verification passes, or create a separate verification task and run the check while that task is in_progress.
+- For code or file changes, run a meaningful verification command after the final file change and before the final answer (tests, build, lint, typecheck, smoke run, or a project-specific verify script).
+- Do not make verification commands pass by masking failures with fallbacks like "|| true" or "|| echo".
 - If verification fails, fix the underlying issue and run verification again.
-- In the final answer, name the verification command that passed.`;
+- For code or file changes, name the fresh passing verification command in the final answer.
+- For read-only or memory-only work, keep the task lifecycle auditable and state that no file-change verification was needed.`;
 
 export interface ReceiptToolCall {
 	id: string;
@@ -184,14 +187,16 @@ export class ReliabilityRecorder {
 		if (tasks.length === 0) failures.push("no task list was created");
 		if (tasks.length > 0 && completedTasks.length === 0) failures.push("no tasks were completed");
 		if (openTasks.length > 0) failures.push(`open tasks remain: ${openTasks.map((t) => t.id).join(", ")}`);
-		if (verification.length === 0) failures.push("no successful verification command was recorded");
+		if (mutations.length > 0 && verification.length === 0) {
+			failures.push("no successful verification command was recorded");
+		}
 		if (verification.length > 0 && completedTasksWithVerification.length === 0) {
 			failures.push("no completed task captured verification evidence");
 		}
 		if (mutations.length > 0 && verification.length > 0 && verificationAfterLastMutation.length === 0) {
 			failures.push("successful verification ran before the last file mutation");
 		}
-		if (verificationAfterLastMutation.length > 0 && !finalAnswer.mentionsFreshVerification) {
+		if (mutations.length > 0 && verificationAfterLastMutation.length > 0 && !finalAnswer.mentionsFreshVerification) {
 			failures.push(
 				`final answer did not name a fresh passing verification command: ${verificationAfterLastMutation.map((item) => item.command).join(", ")}`,
 			);
@@ -477,6 +482,26 @@ export function formatReliabilityFailure(receipt: ReliabilityReceipt): string {
 	return `Reliable mode failed: ${receipt.failures.join("; ")}.`;
 }
 
+export function formatReliabilityRepairPrompt(receipt: ReliabilityReceipt): string {
+	const lines = [
+		"<system-reminder>",
+		"Reliable mode receipt audit failed. Before giving the final answer, fix the receipt gaps below.",
+		"",
+		"Receipt failures:",
+		...receipt.failures.map((failure) => `- ${failure}`),
+		"",
+		"Repair rules:",
+		"- Do not undo correct work.",
+		"- If no task list exists, create a verification/finalization task, set it in_progress, do the missing auditable work, then complete it.",
+		"- If verification is missing for file changes, run a meaningful passing command now while a task is in_progress.",
+		"- Do not use fallbacks that hide failure, such as `|| true` or `|| echo`.",
+		"- If the final answer missed proof, include the exact fresh passing command string in the final answer.",
+		"- If there were no file changes, state that no file-change verification was needed.",
+		"</system-reminder>",
+	];
+	return lines.join("\n");
+}
+
 function collectVerification(tools: ReceiptToolCall[]): VerificationEvidence[] {
 	const evidence: VerificationEvidence[] = [];
 	for (const tool of sortedTools(tools)) {
@@ -508,16 +533,27 @@ function sortedTools(tools: ReceiptToolCall[]): ReceiptToolCall[] {
 
 function mentionsCommand(text: string, command: string): boolean {
 	const haystack = normalizeCommandText(text);
-	const needle = normalizeCommandText(command);
-	if (!needle) return false;
-	let index = haystack.indexOf(needle);
-	while (index !== -1) {
-		const before = haystack.slice(Math.max(0, index - 90), index);
-		const after = haystack.slice(index + needle.length, index + needle.length + 90);
-		if (!isNegatedCommandMention(before, after)) return true;
-		index = haystack.indexOf(needle, index + needle.length);
+	for (const needle of commandMentionCandidates(command)) {
+		if (!needle) continue;
+		let index = haystack.indexOf(needle);
+		while (index !== -1) {
+			const before = haystack.slice(Math.max(0, index - 90), index);
+			const after = haystack.slice(index + needle.length, index + needle.length + 90);
+			if (!isNegatedCommandMention(before, after)) return true;
+			index = haystack.indexOf(needle, index + needle.length);
+		}
 	}
 	return false;
+}
+
+function commandMentionCandidates(command: string): string[] {
+	const full = normalizeCommandText(command);
+	const candidates = new Set<string>([full]);
+	for (const part of full.split(/\s+(?:&&|\|\||;)\s+/)) {
+		const candidate = part.trim();
+		if (candidate && candidate !== full && isVerificationCommand(candidate)) candidates.add(candidate);
+	}
+	return [...candidates].sort((a, b) => b.length - a.length);
 }
 
 function normalizeCommandText(text: string): string {
@@ -539,12 +575,18 @@ function isNegatedCommandMention(before: string, after: string): boolean {
 
 export function isVerificationCommand(command: string): boolean {
 	const normalized = command.toLowerCase();
+	if (/\|\|\s*(?::|true|echo)\b/.test(normalized)) return false;
 	const patterns = [
 		/\bnpm\s+(test|run\s+(test|check|lint|build|typecheck|verify))\b/,
 		/\bpnpm\s+(test|run\s+(test|check|lint|build|typecheck|verify))\b/,
 		/\byarn\s+(test|run\s+(test|check|lint|build|typecheck|verify)|check|lint|build|typecheck)\b/,
 		/\bbun\s+(test|run\s+(test|check|lint|build|typecheck|verify))\b/,
 		/\b(vitest|jest|pytest|ruff|eslint|tsc)\b/,
+		/\bdeno\s+(test|check|lint)\b/,
+		/\bnode\s+--test\b/,
+		/\bnode\s+(?:[\w./-]*\/)?[\w.-]*(?:test|spec|verify|check)[\w.-]*\.[cm]?[jt]s\b/,
+		/\b(?:npx\s+)?(?:tsx|ts-node)\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?tsx?\b/,
+		/\bnode\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?js\b/,
 		/\b(go test|cargo test|cargo clippy|mvn test|gradle test|swift test|zig build test)\b/,
 		/\b(make|just)\s+(test|check|verify|lint|build)\b/,
 		/(^|[ /])verify\.sh\b/,

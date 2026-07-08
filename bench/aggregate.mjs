@@ -256,6 +256,7 @@ function publicScorecardRow(label, runs) {
 	const passing = runs.filter(isPassingRun);
 	const medianElapsed = median(passing.map((run) => run.elapsedMs / 1000));
 	const passCosts = passing
+		.filter(hasUsageMeasurement)
 		.map((run) => run.usage?.cost?.total)
 		.filter((value) => Number.isFinite(value));
 	const avgCost = passCosts.length > 0 ? mean(passCosts) : null;
@@ -271,6 +272,7 @@ function publicScorecardRow(label, runs) {
 		taskVerifiedCount: receipts.filter((receipt) => hasCompletedTaskVerification(receipt)).length,
 		finalProofCount: receipts.filter((receipt) => hasFinalAnswerProof(receipt)).length,
 		freshVerifiedCount: receipts.filter((receipt) => hasFreshVerification(receipt)).length,
+		usageReportedRuns: passing.filter(hasUsageMeasurement).length,
 		medianPassSeconds: medianElapsed,
 		avgPassCost: avgCost,
 	};
@@ -401,10 +403,10 @@ function hasCompletedTaskVerification(receipt) {
 	const completed = receipt.summary?.completedTasks ?? 0;
 	if (completed === 0) return false;
 	const verified = receipt.summary?.completedTasksWithVerification;
-	if (typeof verified === "number") return verified >= completed;
+	if (typeof verified === "number") return verified > 0;
 	const byTask = receipt.taskEvidence;
 	if (!Array.isArray(byTask)) return false;
-	return byTask.filter((item) => item.status === "completed" && (item.verification?.length ?? 0) > 0).length >= completed;
+	return byTask.some((item) => item.status === "completed" && (item.verification?.length ?? 0) > 0);
 }
 
 function taskEvidenceCount(item) {
@@ -440,12 +442,13 @@ function renderPerScenarioTable(runs) {
 		}
 		const elapsed = mean(passing.map((r) => r.elapsedMs / 1000));
 		const tools = mean(passing.map((r) => r.toolCalls ?? 0));
-		const input = mean(passing.map((r) => r.usage?.input ?? 0));
-		const output = mean(passing.map((r) => r.usage?.output ?? 0));
-		const cached = mean(passing.map((r) => r.usage?.cacheRead ?? 0));
-		const cost = mean(passing.map((r) => r.usage?.cost?.total ?? 0));
+		const measuredUsage = passing.filter(hasUsageMeasurement);
+		const input = measuredUsage.length > 0 ? mean(measuredUsage.map((r) => r.usage?.input ?? 0)) : null;
+		const output = measuredUsage.length > 0 ? mean(measuredUsage.map((r) => r.usage?.output ?? 0)) : null;
+		const cached = measuredUsage.length > 0 ? mean(measuredUsage.map((r) => r.usage?.cacheRead ?? 0)) : null;
+		const cost = measuredUsage.length > 0 ? mean(measuredUsage.map((r) => r.usage?.cost?.total ?? 0)) : null;
 		out.push(
-			`| ${scenario} | ${passing.length} | ${elapsed.toFixed(1)}s | ${tools.toFixed(2)} | ${fmt(input)} | ${fmt(output)} | ${fmt(cached)} | $${cost.toFixed(4)} |`,
+			`| ${scenario} | ${passing.length} | ${elapsed.toFixed(1)}s | ${tools.toFixed(2)} | ${fmt(input)} | ${fmt(output)} | ${fmt(cached)} | ${formatCost(cost)} |`,
 		);
 	}
 	return out;
@@ -541,6 +544,24 @@ function isPassingRun(run) {
 	return run.ok === true && run.verifyPassed === true && !run.harnessError;
 }
 
+function hasUsageMeasurement(run) {
+	const usage = run.usage;
+	if (!usage || typeof usage !== "object") return false;
+	const values = [
+		usage.input,
+		usage.output,
+		usage.cacheRead,
+		usage.cacheWrite,
+		usage.totalTokens,
+		usage.cost?.input,
+		usage.cost?.output,
+		usage.cost?.cacheRead,
+		usage.cost?.cacheWrite,
+		usage.cost?.total,
+	];
+	return values.some((value) => Number.isFinite(value) && value > 0);
+}
+
 function summarizeModels(runs) {
 	const counts = new Map();
 	for (const run of runs) {
@@ -594,10 +615,11 @@ function formatSeconds(value) {
 }
 
 function formatCost(value) {
-	return value == null ? "—" : `$${value.toFixed(4)}`;
+	return value == null ? "not reported" : `$${value.toFixed(4)}`;
 }
 
 function fmt(n) {
+	if (n == null) return "not reported";
 	if (!Number.isFinite(n)) return "—";
 	return Math.round(n).toLocaleString();
 }

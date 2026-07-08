@@ -64,9 +64,25 @@ describe("bench aggregate", () => {
 		expect(sweep.claims.taskFidelity.taskEvidenceCount).toBe(1);
 		expect(sweep.claims.memoryHygiene.passCount).toBe(1);
 	});
+
+	it("does not present all-zero usage as measured free cost", () => {
+		writeFileSync(
+			join(sweepDir, "runs.jsonl"),
+			`${JSON.stringify(makeRun({ scenario: "fix-typo", run: 1, unreportedUsage: true }))}\n`,
+		);
+
+		const markdown = execFileSync(process.execPath, [aggregatePath, sweepId], {
+			cwd: join(__dirname, ".."),
+			encoding: "utf8",
+		});
+
+		expect(markdown).toContain("| Cost | average passing run not reported |");
+		expect(markdown).toContain("| fix-typo | 1 | 12.0s | 4.00 | not reported | not reported | not reported | not reported |");
+		expect(markdown).not.toContain("$0.0000");
+	});
 });
 
-function makeRun({ scenario, run, failure, writerRedactions = 0 }) {
+function makeRun({ scenario, run, failure, writerRedactions = 0, unreportedUsage = false }) {
 	return {
 		scenario,
 		run,
@@ -100,7 +116,16 @@ function makeRun({ scenario, run, failure, writerRedactions = 0 }) {
 		ok: true,
 		exitCode: 0,
 		elapsedMs: 12000,
-		usage: { input: 100, output: 25, cacheRead: 0, cost: { total: 0.01 } },
+		usage: unreportedUsage
+			? {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				}
+			: { input: 100, output: 25, cacheRead: 0, cost: { total: 0.01 } },
 		toolCalls: 4,
 		toolNames: ["create_task", "update_task", "shell", "update_task"],
 		receipt: {

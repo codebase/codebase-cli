@@ -177,9 +177,9 @@ launch reviewer without opening the JSONL:
 - **complex recovery**: `complex-issue-recovery`
 
 The public scorecard reports pass rate, reliable receipt health, task evidence,
-completed-task verification, final-answer proof, fresh post-mutation
-verification, p50 passing time, and average passing cost. Receipt columns show
-`not collected` unless the sweep used `--reliable true`.
+whether completed task work includes verification evidence, final-answer proof,
+fresh post-mutation verification, p50 passing time, and average passing cost.
+Receipt columns show `not collected` unless the sweep used `--reliable true`.
 For launch-facing claims, prefer:
 
 ```sh
