@@ -294,6 +294,13 @@ async function buildCmd(
 		scaffold: opts.scaffold,
 		projectId: opts.projectId,
 	});
+	if (opts.projectId && started.continued !== true) {
+		await client.cancelBuild(started.sessionId).catch(() => undefined);
+		throw new ProjectClientError(
+			`web build did not confirm continuation of project ${opts.projectId}; the unexpected build was cancelled`,
+			409,
+		);
+	}
 	handoffStore?.save({
 		sessionId: started.sessionId,
 		projectId: started.projectId,
@@ -314,7 +321,8 @@ async function buildCmd(
 
 	out("");
 	out("waiting for build to finish...");
-	const status = await waitForBuild(client, started.sessionId, opts.timeoutMs, opts.pollMs, sleep);
+	const reportProgress = createBuildProgressReporter(out);
+	const status = await waitForBuild(client, started.sessionId, opts.timeoutMs, opts.pollMs, sleep, reportProgress);
 	handoffStore?.update({ sessionId: started.sessionId, status: status.status, model: status.model });
 	printBuildStatus(status, out);
 	if (status.status === "completed") {
@@ -331,6 +339,7 @@ async function waitForBuild(
 	timeoutMs: number,
 	pollMs: number,
 	sleep: (ms: number) => Promise<void>,
+	onProgress?: (status: BuildStatusResponse) => void,
 ): Promise<BuildStatusResponse> {
 	const deadline = Date.now() + timeoutMs;
 	let last: BuildStatusResponse | undefined;
@@ -346,6 +355,7 @@ async function waitForBuild(
 			}
 			throw err;
 		}
+		onProgress?.(last);
 		if (last.status !== "building") return last;
 		const remaining = deadline - Date.now();
 		if (remaining <= 0) break;
@@ -354,6 +364,35 @@ async function waitForBuild(
 	throw new ProjectClientError(
 		`timed out waiting for build ${sessionId}; run \`codebase project status ${sessionId}\` to keep watching`,
 	);
+}
+
+function createBuildProgressReporter(out: (msg: string) => void): (status: BuildStatusResponse) => void {
+	const seenFiles = new Set<string>();
+	let seenTimelineItems = 0;
+	return (status) => {
+		let emitted = false;
+		for (const file of uniqueStrings(status.filesCreated)) {
+			if (seenFiles.has(file)) continue;
+			seenFiles.add(file);
+			out(`  wrote:   ${file}`);
+			emitted = true;
+		}
+
+		const timeline = status.timeline ?? [];
+		for (const item of timeline.slice(seenTimelineItems)) {
+			const summary = formatTimelineItem(item);
+			if (!summary) continue;
+			out(`  phase:   ${summary}`);
+			emitted = true;
+		}
+		seenTimelineItems = Math.max(seenTimelineItems, timeline.length);
+
+		if (!emitted && status.status === "building") {
+			out(
+				`  still building (${seenFiles.size} file${seenFiles.size === 1 ? "" : "s"}, ${timeline.length} phase${timeline.length === 1 ? "" : "s"})`,
+			);
+		}
+	};
 }
 
 async function statusCmd(
@@ -435,9 +474,47 @@ function printBuildStatus(status: BuildStatusResponse, out: (msg: string) => voi
 	out(`build ${status.sessionId}: ${status.status}`);
 	if (status.projectId) out(`  project: ${status.projectId}`);
 	if (status.model) out(`  model:   ${status.model}`);
-	if (status.filesCreated?.length) out(`  files:   ${status.filesCreated.join(", ")}`);
-	if (status.timeline?.length)
-		out(`  events:  ${status.timeline.length} timeline item${status.timeline.length === 1 ? "" : "s"}`);
+	const files = uniqueStrings(status.filesCreated);
+	if (files.length) out(`  files:   ${files.join(", ")}`);
+	for (const item of status.timeline ?? []) {
+		const summary = formatTimelineItem(item);
+		if (summary) out(`  phase:   ${summary}`);
+	}
+}
+
+function uniqueStrings(values: string[] | undefined): string[] {
+	return [
+		...new Set(
+			(values ?? []).filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()),
+		),
+	];
+}
+
+function formatTimelineItem(value: unknown): string | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const item = value as Record<string, unknown>;
+	if (typeof item.phase !== "string" || !item.phase.trim()) return undefined;
+	const parts = [cleanTimelineText(item.phase)];
+	if (typeof item.durationMs === "number" && Number.isFinite(item.durationMs) && item.durationMs > 0) {
+		parts.push(formatTimelineDuration(item.durationMs));
+	}
+	if (typeof item.skippedReason === "string" && item.skippedReason.trim()) {
+		parts.push(`[skipped: ${cleanTimelineText(item.skippedReason)}]`);
+	} else if (item.success === false) {
+		parts.push("[failed]");
+	} else if (item.success === true) {
+		parts.push("[ok]");
+	}
+	return parts.join(" ");
+}
+
+function cleanTimelineText(value: string): string {
+	return value.replace(/\s+/g, " ").trim().slice(0, 100);
+}
+
+function formatTimelineDuration(durationMs: number): string {
+	if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
+	return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
 }
 
 async function printPreview(

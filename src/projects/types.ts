@@ -32,6 +32,7 @@ export interface BuildStartResponse {
 	sessionId: string;
 	projectId: string;
 	status: string;
+	continued?: boolean;
 	model?: string;
 	poll?: string;
 	events?: string;

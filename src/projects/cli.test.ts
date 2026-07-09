@@ -38,6 +38,7 @@ function fakeClient(
 					sessionId: "sess-1",
 					projectId: "proj-1",
 					status: "building",
+					continued: !!input.projectId,
 					model: "codebase/d4f",
 				}
 			);
@@ -185,6 +186,23 @@ describe("runProjectSubcommand", () => {
 		expect(result.stdout.join("\n")).toContain("codebase project status sess-1");
 	});
 
+	it("cancels when the web API does not confirm requested project continuity", async () => {
+		const cancelled: string[] = [];
+		const client = fakeClient({
+			build: { sessionId: "wrong-session", projectId: "wrong-project", status: "building" },
+			onCancelBuild: (sessionId) => cancelled.push(sessionId),
+		});
+
+		const result = await runProject(
+			["project", "build", "--project", "proj-1", "Fix", "the", "existing", "app"],
+			client,
+		);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr.join("\n")).toContain("did not confirm continuation of project proj-1");
+		expect(cancelled).toEqual(["wrong-session"]);
+	});
+
 	it("explains payment challenges from the web build endpoint", async () => {
 		const client = {
 			startBuild: async () => {
@@ -217,6 +235,48 @@ describe("runProjectSubcommand", () => {
 		expect(result.code).toBe(0);
 		expect(result.stdout.join("\n")).toContain("files:   index.html, styles.css");
 		expect(result.stdout.join("\n")).toContain("preview: https://codebase.design/preview/proj-1");
+	});
+
+	it("streams deduplicated file and phase progress while waiting", async () => {
+		let calls = 0;
+		const statuses: BuildStatusResponse[] = [
+			{
+				sessionId: "sess-1",
+				status: "building",
+				filesCreated: ["index.html", "index.html"],
+				timeline: [{ phase: "scaffold-copy", durationMs: 1250, success: true }],
+			},
+			{
+				sessionId: "sess-1",
+				status: "building",
+				filesCreated: ["index.html"],
+				timeline: [{ phase: "scaffold-copy", durationMs: 1250, success: true }],
+			},
+			{
+				sessionId: "sess-1",
+				status: "completed",
+				filesCreated: ["index.html", "styles.css", "styles.css"],
+				timeline: [
+					{ phase: "scaffold-copy", durationMs: 1250, success: true },
+					{ phase: "validation", skippedReason: "not-needed" },
+				],
+			},
+		];
+		const client = fakeClient({
+			status: statuses[0],
+			preview: { ok: true, previewPath: "/preview/proj-1" },
+		}) as ProjectClient;
+		client.getBuildStatus = async () => statuses[Math.min(calls++, statuses.length - 1)]!;
+
+		const result = await runProject(["project", "build", "--wait", "Build", "a", "demo"], client);
+		const output = result.stdout.join("\n");
+
+		expect(result.code).toBe(0);
+		expect(output.match(/wrote:\s+index\.html/g)).toHaveLength(1);
+		expect(output.match(/wrote:\s+styles\.css/g)).toHaveLength(1);
+		expect(output).toContain("phase:   scaffold-copy 1.3s [ok]");
+		expect(output).toContain("phase:   validation [skipped: not-needed]");
+		expect(output).toContain("still building (1 file, 1 phase)");
 	});
 
 	it("backs off and keeps waiting when build status is rate limited", async () => {
@@ -265,10 +325,20 @@ describe("runProjectSubcommand", () => {
 	it("shows build status and cancel controls", async () => {
 		const status = await runProject(
 			["project", "status", "sess-1"],
-			fakeClient({ status: { sessionId: "sess-1", status: "failed", projectId: "proj-1" } }),
+			fakeClient({
+				status: {
+					sessionId: "sess-1",
+					status: "failed",
+					projectId: "proj-1",
+					filesCreated: ["index.html", "index.html"],
+					timeline: [{ phase: "validation", durationMs: 42, success: false }],
+				},
+			}),
 		);
 		expect(status.code).toBe(1);
 		expect(status.stdout.join("\n")).toContain("build sess-1: failed");
+		expect(status.stdout.join("\n")).toContain("files:   index.html");
+		expect(status.stdout.join("\n")).toContain("phase:   validation 42ms [failed]");
 
 		const cancel = await runProject(
 			["project", "cancel", "sess-1"],
