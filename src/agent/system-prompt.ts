@@ -91,6 +91,12 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 	lines.push(
 		"- If a check fails, fix the underlying cause rather than working around it (no --no-verify, no skipping tests, no commenting out asserts).",
 	);
+	lines.push(
+		"- Tests must execute the production code they claim to verify. Never copy or reimplement application logic inside a test just to produce a green check.",
+	);
+	lines.push(
+		"- After checks pass, audit the changed implementation against every requested behavior. A passing command is evidence, not proof that the tests covered the request; add a focused negative or interaction check when a requirement is otherwise untested.",
+	);
 	lines.push("");
 	lines.push("# Conversation conventions");
 	lines.push(

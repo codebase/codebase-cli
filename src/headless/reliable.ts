@@ -20,6 +20,8 @@ Rules:
 - Do not make verification commands pass by masking failures with fallbacks like "|| true", "|| echo", "|| :", or by appending "; echo $?".
 - If proving something is absent, use an unmasked negated check such as "! grep ..." in an "&&" chain, or write a tiny verify script that exits non-zero on failure.
 - If verification fails, fix the underlying issue and run verification again.
+- Verification must execute the changed production code. Do not duplicate implementation logic inside a test or verify only a test-side copy of the behavior.
+- After verification passes, inspect the changed implementation and audit every requested behavior against direct evidence. Add a focused negative, edge, or interaction check for requirements the existing command did not exercise.
 - For code or file changes, name the fresh passing verification command in the final answer.
 - For read-only or memory-only work, keep the task lifecycle auditable and state that no file-change verification was needed.`;
 
