@@ -854,6 +854,54 @@ describe("runHeadless", () => {
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
+	it("reliable json mode explains masked verification attempts", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-masked-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Do work" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: 'npm test; echo "exit:$?"', timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage('Done. Verified with npm test; echo "exit:$?".'),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[]; warnings: string[]; verification: unknown[] };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.verification).toEqual([]);
+		expect(parsed.receipt.failures[0]).toContain("masked verification command ignored");
+		expect(parsed.receipt.warnings[0]).toContain("masked verification command ignored");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
 	it("recognizes project-local test and smoke commands as verification", () => {
 		expect(isVerificationCommand("node test.mjs")).toBe(true);
 		expect(isVerificationCommand("node --test")).toBe(true);
@@ -883,9 +931,14 @@ console.log(parseTimestamp('2024-01-01T00:00:00Z'), sortByDate([]));
 		expect(isVerificationCommand("grep -q 'hello world' src/index.ts && ! grep -q 'helo world' src/index.ts")).toBe(
 			true,
 		);
+		expect(isVerificationCommand("! grep -REn '\\bparseDate\\b' src/ && grep -REn '\\bparseTimestamp\\b' src/")).toBe(
+			true,
+		);
 		expect(isVerificationCommand("npx tsc --noEmit 2>&1 || true")).toBe(false);
+		expect(isVerificationCommand('npm test; echo "exit:$?"')).toBe(false);
 		expect(isVerificationCommand("which node && node --version && which tsc")).toBe(false);
 		expect(isVerificationCommand("grep -q 'hello world' src/index.ts || echo missing")).toBe(false);
+		expect(isVerificationCommand("grep -rn 'parseDate' src/ 2>&1; echo \"---EXIT:$?\"")).toBe(false);
 		expect(isVerificationCommand("npx tsx -e \"console.log('hello')\"")).toBe(false);
 		expect(isVerificationCommand("node -e \"console.log('hello')\"")).toBe(false);
 		expect(isVerificationCommand("node scripts/generate-fixture.mjs")).toBe(false);

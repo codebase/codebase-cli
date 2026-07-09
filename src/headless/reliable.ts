@@ -17,7 +17,8 @@ Rules:
 - Make completed tasks auditable: while each task is in_progress, use tools that leave evidence (file reads/writes, shell commands, searches, or other relevant tool calls).
 - For code or file changes, track verification as task work: either keep the implementation task in_progress until verification passes, or create a separate verification task and run the check while that task is in_progress.
 - For code or file changes, run a meaningful verification command after the final file change and before the final answer (tests, build, lint, typecheck, smoke run, or a project-specific verify script).
-- Do not make verification commands pass by masking failures with fallbacks like "|| true" or "|| echo".
+- Do not make verification commands pass by masking failures with fallbacks like "|| true", "|| echo", "|| :", or by appending "; echo $?".
+- If proving something is absent, use an unmasked negated check such as "! grep ..." in an "&&" chain, or write a tiny verify script that exits non-zero on failure.
 - If verification fails, fix the underlying issue and run verification again.
 - For code or file changes, name the fresh passing verification command in the final answer.
 - For read-only or memory-only work, keep the task lifecycle auditable and state that no file-change verification was needed.`;
@@ -181,6 +182,7 @@ export class ReliabilityRecorder {
 		const completedTasksWithVerification = taskEvidence.filter(
 			(item) => item.status === "completed" && item.verification.length > 0,
 		);
+		const maskedVerificationAttempts = collectMaskedVerificationAttempts(tools);
 		const failures: string[] = [];
 		const warnings: string[] = [];
 
@@ -188,7 +190,11 @@ export class ReliabilityRecorder {
 		if (tasks.length > 0 && completedTasks.length === 0) failures.push("no tasks were completed");
 		if (openTasks.length > 0) failures.push(`open tasks remain: ${openTasks.map((t) => t.id).join(", ")}`);
 		if (mutations.length > 0 && verification.length === 0) {
-			failures.push("no successful verification command was recorded");
+			failures.push(
+				maskedVerificationAttempts.length > 0
+					? `no successful verification command was recorded; masked verification command ignored: ${formatCommandForFailure(maskedVerificationAttempts[0]?.command ?? "")}`
+					: "no successful verification command was recorded",
+			);
 		}
 		if (verification.length > 0 && completedTasksWithVerification.length === 0) {
 			failures.push("no completed task captured verification evidence");
@@ -213,6 +219,11 @@ export class ReliabilityRecorder {
 		}
 		if (lifecycle.activeOverlaps.length > 0) {
 			warnings.push(`multiple tasks were in_progress at once: ${lifecycle.activeOverlaps[0]?.join(", ")}`);
+		}
+		if (maskedVerificationAttempts.length > 0) {
+			warnings.push(
+				`masked verification command ignored: ${formatCommandForFailure(maskedVerificationAttempts[0]?.command ?? "")}`,
+			);
 		}
 		if (failedToolCalls > 0)
 			warnings.push(`${failedToolCalls} tool call${failedToolCalls === 1 ? "" : "s"} failed before the run ended`);
@@ -508,7 +519,8 @@ export function formatReliabilityRepairPrompt(receipt: ReliabilityReceipt): stri
 		"- If failures name existing task ids that lacked evidence or skipped in_progress, repair those exact tasks. Do not create replacement tasks for them.",
 		"- To repair an existing task, update that task id to in_progress, perform relevant auditable work for that task, then update that same task id to completed before moving on.",
 		"- If verification is missing for file changes, run a meaningful passing command now while a task is in_progress.",
-		"- Do not use fallbacks that hide failure, such as `|| true` or `|| echo`.",
+		"- Do not use fallbacks that hide failure, such as `|| true`, `|| echo`, `|| :`, or `; echo $?`.",
+		"- For absence checks, use an unmasked command like `! grep ... && grep ...`, or create a verify script that exits non-zero on failure.",
 		"- If the final answer missed proof, include the exact fresh passing command string in the final answer.",
 		"- If there were no file changes, state that no file-change verification was needed.",
 		"</system-reminder>",
@@ -527,6 +539,26 @@ function collectVerification(tools: ReceiptToolCall[]): VerificationEvidence[] {
 			toolCallId: tool.id,
 			command,
 			exitCode,
+			order: tool.order,
+			startedAt: tool.startedAt,
+			endedAt: tool.endedAt ?? tool.startedAt,
+			durationMs: typeof tool.details?.durationMs === "number" ? tool.details.durationMs : undefined,
+		});
+	}
+	return evidence;
+}
+
+function collectMaskedVerificationAttempts(tools: ReceiptToolCall[]): VerificationEvidence[] {
+	const evidence: VerificationEvidence[] = [];
+	for (const tool of sortedTools(tools)) {
+		if (tool.name !== "shell" || tool.status !== "done") continue;
+		const command = typeof tool.details?.command === "string" ? tool.details.command : undefined;
+		const exitCode = typeof tool.details?.exitCode === "number" ? tool.details.exitCode : undefined;
+		if (!command || !masksFailureStatus(command) || !looksLikeVerificationAttempt(command)) continue;
+		evidence.push({
+			toolCallId: tool.id,
+			command,
+			exitCode: exitCode ?? 0,
 			order: tool.order,
 			startedAt: tool.startedAt,
 			endedAt: tool.endedAt ?? tool.startedAt,
@@ -601,7 +633,7 @@ function isNegatedCommandMention(before: string, after: string): boolean {
 
 export function isVerificationCommand(command: string): boolean {
 	const normalized = command.toLowerCase();
-	if (/\|\|\s*(?::|true|echo)\b/.test(normalized)) return false;
+	if (masksFailureStatus(normalized)) return false;
 	if (/^(?:which|command\s+-v)\b/.test(normalized)) return false;
 	const patterns = [
 		/\bnpm\s+(test|run\s+(test|check|lint|build|typecheck|verify))\b/,
@@ -620,10 +652,30 @@ export function isVerificationCommand(command: string): boolean {
 		/\bbun\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?[jt]sx?\b/,
 		/\b(go test|cargo test|cargo clippy|mvn test|gradle test|swift test|zig build test)\b/,
 		/\b(make|just)\s+(test|check|verify|lint|build)\b/,
-		/\bgrep\b[\s\S]*&&\s*!\s*grep\b/,
+		/(?:^|&&)\s*!\s*grep\b[\s\S]*&&\s*grep\b|\bgrep\b[\s\S]*&&\s*!\s*grep\b/,
 		/(^|[ /])verify\.sh\b/,
 	];
 	return patterns.some((pattern) => pattern.test(normalized));
+}
+
+function masksFailureStatus(command: string): boolean {
+	const normalized = command.toLowerCase();
+	return (
+		/\|\|\s*(?::(?:\s|$)|true\b|echo\b)/.test(normalized) ||
+		/(?:^|[;&|]\s*)set\s+\+e\b/.test(normalized) ||
+		/;\s*(?:echo|printf)\b[\s\S]*(?:\$\?|\bexit\b)/.test(normalized)
+	);
+}
+
+function looksLikeVerificationAttempt(command: string): boolean {
+	return /\b(npm|pnpm|yarn|bun|node|npx|tsx|ts-node|deno|vitest|jest|pytest|ruff|eslint|tsc|grep|make|just)\b/i.test(
+		command,
+	);
+}
+
+function formatCommandForFailure(command: string): string {
+	const singleLine = command.replace(/\s+/g, " ").trim();
+	return singleLine.length > 160 ? `${singleLine.slice(0, 157)}...` : singleLine;
 }
 
 function summarizeArgs(toolName: string, args: unknown): Record<string, unknown> {
