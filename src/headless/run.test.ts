@@ -755,6 +755,7 @@ describe("runHeadless", () => {
 	it("recognizes project-local test and smoke commands as verification", () => {
 		expect(isVerificationCommand("node test.mjs")).toBe(true);
 		expect(isVerificationCommand("node --test")).toBe(true);
+		expect(isVerificationCommand("node --experimental-strip-types _verify_rename.ts")).toBe(true);
 		expect(isVerificationCommand("npx tsx src/index.ts")).toBe(true);
 		expect(isVerificationCommand("deno check src/parse.ts")).toBe(true);
 		expect(isVerificationCommand("bun src/index.ts")).toBe(true);
