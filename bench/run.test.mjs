@@ -116,4 +116,43 @@ describe("bench run", () => {
 		expect(run.toolNames).not.toContain("read_memory");
 		expect(run.verifyStdout).toContain("memory retrieval ok");
 	});
+
+	it("runs the context-continuity scenario through setup memory and verifier checks", () => {
+		sweepId = `run-context-test-${process.pid}-${Date.now()}`;
+
+		const stdout = execFileSync(
+			process.execPath,
+			[
+				runPath,
+				"--scenario",
+				"context-continuity",
+				"--runs",
+				"1",
+				"--reliable",
+				"true",
+				"--cli",
+				fakeCliPath,
+				"--sweep-id",
+				sweepId,
+			],
+			{ cwd: repoRoot, encoding: "utf8" },
+		);
+
+		expect(stdout).toContain("✓ PASS");
+		expect(stdout).toContain("receipt=ok");
+
+		const jsonl = readFileSync(join(resultsDir, sweepId, "runs.jsonl"), "utf8").trim();
+		const run = JSON.parse(jsonl);
+		expect(run).toMatchObject({
+			scenario: "context-continuity",
+			run: 1,
+			ok: true,
+			exitCode: 0,
+			verifyPassed: true,
+			receiptPassed: true,
+		});
+		expect(run.toolNames).toContain("read_memory");
+		expect(run.toolNames).toContain("read_file");
+		expect(run.verifyStdout).toContain("context continuity ok");
+	});
 });

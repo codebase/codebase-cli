@@ -27,9 +27,10 @@ describe("bench aggregate", () => {
 		const fakeSecret = "ghp_0123456789abcdef0123456789abcdef0123";
 		writeFileSync(
 			join(sweepDir, "runs.jsonl"),
-			`${JSON.stringify(makeRun({ scenario: "task-list-fidelity", run: 1, failure: `leaked ${fakeSecret}` }))}\n` +
+				`${JSON.stringify(makeRun({ scenario: "task-list-fidelity", run: 1, failure: `leaked ${fakeSecret}` }))}\n` +
 				`${JSON.stringify(makeRun({ scenario: "memory-secret-hygiene", run: 1, writerRedactions: 2 }))}\n` +
-				`${JSON.stringify(makeRun({ scenario: "memory-retrieval", run: 1 }))}\n`,
+				`${JSON.stringify(makeRun({ scenario: "memory-retrieval", run: 1 }))}\n` +
+				`${JSON.stringify(makeRun({ scenario: "context-continuity", run: 1 }))}\n`,
 		);
 		const jsonOut = join(sweepDir, "scorecard.json");
 
@@ -43,17 +44,17 @@ describe("bench aggregate", () => {
 		expect(markdown).not.toContain(fakeSecret);
 		expect(markdown).toContain("leaked [REDACTED]");
 		expect(JSON.stringify(scorecard)).not.toContain(fakeSecret);
-		expect(markdown).toContain("CLI builds: 2.0.0-test @ /tmp/codebase x3");
-		expect(markdown).toContain("Repo commits: abc123def456 x3; dirty runs 0/3");
-		expect(markdown).toContain("Runner flags: reliable 3/3, isolated HOME 3/3");
+		expect(markdown).toContain("CLI builds: 2.0.0-test @ /tmp/codebase x4");
+		expect(markdown).toContain("Repo commits: abc123def456 x4; dirty runs 0/4");
+		expect(markdown).toContain("Runner flags: reliable 4/4, isolated HOME 4/4");
 		expect(markdown).toContain("Public artifact redaction: ruleset v1; writer redactions 2; report-time redactions 1");
 		expect(sweep.provenance).toMatchObject({
-			recordedRuns: 3,
+			recordedRuns: 4,
 			repoDirtyRuns: 0,
-			reliableRuns: 3,
-			isolatedHomeRuns: 3,
+			reliableRuns: 4,
+			isolatedHomeRuns: 4,
 		});
-		expect(sweep.provenance.cliBuilds).toEqual([{ value: "2.0.0-test @ /tmp/codebase", runs: 3 }]);
+		expect(sweep.provenance.cliBuilds).toEqual([{ value: "2.0.0-test @ /tmp/codebase", runs: 4 }]);
 		expect(sweep.redaction).toMatchObject({
 			applied: true,
 			rulesVersion: 1,
@@ -65,7 +66,9 @@ describe("bench aggregate", () => {
 		expect(sweep.claims.taskFidelity.taskEvidenceCount).toBe(1);
 		expect(sweep.claims.memoryHygiene.passCount).toBe(1);
 		expect(sweep.claims.memoryRetrieval.passCount).toBe(1);
+		expect(sweep.claims.contextContinuity.passCount).toBe(1);
 		expect(markdown).toContain("| Memory retrieval | 1/1 (100%) on memory-retrieval scenarios |");
+		expect(markdown).toContain("| Context continuity | 1/1 (100%) on long/noisy context-continuity scenarios |");
 	});
 
 	it("does not present all-zero usage as measured free cost", () => {

@@ -71,6 +71,126 @@ if (/Nimbus billing deploy/i.test(prompt)) {
 	process.exit(0);
 }
 
+if (/Context Guardian/i.test(prompt)) {
+	writeFileSync(
+		join(process.cwd(), "src", "contextPolicy.mjs"),
+		[
+			"export function releasePolicy() {",
+			"\treturn {",
+			'\t\tcodename: "aurora-lattice",',
+			'\t\towner: "Priya Raman",',
+			'\t\tpreserveFlag: "CONTEXT_GUARDIAN_PRESERVE=tasks+memory",',
+			"\t\tcanaryPercent: 7,",
+			"\t\trollbackThreshold: 0.25,",
+			'\t\trollbackCommand: "npm run rollback:guardian",',
+			'\t\tverificationCommand: "npm test",',
+			"\t};",
+			"}",
+			"",
+			"export function shouldRollback(sample) {",
+			"\tconst policy = releasePolicy();",
+			"\treturn sample.errorRate >= policy.rollbackThreshold || sample.failedChecks > 3;",
+			"}",
+			"",
+		].join("\n"),
+	);
+	writeFileSync(
+		join(process.cwd(), "docs", "context-handoff.md"),
+		[
+			"# Context Guardian handoff",
+			"",
+			"- Release codename: aurora-lattice",
+			"- Owner: Priya Raman",
+			"- Preserve flag: CONTEXT_GUARDIAN_PRESERVE=tasks+memory",
+			"- Canary percent: 7",
+			"- Rollback threshold: 0.25",
+			"- Rollback command: npm run rollback:guardian",
+			"- Verification command: npm test",
+			"- Memory source: bench seed: context continuity fixture",
+			"- Memory stale: no, current/non-stale",
+			"",
+		].join("\n"),
+	);
+	const receipt = reliable
+		? {
+				ok: true,
+				summary: {
+					taskCount: 5,
+					completedTasks: 5,
+					openTasks: 0,
+					cancelledTasks: 0,
+					toolCalls: 8,
+					failedToolCalls: 0,
+					mutationCount: 2,
+					verificationCount: 1,
+					verificationAfterLastMutationCount: 1,
+					completedTasksWithEvidence: 5,
+					completedTasksWithVerification: 1,
+					finalAnswerMentionsFreshVerification: true,
+					checkpoints: 2,
+					durationMs: 123,
+				},
+				taskEvidence: [
+					{
+						id: "task-verify",
+						title: "Verify context continuity",
+						status: "completed",
+						toolCalls: [{ id: "call-7", name: "shell", order: 7, status: "done", startedAt: 1, endedAt: 2 }],
+						mutations: [],
+						verification: [{ toolCallId: "call-7", command: "npm test", exitCode: 0, order: 7 }],
+					},
+				],
+				verification: [{ toolCallId: "call-7", command: "npm test", exitCode: 0, order: 7 }],
+				finalAnswer: { mentionsFreshVerification: true, matchedVerificationCommands: ["npm test"] },
+				failures: [],
+				warnings: [],
+			}
+		: undefined;
+	process.stdout.write(
+		`${JSON.stringify({
+			ok: true,
+			exitCode: 0,
+			durationMs: 123,
+			model: { provider: "fake", id: "fake-model", name: "Fake Model" },
+			source: "byok",
+			usage: {
+				input: 100,
+				output: 25,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 125,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 },
+			},
+			messages: [
+				{ role: "user", content: prompt },
+				{
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "call-1", name: "create_task", arguments: { title: "Inspect memory" } },
+						{ type: "toolCall", id: "call-2", name: "update_task", arguments: { id: "task-1", status: "in_progress" } },
+						{ type: "toolCall", id: "call-3", name: "read_memory", arguments: { filename: "context_guardian_runbook.md" } },
+						{
+							type: "toolCall",
+							id: "call-4",
+							name: "read_file",
+							arguments: { path: "docs/incident-log.md" },
+						},
+						{ type: "toolCall", id: "call-5", name: "edit_file", arguments: { path: "src/contextPolicy.mjs" } },
+						{ type: "toolCall", id: "call-6", name: "write_file", arguments: { path: "docs/context-handoff.md" } },
+						{ type: "toolCall", id: "call-7", name: "shell", arguments: { command: "npm test" } },
+						{ type: "toolCall", id: "call-8", name: "update_task", arguments: { id: "task-1", status: "completed" } },
+					],
+				},
+				{ role: "assistant", content: [{ type: "text", text: "Updated context policy. Verified with npm test." }] },
+			],
+			messageCount: 3,
+			finalText: "Updated context policy. Verified with npm test.",
+			...(receipt ? { receipt, receiptId: "fake-context-receipt", receiptPath: "/tmp/fake-context-receipt.json" } : {}),
+		})}\n`,
+	);
+	process.exit(0);
+}
+
 const target = join(process.cwd(), "src", "index.ts");
 const before = readFileSync(target, "utf8");
 writeFileSync(target, before.replace("helo world", "hello world"));

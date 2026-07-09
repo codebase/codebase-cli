@@ -43,6 +43,10 @@ const CAPABILITY_DIMENSIONS = [
 		scenarios: new Set(["memory-retrieval"]),
 	},
 	{
+		label: "context continuity",
+		scenarios: new Set(["context-continuity"]),
+	},
+	{
 		label: "complex recovery",
 		scenarios: new Set(["complex-issue-recovery"]),
 	},
@@ -133,6 +137,7 @@ function buildScorecardJson(sweeps, generatedAt) {
 					taskFidelity: byScope.get("task fidelity") ?? null,
 					memoryHygiene: byScope.get("memory hygiene") ?? null,
 					memoryRetrieval: byScope.get("memory retrieval") ?? null,
+					contextContinuity: byScope.get("context continuity") ?? null,
 				},
 			};
 		}),
@@ -219,6 +224,7 @@ function renderLaunchClaims(scorecard) {
 	const task = claim.taskFidelity;
 	const memory = claim.memoryHygiene;
 	const retrieval = claim.memoryRetrieval;
+	const context = claim.contextContinuity;
 	return [
 		"### Claim-ready summary",
 		"",
@@ -228,6 +234,7 @@ function renderLaunchClaims(scorecard) {
 		`| Task fidelity | ${task ? `${formatRatio(task.passCount, task.runs)} on task-fidelity scenarios; task evidence ${formatReceiptCount(task, "taskEvidenceCount")}; task verification ${formatReceiptCount(task, "taskVerifiedCount")}` : "not in sweep"} |`,
 		`| Memory hygiene | ${memory ? `${formatRatio(memory.passCount, memory.runs)} on memory hygiene scenarios` : "not in sweep"} |`,
 		`| Memory retrieval | ${retrieval ? `${formatRatio(retrieval.passCount, retrieval.runs)} on memory-retrieval scenarios` : "not in sweep"} |`,
+		`| Context continuity | ${context ? `${formatRatio(context.passCount, context.runs)} on long/noisy context-continuity scenarios` : "not in sweep"} |`,
 		`| Speed | p50 passing run ${formatSeconds(claim.overall.medianPassSeconds)} |`,
 		`| Cost | average passing run ${formatCost(claim.overall.avgPassCost)} |`,
 		`| Receipt proof | receipt ok ${formatReceiptCount(claim.overall, "receiptOkCount")}; final proof ${formatReceiptCount(claim.overall, "finalProofCount")}; fresh verification ${formatReceiptCount(claim.overall, "freshVerifiedCount")} |`,
