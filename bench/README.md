@@ -175,6 +175,8 @@ launch reviewer without opening the JSONL:
   `durable-task-dependencies`, `complex-issue-recovery`
 - **memory hygiene**: `memory-secret-hygiene`
 - **memory retrieval**: `memory-retrieval`
+- **context continuity**: `context-continuity`
+- **permission safety**: `permission-denial-recovery`
 - **complex recovery**: `complex-issue-recovery`
 
 The public scorecard reports pass rate, reliable receipt health, task evidence,

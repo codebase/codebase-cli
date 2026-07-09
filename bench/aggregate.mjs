@@ -47,6 +47,10 @@ const CAPABILITY_DIMENSIONS = [
 		scenarios: new Set(["context-continuity"]),
 	},
 	{
+		label: "permission safety",
+		scenarios: new Set(["permission-denial-recovery"]),
+	},
+	{
 		label: "complex recovery",
 		scenarios: new Set(["complex-issue-recovery"]),
 	},
@@ -138,6 +142,7 @@ function buildScorecardJson(sweeps, generatedAt) {
 					memoryHygiene: byScope.get("memory hygiene") ?? null,
 					memoryRetrieval: byScope.get("memory retrieval") ?? null,
 					contextContinuity: byScope.get("context continuity") ?? null,
+					permissionSafety: byScope.get("permission safety") ?? null,
 				},
 			};
 		}),
@@ -225,6 +230,7 @@ function renderLaunchClaims(scorecard) {
 	const memory = claim.memoryHygiene;
 	const retrieval = claim.memoryRetrieval;
 	const context = claim.contextContinuity;
+	const permission = claim.permissionSafety;
 	return [
 		"### Claim-ready summary",
 		"",
@@ -235,6 +241,7 @@ function renderLaunchClaims(scorecard) {
 		`| Memory hygiene | ${memory ? `${formatRatio(memory.passCount, memory.runs)} on memory hygiene scenarios` : "not in sweep"} |`,
 		`| Memory retrieval | ${retrieval ? `${formatRatio(retrieval.passCount, retrieval.runs)} on memory-retrieval scenarios` : "not in sweep"} |`,
 		`| Context continuity | ${context ? `${formatRatio(context.passCount, context.runs)} on long/noisy context-continuity scenarios` : "not in sweep"} |`,
+		`| Permission safety | ${permission ? `${formatRatio(permission.passCount, permission.runs)} on permission-denial recovery scenarios` : "not in sweep"} |`,
 		`| Speed | p50 passing run ${formatSeconds(claim.overall.medianPassSeconds)} |`,
 		`| Cost | average passing run ${formatCost(claim.overall.avgPassCost)} |`,
 		`| Receipt proof | receipt ok ${formatReceiptCount(claim.overall, "receiptOkCount")}; final proof ${formatReceiptCount(claim.overall, "finalProofCount")}; fresh verification ${formatReceiptCount(claim.overall, "freshVerifiedCount")} |`,

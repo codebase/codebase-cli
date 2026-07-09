@@ -108,7 +108,7 @@ Recommended next work:
 - Keep expanding command-prefix extraction for more CLIs and framework-specific subcommands.
 - Separate "read-only shell" from "mutating but reversible" more visibly in the prompt UI.
 - Add a permissions simulator: given a task or command, explain what would be auto-allowed, prompted, or denied.
-- Add benchmark cases for denied shell commands, recovery from denial, and scoped trust.
+- Keep `permission-denial-recovery` in the public sweep and add a scoped-trust case next.
 
 ### 6. File Editing And IDE/LSP Awareness
 
@@ -155,7 +155,7 @@ These are the highest leverage items before a public push:
    - Relevant body recall, source session, last-used tracking, retrieval counts, agent-side update/delete tools, and `/memory list|show|forget` now exist. Remaining launch gap is manual `/memory update` ergonomics plus optional stale/reverify metadata.
 
 6. Permission UX polish.
-   - Live permission prompts now show scoped trust/persist guidance; clearer irreversible/reversible/read-only language and simulator previews remain.
+   - Live permission prompts now show scoped trust/persist guidance, and the public sweep covers denied shell recovery. Clearer irreversible/reversible/read-only language, simulator previews, and scoped-trust benchmarks remain.
 
 ## P1/P2 Work
 

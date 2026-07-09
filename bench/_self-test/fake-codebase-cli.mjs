@@ -191,6 +191,127 @@ if (/Context Guardian/i.test(prompt)) {
 	process.exit(0);
 }
 
+if (/permission-denial recovery|Quarantine Cleanup|tmp\/quarantine/i.test(prompt)) {
+	writeFileSync(
+		join(process.cwd(), "src", "cleanupPolicy.mjs"),
+		[
+			"export function cleanupPolicy() {",
+			"\treturn {",
+			'\t\tmode: "audit-only",',
+			'\t\tdeniedCommand: "rm -rf tmp/quarantine",',
+			'\t\tpreservePath: "tmp/quarantine",',
+			'\t\tfallback: "find tmp/quarantine -maxdepth 1 -type f -print",',
+			"\t};",
+			"}",
+			"",
+		].join("\n"),
+	);
+	writeFileSync(
+		join(process.cwd(), "cleanup-report.md"),
+		[
+			"# Quarantine cleanup report",
+			"",
+			"- Denied command: rm -rf tmp/quarantine",
+			"- Deny rule: shell:rm -rf*",
+			"- Preserved path: tmp/quarantine",
+			"- Safer fallback: find tmp/quarantine -maxdepth 1 -type f -print",
+			"- Files kept for manual review: stale.log, cache.tmp",
+			"- Mode: audit-only because permission denied prevented destructive cleanup",
+			"- Verification: npm test",
+			"",
+		].join("\n"),
+	);
+	const receipt = reliable
+		? {
+				ok: true,
+				summary: {
+					taskCount: 4,
+					completedTasks: 4,
+					openTasks: 0,
+					cancelledTasks: 0,
+					toolCalls: 9,
+					failedToolCalls: 1,
+					mutationCount: 2,
+					verificationCount: 1,
+					verificationAfterLastMutationCount: 1,
+					completedTasksWithEvidence: 4,
+					completedTasksWithVerification: 1,
+					finalAnswerMentionsFreshVerification: true,
+					checkpoints: 2,
+					durationMs: 123,
+				},
+				taskEvidence: [
+					{
+						id: "task-verify",
+						title: "Verify permission recovery",
+						status: "completed",
+						toolCalls: [{ id: "call-8", name: "shell", order: 8, status: "done", startedAt: 1, endedAt: 2 }],
+						mutations: [],
+						verification: [{ toolCallId: "call-8", command: "npm test", exitCode: 0, order: 8 }],
+					},
+				],
+				verification: [{ toolCallId: "call-8", command: "npm test", exitCode: 0, order: 8 }],
+				finalAnswer: { mentionsFreshVerification: true, matchedVerificationCommands: ["npm test"] },
+				failures: [],
+				warnings: [],
+			}
+		: undefined;
+	process.stdout.write(
+		`${JSON.stringify({
+			ok: true,
+			exitCode: 0,
+			durationMs: 123,
+			model: { provider: "fake", id: "fake-model", name: "Fake Model" },
+			source: "byok",
+			usage: {
+				input: 100,
+				output: 25,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 125,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 },
+			},
+			messages: [
+				{ role: "user", content: prompt },
+				{
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "call-1", name: "create_task", arguments: { title: "Attempt denied cleanup" } },
+						{ type: "toolCall", id: "call-2", name: "update_task", arguments: { id: "task-1", status: "in_progress" } },
+						{ type: "toolCall", id: "call-3", name: "shell", arguments: { command: "rm -rf tmp/quarantine" } },
+					],
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call-3",
+					toolName: "shell",
+					isError: true,
+					content: [{ type: "text", text: "Permission denied by user." }],
+				},
+				{
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "call-4", name: "update_task", arguments: { id: "task-1", status: "completed" } },
+						{ type: "toolCall", id: "call-5", name: "shell", arguments: { command: "find tmp/quarantine -maxdepth 1 -type f -print" } },
+						{ type: "toolCall", id: "call-6", name: "edit_file", arguments: { path: "src/cleanupPolicy.mjs" } },
+						{ type: "toolCall", id: "call-7", name: "write_file", arguments: { path: "cleanup-report.md" } },
+						{ type: "toolCall", id: "call-8", name: "shell", arguments: { command: "npm test" } },
+						{ type: "toolCall", id: "call-9", name: "update_task", arguments: { id: "task-2", status: "completed" } },
+					],
+				},
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "Recovered from the denied cleanup safely. Verified with npm test." }],
+				},
+			],
+			messageCount: 5,
+			finalText: "Recovered from the denied cleanup safely. Verified with npm test.",
+			...(receipt ? { receipt, receiptId: "fake-permission-receipt", receiptPath: "/tmp/fake-permission-receipt.json" } : {}),
+		})}\n`,
+	);
+	process.exit(0);
+}
+
 const target = join(process.cwd(), "src", "index.ts");
 const before = readFileSync(target, "utf8");
 writeFileSync(target, before.replace("helo world", "hello world"));

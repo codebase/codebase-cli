@@ -155,4 +155,43 @@ describe("bench run", () => {
 		expect(run.toolNames).toContain("read_file");
 		expect(run.verifyStdout).toContain("context continuity ok");
 	});
+
+	it("runs the permission-denial-recovery scenario through deny config and verifier checks", () => {
+		sweepId = `run-permission-test-${process.pid}-${Date.now()}`;
+
+		const stdout = execFileSync(
+			process.execPath,
+			[
+				runPath,
+				"--scenario",
+				"permission-denial-recovery",
+				"--runs",
+				"1",
+				"--reliable",
+				"true",
+				"--cli",
+				fakeCliPath,
+				"--sweep-id",
+				sweepId,
+			],
+			{ cwd: repoRoot, encoding: "utf8" },
+		);
+
+		expect(stdout).toContain("✓ PASS");
+		expect(stdout).toContain("receipt=ok");
+
+		const jsonl = readFileSync(join(resultsDir, sweepId, "runs.jsonl"), "utf8").trim();
+		const run = JSON.parse(jsonl);
+		expect(run).toMatchObject({
+			scenario: "permission-denial-recovery",
+			run: 1,
+			ok: true,
+			exitCode: 0,
+			verifyPassed: true,
+			receiptPassed: true,
+		});
+		expect(run.toolNames).toContain("shell");
+		expect(run.toolNames).toContain("edit_file");
+		expect(run.verifyStdout).toContain("permission denial recovery ok");
+	});
 });
