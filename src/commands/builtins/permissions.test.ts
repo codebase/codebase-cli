@@ -51,9 +51,11 @@ describe("/permissions", () => {
 		permissions.handler("suggest npm install", ctx);
 
 		expect(emits[0]).toContain("will prompt");
+		expect(emits[0]).toContain("reason: package installs can change dependencies");
 		expect(emits[0]).toContain("session trust scope: shell:npm install*");
-		expect(emits[0]).toContain("/permissions allow shell:npm install*");
-		expect(emits[0]).toContain("/permissions deny shell:npm install*");
+		expect(emits[0]).toContain("persist exact allow: /permissions allow shell:npm install");
+		expect(emits[0]).toContain("persist family allow: /permissions allow shell:npm install*");
+		expect(emits[0]).toContain("persist family deny: /permissions deny shell:npm install*");
 	});
 
 	it("surfaces validator warnings and safer paths", () => {
@@ -63,6 +65,17 @@ describe("/permissions", () => {
 		expect(emits[0]).toContain("uses sudo");
 		expect(emits[0]).toContain("safer path:");
 		expect(emits[0]).toContain("session trust scope: shell:apt update*");
+		expect(emits[0]).toContain("persist exact allow: /permissions allow shell:sudo apt update");
+		expect(emits[0]).toContain("persist family allow: /permissions allow shell:apt update*");
+	});
+
+	it("formats non-validator high-risk reasons without duplicate prefixes", () => {
+		permissions.handler("suggest rm *.log", ctx);
+
+		expect(emits[0]).toContain("will prompt as high risk (delete commands can permanently remove workspace files.)");
+		expect(emits[0]).not.toContain("high risk (High risk:");
+		expect(emits[0]).toContain("persist family allow: /permissions allow shell:rm*");
+		expect(emits[0]).not.toContain("persist exact allow");
 	});
 
 	it("does not suggest allow rules for hard-blocked shell commands", () => {

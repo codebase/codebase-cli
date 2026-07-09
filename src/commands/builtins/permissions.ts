@@ -187,6 +187,7 @@ function appendSuggestionResult(lines: string[], preview: PermissionPreview): vo
 		lines.push(`  result: will prompt as high risk (${displayReason(preview.reason ?? "high-risk shell command")})`);
 	} else {
 		lines.push("  result: will prompt because it is not in the built-in auto-allow set.");
+		if (preview.reason) lines.push(`  reason: ${displayReason(preview.reason)}`);
 	}
 	appendHumanGuidance(lines, preview, "suggest");
 }
@@ -208,6 +209,12 @@ function appendHumanGuidance(lines: string[], preview: PermissionPreview, mode: 
 	for (const item of preview.guidance ?? []) {
 		if (item.startsWith("Safer path: ")) {
 			lines.push(`${indent(mode)}safer path: ${item.slice("Safer path: ".length)}`);
+		} else if (item.startsWith("Persist exact allow: ")) {
+			lines.push(`${indent(mode)}persist exact allow: ${item.slice("Persist exact allow: ".length)}`);
+		} else if (item.startsWith("Persist family allow: ")) {
+			lines.push(`${indent(mode)}persist family allow: ${item.slice("Persist family allow: ".length)}`);
+		} else if (item.startsWith("Persist family deny: ")) {
+			lines.push(`${indent(mode)}persist family deny: ${item.slice("Persist family deny: ".length)}`);
 		} else if (item.startsWith("Persist allow: ")) {
 			lines.push(`${indent(mode)}persist allow rule: ${item.slice("Persist allow: ".length)}`);
 		} else if (item.startsWith("Persist deny: ")) {
@@ -276,6 +283,7 @@ function displayReason(value: string): string {
 	const stripped = value
 		.replace(/^High risk: shell validator warning: /, "")
 		.replace(/^High risk: shell validator will hard-block this command: /, "")
+		.replace(/^High risk: /, "")
 		.replace(/^Medium risk: /, "");
 	return stripped.endsWith(".") ? stripped : `${stripped}.`;
 }

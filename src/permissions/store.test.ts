@@ -159,12 +159,13 @@ describe("PermissionStore request shape", () => {
 		store.evaluate("shell", { command: 'git commit -m "wip"' });
 
 		expect(store.current()).toMatchObject({
-			reason: expect.stringContaining("not in the read-only allowlist"),
+			reason: expect.stringContaining("local git history"),
 			trustScope: "shell:git commit*",
 			guidance: expect.arrayContaining([
 				"Trust tool grants shell:git commit* for this session only.",
-				"Persist allow: /permissions allow shell:git commit*",
-				"Persist deny: /permissions deny shell:git commit*",
+				'Persist exact allow: /permissions allow shell:git commit -m "wip"',
+				"Persist family allow: /permissions allow shell:git commit*",
+				"Persist family deny: /permissions deny shell:git commit*",
 			]),
 		});
 	});
@@ -179,7 +180,8 @@ describe("PermissionStore request shape", () => {
 			trustScope: "shell:apt update*",
 			guidance: expect.arrayContaining([
 				expect.stringContaining("Safer path: prefer a non-sudo command"),
-				"Persist allow: /permissions allow shell:apt update*",
+				"Persist exact allow: /permissions allow shell:sudo apt update",
+				"Persist family allow: /permissions allow shell:apt update*",
 			]),
 		});
 	});
@@ -324,13 +326,34 @@ describe("PermissionStore preview", () => {
 			decision: "prompt",
 			source: "prompt",
 			risk: "medium",
+			reason: expect.stringContaining("package installs"),
 			trustScope: "shell:npm install*",
 			guidance: expect.arrayContaining([
 				"Trust tool grants shell:npm install* for this session only.",
-				"Persist allow: /permissions allow shell:npm install*",
-				"Persist deny: /permissions deny shell:npm install*",
+				"Persist exact allow: /permissions allow shell:npm install",
+				"Persist family allow: /permissions allow shell:npm install*",
+				"Persist family deny: /permissions deny shell:npm install*",
 			]),
 		});
+	});
+
+	it("omits exact allow guidance when the command already contains glob metacharacters", () => {
+		const store = new PermissionStore();
+		const preview = store.preview("shell", { command: "rm *.log" });
+
+		expect(preview).toMatchObject({
+			decision: "prompt",
+			source: "prompt",
+			risk: "high",
+			reason: expect.stringContaining("delete commands"),
+			trustScope: "shell:rm*",
+			guidance: expect.arrayContaining([
+				"Trust tool grants shell:rm* for this session only.",
+				"Persist family allow: /permissions allow shell:rm*",
+				"Persist family deny: /permissions deny shell:rm*",
+			]),
+		});
+		expect(preview.guidance).not.toContain("Persist exact allow: /permissions allow shell:rm *.log");
 	});
 
 	it("reflects session trust in previews", async () => {

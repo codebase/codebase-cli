@@ -232,9 +232,10 @@ describe("runAppServer", () => {
 		);
 		const request = (event.event as { request: Record<string, unknown> }).request;
 		expect(request.tool).toBe("shell");
-		expect(request.reason).toContain("not in the read-only allowlist");
+		expect(request.reason).toContain("local git history");
 		expect(request.trustScope).toBe("shell:git commit*");
-		expect(request.guidance).toContain("Persist allow: /permissions allow shell:git commit*");
+		expect(request.guidance).toContain('Persist exact allow: /permissions allow shell:git commit -m "bridge"');
+		expect(request.guidance).toContain("Persist family allow: /permissions allow shell:git commit*");
 
 		h.send({ id: "perm", type: "permission_respond", requestId: request.id, choice: "deny" });
 		const response = await h.waitFor((m) => m.type === "response" && m.id === "perm");

@@ -7,12 +7,15 @@ import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
 import { ensureFreshCredentials } from "./auth/ensure-fresh.js";
+import { permissions as permissionsCommand } from "./commands/builtins/permissions.js";
 import { fetchUsageReport } from "./commands/builtins/usage.js";
+import type { CommandContext } from "./commands/types.js";
 import { buildDoctorReport } from "./diagnostics/doctor.js";
 import { runDirectorSubcommand } from "./directors/cli.js";
 import { loadDotEnv } from "./dotenv/loader.js";
 import { runReceiptSubcommand } from "./headless/receipt-cli.js";
 import { type HeadlessOutputFormat, runHeadless } from "./headless/run.js";
+import { PermissionStore } from "./permissions/store.js";
 import { runProjectSubcommand } from "./projects/cli.js";
 import { runSshSubcommand } from "./ssh/cli.js";
 import { App } from "./ui/App.js";
@@ -91,6 +94,8 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	if (printTopicHelp(topic)) process.exit(0);
 	process.stderr.write(`unknown help topic: ${topic}\nRun \`codebase help\` to list topics.\n`);
 	process.exit(2);
+} else if (argv[0] === "permissions" || argv[0] === "allowed-tools") {
+	process.exit(runPermissionsSubcommand(argv.slice(1)));
 } else if (isHelpTopicShim(argv[0])) {
 	printTopicHelp(argv[0]);
 	process.exit(0);
@@ -229,6 +234,26 @@ function settleExitCode(run: Promise<number>): void {
 	);
 }
 
+function runPermissionsSubcommand(args: string[]): number {
+	if (args.length === 0 || args.some((a) => a === "--help" || a === "-h")) {
+		printPermissionsHelp();
+		return 0;
+	}
+
+	const emitted: string[] = [];
+	const ctx = {
+		emit: (text: string) => emitted.push(text),
+		bundle: {
+			toolContext: { cwd: process.cwd() },
+			permissions: new PermissionStore(),
+		},
+	} as unknown as CommandContext;
+
+	permissionsCommand.handler(args.join(" "), ctx);
+	if (emitted.length > 0) process.stdout.write(`${emitted.join("\n")}\n`);
+	return 0;
+}
+
 function parseRunArgs(args: string[]): ParsedRunArgs {
 	const remaining: string[] = [];
 	let outputFormat: HeadlessOutputFormat | undefined;
@@ -318,7 +343,7 @@ function printHelp(): void {
 			"  codebase doctor              diagnose runtime, auth, config, MCP, storage",
 			"  codebase mcp                 show MCP setup help",
 			"  codebase memory              show memory help (TUI: /memory, #note)",
-			"  codebase permissions         show permission help (TUI: /permissions)",
+			"  codebase permissions         preview or configure shell permission rules",
 			"  codebase agents              show subagent help (TUI: /agents)",
 			"  codebase skills              show skill help (TUI: /skills)",
 			"  codebase tournament          show tournament help (TUI: /tournament)",
@@ -713,9 +738,14 @@ function printMemoryHelp(): void {
 function printPermissionsHelp(): void {
 	process.stdout.write(
 		[
-			"usage: codebase permissions",
+			"usage: codebase permissions [shell|suggest|simulate|allow|deny|remove] ...",
 			"",
-			"Show permission help for the interactive TUI.",
+			"Preview or configure tool-permission rules.",
+			"",
+			"From your shell:",
+			'  codebase permissions suggest "npm install"',
+			'  codebase permissions simulate "npm test && git status"',
+			'  codebase permissions allow "shell:npm run build*"',
 			"",
 			"Inside `codebase`:",
 			"  /permissions                         list effective allow/deny rules",

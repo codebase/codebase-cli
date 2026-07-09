@@ -33,6 +33,8 @@ const commands = [
 	{ args: ["app-server", "--help"], expect: "usage: codebase app-server" },
 	{ args: ["memory"], expect: "Inside `codebase`:" },
 	{ args: ["permissions"], expect: "/permissions suggest <command>" },
+	{ args: ["permissions", "suggest", "npm install"], expect: "persist exact allow: /permissions allow shell:npm install" },
+	{ args: ["permissions", "simulate", "git status --short && sudo apt update"], expect: "Summary: allow 1, prompt 1, block 0." },
 	{ args: ["agents"], expect: "/agents" },
 	{ args: ["skills"], expect: "/skills" },
 	{ args: ["tournament"], expect: "/tournament <task>" },

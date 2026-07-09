@@ -476,7 +476,7 @@ function reasonFor(tool: string, args: unknown): string | undefined {
 		if (verdict.verdict === "warn" && verdict.reason) {
 			return `High risk: shell validator warning: ${verdict.reason}.`;
 		}
-		return "Medium risk: this shell command is not in the read-only allowlist, so it needs approval before running.";
+		return shellRiskReason(cmd);
 	}
 	if (tool === "write_file") return "This will create or overwrite a file in the workspace.";
 	if (tool === "edit_file" || tool === "multi_edit" || tool === "notebook_edit") {
@@ -507,12 +507,45 @@ function guidanceFor(tool: string, args: unknown, shellPrefix?: string): string[
 	if (shellPrefix && shellNeedsPermission(cmd)) {
 		const scope = `shell:${shellPrefix}*`;
 		lines.push(`Trust tool grants ${scope} for this session only.`);
-		lines.push(`Persist allow: /permissions allow ${scope}`);
-		lines.push(`Persist deny: /permissions deny ${scope}`);
+		const exact = exactShellPattern(cmd);
+		if (exact) lines.push(`Persist exact allow: /permissions allow ${exact}`);
+		lines.push(`Persist family allow: /permissions allow ${scope}`);
+		lines.push(`Persist family deny: /permissions deny ${scope}`);
 	} else if (shellNeedsPermission(cmd)) {
 		lines.push("Use allow-once; no stable command prefix was detected.");
 	}
 	return lines.length > 0 ? lines : undefined;
+}
+
+function shellRiskReason(cmd: string): string {
+	if (/\bnpm\s+(install|i|add|ci)\b/.test(cmd) || /\b(pnpm|yarn|bun)\s+(install|add)\b/.test(cmd)) {
+		return "Medium risk: package installs can change dependencies, lockfiles, and run lifecycle scripts.";
+	}
+	if (/\bpip\s+install\b/.test(cmd) || /\buv\s+(pip\s+)?install\b/.test(cmd)) {
+		return "Medium risk: package installs can change the active Python environment.";
+	}
+	if (/\bgit\s+commit\b/.test(cmd)) {
+		return "Medium risk: this creates local git history and should match the intended diff.";
+	}
+	if (/\bgit\s+push\b/.test(cmd)) {
+		return "High risk: this sends commits to a remote repository.";
+	}
+	if (/\brm\b/.test(cmd)) {
+		return "High risk: delete commands can permanently remove workspace files.";
+	}
+	if (/\bchmod\b/.test(cmd) || /\bchown\b/.test(cmd)) {
+		return "Medium risk: permission or ownership changes can make files executable, unreadable, or broadly writable.";
+	}
+	return "Medium risk: this shell command is not in the read-only allowlist, so it needs approval before running.";
+}
+
+function exactShellPattern(cmd: string): string | null {
+	const trimmed = cmd.trim().replace(/\s+/g, " ");
+	if (!trimmed || trimmed.length > 160) return null;
+	// Permission globs do not have an escape syntax. If the command already
+	// contains glob metacharacters, an "exact" rule would silently broaden.
+	if (/[*?]/.test(trimmed)) return null;
+	return `shell:${trimmed}`;
 }
 
 function warningAdvice(reason: string): string | null {
@@ -537,7 +570,7 @@ function riskFor(tool: string, args: unknown): "low" | "medium" | "high" {
 		const cmd = stringOf(a.command);
 		const verdict = validateShellCommand(cmd);
 		if (verdict.verdict === "warn" || verdict.verdict === "block") return "high";
-		if (/\brm\s+-r/.test(cmd) || /\bgit\s+push/.test(cmd) || />\s*\/dev\//.test(cmd)) return "high";
+		if (/\brm\b/.test(cmd) || /\bgit\s+push/.test(cmd) || />\s*\/dev\//.test(cmd)) return "high";
 		return "medium";
 	}
 	if (tool === "git_commit" || tool === "git_branch") return "medium";
