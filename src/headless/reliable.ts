@@ -620,6 +620,7 @@ export function isVerificationCommand(command: string): boolean {
 		/\bbun\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?[jt]sx?\b/,
 		/\b(go test|cargo test|cargo clippy|mvn test|gradle test|swift test|zig build test)\b/,
 		/\b(make|just)\s+(test|check|verify|lint|build)\b/,
+		/\bgrep\b[\s\S]*&&\s*!\s*grep\b/,
 		/(^|[ /])verify\.sh\b/,
 	];
 	return patterns.some((pattern) => pattern.test(normalized));
