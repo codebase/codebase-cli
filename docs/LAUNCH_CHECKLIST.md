@@ -193,7 +193,7 @@ In an interactive session:
 - [ ] `/model` — opens picker, can select, swap takes effect
 - [ ] `/models` — lists available models
 - [ ] `/clear` — wipes visible transcript
-- [ ] `/context` and `/context explain` — show context budget, tasks, memory, compaction state
+- [ ] `/context` and `/context explain` — show context budget, tasks, memory, compaction state (`npm run build && npm run smoke:context`)
 - [ ] `/cost` — shows running cost
 - [ ] `/copy` — copies last assistant message
 - [ ] `/diff` — shows working-tree diff

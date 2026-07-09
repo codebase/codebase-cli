@@ -55,6 +55,7 @@
 		"bench": "node bench/run.mjs",
 		"bench:report": "node bench/aggregate.mjs",
 		"bench:micro": "vitest bench --run",
+		"smoke:context": "node scripts/context-smoke.mjs",
 		"smoke:web-build": "node scripts/web-build-smoke.mjs",
 		"prepublishOnly": "npm run clean && npm run check && npm run build",
 		"prepack": "npm run build"

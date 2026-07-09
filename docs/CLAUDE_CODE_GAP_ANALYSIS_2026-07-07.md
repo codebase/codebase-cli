@@ -63,12 +63,12 @@ Recommended next work:
 
 Claude's `/context` command shows what the model actually sees after transforms, microcompaction, and context analysis (`src/commands/context/context.tsx`). Its compaction system also strips/reinjects special blocks, budgets post-compact restoration, has failure tracking, and surfaces token-warning state (`src/services/compact/*`).
 
-Codebase now has `/context` and `/context explain` wired into the slash-command surface. The command shows token pressure, compaction threshold, recent/largest messages, task state, memory inventory, latest-prompt memory matches, retained memory reminders, inline files, tools, and compaction summaries. The remaining gap is less "can users inspect context?" and more "can we prove context continuity under ugly long-task pressure?"
+Codebase now has `/context` and `/context explain` wired into the slash-command surface, plus a built-artifact smoke fixture (`npm run build && npm run smoke:context`). The command shows token pressure, compaction threshold, recent/largest messages, task state, memory inventory, latest-prompt memory matches, retained memory reminders, inline files, tools, and compaction summaries. The remaining gap is less "can users inspect context?" and more "can we prove context continuity under ugly long-task pressure?"
 
 Recommended next work:
 
 - Add a benchmark scenario where a long task must survive compaction and still complete from preserved task/memory state.
-- Add a smoke-test fixture for `/context` and `/context explain` in a built CLI, not only unit tests.
+- Keep `npm run smoke:context` in the launch gate so the compiled slash-command surface keeps proving `/context` and `/context explain`.
 - Keep tightening the post-transform visibility story so users can distinguish persisted transcript from transient model-call reminders.
 
 ### 3. Task Lifecycle Enforcement
