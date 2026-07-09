@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
@@ -81,6 +81,51 @@ describe("runHeadless", () => {
 		expect(capture.stdout).toContain("hello from the faux model");
 		// Tool activity hints go to stderr — none expected for a text-only response.
 		expect(capture.stderr).toBe("");
+		expect(existsSync(join(tmpHome, ".codebase", "sessions"))).toBe(false);
+	});
+
+	it("persists a headless session only when resume continuity is explicit", async () => {
+		faux.setResponses([fauxAssistantMessage("continuity")]);
+		const { write } = makeCapture();
+		await runHeadless({
+			prompt: "continue this later",
+			resume: true,
+			outputFormat: "text",
+			autoApprove: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		const sessionsRoot = join(tmpHome, ".codebase", "sessions");
+		expect(existsSync(sessionsRoot)).toBe(true);
+		const projectDirs = readdirSync(sessionsRoot);
+		expect(projectDirs).toHaveLength(1);
+		expect(readdirSync(join(sessionsRoot, projectDirs[0] as string))).toHaveLength(1);
+	});
+
+	it("stops a runaway headless tool loop at the configured turn limit", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-turn-limit-"));
+		writeFileSync(join(tmpProject, "a.txt"), "a\n");
+		writeFileSync(join(tmpProject, "b.txt"), "b\n");
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("read_file", { path: "a.txt" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("read_file", { path: "b.txt" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("should not complete normally"),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "loop forever",
+			maxTurns: 2,
+			outputFormat: "json",
+			autoApprove: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		const parsed = JSON.parse(capture.stdout.trim()) as { code: string; error: string };
+		expect(exitCode).toBe(1);
+		expect(parsed.code).toBe("turn_limit_reached");
+		expect(parsed.error).toContain("stopped after 2 turns");
+		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
 	it("stream-json mode emits one JSONL line per agent event", async () => {
@@ -156,7 +201,7 @@ describe("runHeadless", () => {
 			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
 				stopReason: "toolUse",
 			}),
-			fauxAssistantMessage("Done. Verified with npm test."),
+			fauxAssistantMessage("Done. Verified with npm test. No file-change verification was needed."),
 		]);
 		const { capture, write } = makeCapture();
 		const exitCode = await runHeadless({
@@ -201,7 +246,7 @@ describe("runHeadless", () => {
 		expect(parsed.receipt.summary.verificationCount).toBe(1);
 		expect(parsed.receipt.finalAnswer).toEqual({
 			mentionsFreshVerification: true,
-			mentionsNoFileChangeVerification: false,
+			mentionsNoFileChangeVerification: true,
 			matchedVerificationCommands: ["cd . && npm test 2>&1"],
 		});
 		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
@@ -215,7 +260,7 @@ describe("runHeadless", () => {
 		expect(existsSync(parsed.receiptPath)).toBe(true);
 		expect(
 			JSON.stringify((parsed as { messages: Array<{ role: string; content: unknown }> }).messages[0]?.content),
-		).toContain("Reliable mode is enabled for this run");
+		).not.toContain("Reliable mode is enabled for this run");
 		const saved = JSON.parse(readFileSync(parsed.receiptPath, "utf8")) as { id: string; receipt: { ok: boolean } };
 		expect(saved.id).toBe(parsed.receiptId);
 		expect(saved.receipt.ok).toBe(true);
@@ -338,6 +383,40 @@ describe("runHeadless", () => {
 			finalAnswerMentionsNoFileChangeVerification: false,
 		});
 		expect(parsed.receipt.finalAnswer.mentionsNoFileChangeVerification).toBe(false);
+		expect(parsed.receipt.failures).toContain("final answer did not state no file-change verification was needed");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("does not let an unrelated verification command bypass read-only final proof", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-read-only-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: "node -e 'process.exit(0)'" } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Inspect project" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Inspected the project. npm test passed."),
+			fauxAssistantMessage("Still omitting the required no-change proof."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "inspect the project",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		const parsed = JSON.parse(capture.stdout.trim()) as { receipt: { failures: string[] } };
+		expect(exitCode).toBe(1);
 		expect(parsed.receipt.failures).toContain("final answer did not state no file-change verification was needed");
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
@@ -476,7 +555,7 @@ describe("runHeadless", () => {
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
-	it("reliable repair prompt tells the agent to repair named tasks", async () => {
+	it("reliable repair prompts stay internal to user-facing JSON", async () => {
 		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-repair-prompt-"));
 		writeFileSync(
 			join(tmpProject, "package.json"),
@@ -506,14 +585,14 @@ describe("runHeadless", () => {
 			messages: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
 		};
 		expect(exitCode).toBe(1);
-		const repairPrompt = parsed.messages.find((message) =>
+		const exposedRepairPrompt = parsed.messages.find((message) =>
 			message.content.some(
 				(block) =>
 					block.type === "text" &&
 					block.text?.includes("If failures name existing task ids that lacked evidence or skipped in_progress"),
 			),
 		);
-		expect(repairPrompt).toBeDefined();
+		expect(exposedRepairPrompt).toBeUndefined();
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
@@ -1460,7 +1539,7 @@ describe("buildJsonResult", () => {
 		expect(result.error).toBe("boom");
 	});
 
-	it("preserves the raw messages array on the envelope", () => {
+	it("preserves user-visible messages on the envelope", () => {
 		const messages = [{ role: "user", content: "hi" } as never];
 		const result = buildJsonResult({
 			ok: true,
@@ -1473,5 +1552,34 @@ describe("buildJsonResult", () => {
 		});
 		expect((result.messages as unknown[]).length).toBe(1);
 		expect(result.messageCount).toBe(1);
+	});
+
+	it("hides runtime reminders, thinking, and proxy protocol in JSON", () => {
+		const result = buildJsonResult({
+			ok: true,
+			exitCode: 0,
+			messages: [
+				{ role: "user", content: "<system-reminder>internal</system-reminder>Actual request" } as never,
+				{
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "private repair" },
+						{ type: "text", text: "Visible answer<｜DSML｜hidden" },
+					],
+				} as never,
+			],
+			usage: {},
+			model: { provider: "faux", id: "x", name: "X" },
+			source: "proxy",
+			durationMs: 1,
+		});
+		expect(JSON.stringify(result.messages)).toBe(
+			JSON.stringify([
+				{ role: "user", content: "Actual request" },
+				{ role: "assistant", content: [{ type: "text", text: "Visible answer" }] },
+			]),
+		);
+		expect(result.finalText).toBe("Visible answer");
+		expect(result.usageAvailable).toBe(false);
 	});
 });

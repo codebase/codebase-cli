@@ -33,6 +33,7 @@ import { UserQueryStore } from "../user-queries/store.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
 import { type Effort, resolveEffort } from "./effort.js";
 import { buildProjectFilesAddendum } from "./project-files.js";
+import { streamProxySafely } from "./safe-stream.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
 const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
@@ -99,6 +100,8 @@ export interface CreateAgentOptions {
 	systemPromptAddendum?: string;
 	/** Reuse an existing task-list id while rebuilding an in-memory agent. */
 	taskListId?: string;
+	/** Persist settled turns to the resumable session store. Default true. */
+	persistSession?: boolean;
 }
 
 export interface AgentBundle {
@@ -253,6 +256,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					"Use exit_plan_mode after presenting your plan to regain write access.",
 			};
 		}
+		const preview = permissions.preview(toolName, args);
+		if (preview.decision === "block") {
+			return { block: true, reason: preview.reason ?? "Blocked by permission policy." };
+		}
 		const decision = await permissions.evaluate(toolName, args);
 		if (decision === "block") {
 			return { block: true, reason: "Permission denied by user." };
@@ -337,6 +344,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					...(thinkingLevel && { thinkingLevel: thinkingLevel as Effort }),
 				},
 				getApiKey,
+				...(source === "proxy" && { streamFn: streamProxySafely }),
 				beforeToolCall: (ctx, signal) => guardToolCall(ctx.toolCall.name, ctx.args, signal),
 				afterToolCall: async (ctx, signal) => {
 					await dispatchPostToolHooks(
@@ -384,7 +392,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			messages: opts.initialMessages ?? resumed?.messages ?? [],
 			...(effort && { thinkingLevel: effort }),
 		},
-		getApiKey: () => apiKey,
+		getApiKey,
+		...(source === "proxy" && { streamFn: streamProxySafely }),
 		transformContext: async (messages, signal) => {
 			if (!compaction.needsCompaction(messages)) return withRelevantMemoryReminder(memory, messages);
 
@@ -482,6 +491,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// Persist after every agent_end so a crash mid-session doesn't lose work.
 	agent.subscribe((event) => {
 		if (event.type !== "agent_end") return;
+		if (opts.persistSession === false) return;
 		try {
 			const messages = event.messages.length > 0 ? event.messages : (resumed?.messages ?? []);
 			if (messages.length === 0) return;

@@ -5,6 +5,7 @@ import { ConfigError } from "../agent/config.js";
 import { initialState, reducer } from "../agent/events.js";
 import { routeUserInput } from "../agent/router.js";
 import { buildEnvironmentReminder } from "../agent/system-prompt.js";
+import { visibleMessages } from "../agent/visible-messages.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
 import { buildMcpPromptCommands } from "../commands/mcp-prompt-commands.js";
 import { CommandRegistry } from "../commands/registry.js";
@@ -96,7 +97,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 		reducer,
 		initialState(
 			{ provider: initialBundle.model.provider, id: initialBundle.model.id, name: initialBundle.model.name },
-			initialBundle.resumedMessages,
+			visibleMessages(initialBundle.resumedMessages),
 		),
 	);
 	const [permRequest, setPermRequest] = useState<PermissionRequest | undefined>(bundle.permissions.current());
@@ -385,6 +386,9 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			});
 			if (result.handled) return;
 		}
+		// Keep command output visible until the next real prompt, then reclaim
+		// the status area for current work.
+		setStatusLines([]);
 
 		// `@path` tokens auto-attach file contents to the prompt so the
 		// user doesn't have to spend a tool turn just to put a file in
@@ -589,7 +593,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 			dispatch({
 				type: "session-switched",
 				model: { provider: next.model.provider, id: next.model.id, name: next.model.name },
-				messages: next.resumedMessages,
+				messages: visibleMessages(next.resumedMessages),
 			});
 			const when = next.resumedFrom ? new Date(next.resumedFrom.updatedAt).toLocaleString() : "unknown time";
 			appendStatus(`Resumed session from ${when} (${next.resumedMessages.length} messages).`);
@@ -641,7 +645,7 @@ function ChatApp({ initialBundle, onExit }: ChatAppProps) {
 					))}
 				</Box>
 			) : null}
-			<Status state={state} cwd={bundle.toolContext.cwd} />
+			<Status state={state} cwd={bundle.toolContext.cwd} showCost={bundle.source !== "proxy"} />
 			{permRequest ? (
 				<Permission
 					request={permRequest}

@@ -7,9 +7,11 @@ const API_BASE = (process.env.CODEBASE_AUTH_BASE_URL ?? "https://codebase.design
 interface Balance {
 	creditsRemaining?: number;
 	anyBuildsRemaining?: number;
+	cheapBuildsRemaining?: number;
 	monthlyCredits?: number;
+	monthly_credits?: number;
 	periodEnd?: number | string;
-	plan?: { monthlyCredits?: number; name?: string } | string;
+	plan?: { monthlyCredits?: number; monthly_credits?: number; name?: string } | string;
 	planId?: string;
 	planName?: string;
 }
@@ -68,6 +70,9 @@ export async function fetchUsageReport(): Promise<string> {
 		if (typeof b.anyBuildsRemaining === "number" && b.anyBuildsRemaining >= 0) {
 			lines.push(`Build turns remaining: ${b.anyBuildsRemaining.toLocaleString()}`);
 		}
+		if (typeof b.cheapBuildsRemaining === "number" && b.cheapBuildsRemaining >= 0) {
+			lines.push(`Fast turns remaining: ${b.cheapBuildsRemaining.toLocaleString()}`);
+		}
 		return lines.join("\n");
 	} catch (err) {
 		return `Couldn't fetch usage: ${(err as Error).message}`;
@@ -81,7 +86,13 @@ export function formatUsageBalance(b: Balance): {
 	planName: string;
 } {
 	const plan = typeof b.plan === "object" && b.plan !== null ? b.plan : undefined;
-	const allowance = firstNumber(plan?.monthlyCredits, b.monthlyCredits);
+	const allowance = firstNumber(
+		plan?.monthlyCredits,
+		plan?.monthly_credits,
+		b.monthlyCredits,
+		b.monthly_credits,
+		b.planId?.toLowerCase() === "free" ? 50 : undefined,
+	);
 	const remaining = firstNumber(b.creditsRemaining) ?? 0;
 	const days = daysUntil(b.periodEnd);
 	const planName =

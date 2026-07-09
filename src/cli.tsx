@@ -38,6 +38,7 @@ interface ParsedRunArgs {
 	outputFormat?: HeadlessOutputFormat;
 	autoApprove?: boolean;
 	reliable?: boolean;
+	maxTurns?: number;
 	error?: string;
 }
 
@@ -156,35 +157,37 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 		printRunHelp();
 		process.exit(0);
 	}
-	const { prompt, outputFormat, autoApprove, reliable, error } = parseRunArgs(argv.slice(1));
+	const { prompt, outputFormat, autoApprove, reliable, maxTurns, error } = parseRunArgs(argv.slice(1));
 	if (error) {
 		process.stderr.write(`${error}\n`);
 		process.exit(2);
 	}
 	if (!prompt) {
 		process.stderr.write(
-			"usage: codebase run [--output text|json|stream-json] [--auto-approve] [--reliable] <prompt>\n",
+			"usage: codebase run [--output text|json|stream-json] [--auto-approve] [--reliable] [--max-turns n] <prompt>\n",
 		);
 		process.exit(2);
 	}
 	await ensureFreshCredentials();
-	settleExitCode(runHeadless({ prompt, outputFormat, autoApprove, reliable }));
+	settleExitCode(runHeadless({ prompt, outputFormat, autoApprove, reliable, maxTurns }));
 } else if (argv[0] === "auto") {
 	if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
 		printAutoHelp();
 		process.exit(0);
 	}
-	const { prompt, outputFormat, reliable, error } = parseRunArgs(argv.slice(1));
+	const { prompt, outputFormat, reliable, maxTurns, error } = parseRunArgs(argv.slice(1));
 	if (error) {
 		process.stderr.write(`${error}\n`);
 		process.exit(2);
 	}
 	if (!prompt) {
-		process.stderr.write("usage: codebase auto [--output text|json|stream-json] [--reliable] <prompt>\n");
+		process.stderr.write(
+			"usage: codebase auto [--output text|json|stream-json] [--reliable] [--max-turns n] <prompt>\n",
+		);
 		process.exit(2);
 	}
 	await ensureFreshCredentials();
-	settleExitCode(runHeadless({ prompt, outputFormat, autoApprove: true, reliable }));
+	settleExitCode(runHeadless({ prompt, outputFormat, autoApprove: true, reliable, maxTurns }));
 } else {
 	setTerminalTitle("codebase");
 	// Print a one-line warning if any restriction is off so the user can't
@@ -259,6 +262,7 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 	let outputFormat: HeadlessOutputFormat | undefined;
 	let autoApprove = false;
 	let reliable = false;
+	let maxTurns: number | undefined;
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		if (a === "--output" || a === "-o") {
@@ -286,10 +290,19 @@ function parseRunArgs(args: string[]): ParsedRunArgs {
 			reliable = true;
 			continue;
 		}
+		if (a === "--max-turns" || a.startsWith("--max-turns=")) {
+			const value = a === "--max-turns" ? args[++i] : a.slice("--max-turns=".length);
+			const parsed = Number(value);
+			if (!Number.isInteger(parsed) || parsed < 1 || parsed > 200) {
+				return { error: "--max-turns must be an integer from 1 to 200" };
+			}
+			maxTurns = parsed;
+			continue;
+		}
 		remaining.push(a);
 	}
 	const prompt = remaining.join(" ").trim();
-	return { prompt: prompt || undefined, outputFormat, autoApprove, reliable };
+	return { prompt: prompt || undefined, outputFormat, autoApprove, reliable, maxTurns };
 }
 
 function printUnrestrictedBanner(): void {
@@ -888,7 +901,7 @@ function printRewindHelp(): void {
 function printRunHelp(): void {
 	process.stdout.write(
 		[
-			"usage: codebase run [--output text|json|stream-json] [--auto-approve] [--reliable] <prompt>",
+			"usage: codebase run [--output text|json|stream-json] [--auto-approve] [--reliable] [--max-turns n] <prompt>",
 			"",
 			"Run one non-interactive agent turn and print the result to stdout.",
 			"",
@@ -896,6 +909,7 @@ function printRunHelp(): void {
 			"  --output, -o text|json|stream-json   choose stdout format (default: text)",
 			"  --auto-approve, --yes, -y            required: allow tool calls without interactive prompts",
 			"  --reliable                           fail without completed tasks + verification receipt",
+			"  --max-turns n                         stop runaway tool loops after n turns (default: 40)",
 			"  --help, -h                           show this help",
 			"",
 			"Shortcut:",
@@ -908,7 +922,7 @@ function printRunHelp(): void {
 function printAutoHelp(): void {
 	process.stdout.write(
 		[
-			"usage: codebase auto [--output text|json|stream-json] [--reliable] <prompt>",
+			"usage: codebase auto [--output text|json|stream-json] [--reliable] [--max-turns n] <prompt>",
 			"",
 			"Run one trusted, non-interactive coding task with tool calls auto-approved.",
 			"",
@@ -918,6 +932,7 @@ function printAutoHelp(): void {
 			"Options:",
 			"  --output, -o text|json|stream-json   choose stdout format (default: text)",
 			"  --reliable                           fail without completed tasks + verification receipt",
+			"  --max-turns n                         stop runaway tool loops after n turns (default: 40)",
 			"  --help, -h                           show this help",
 			"",
 		].join("\n"),

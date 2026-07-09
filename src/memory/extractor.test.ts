@@ -66,9 +66,9 @@ describe("MemoryExtractor", () => {
 	const proposal = JSON.stringify([
 		{
 			type: "user",
-			name: "Prefers tabs",
-			description: "when formatting",
-			body: "The user prefers tabs over spaces.",
+			name: "Frontend engineer",
+			description: "user role",
+			body: "The user is a frontend engineer.",
 		},
 	]);
 
@@ -87,7 +87,7 @@ describe("MemoryExtractor", () => {
 		expect(saved[0].type).toBe("user");
 		expect(saved[0].source).toBe("auto-extract");
 		expect(store.list()).toHaveLength(1);
-		expect(store.index()).toContain("Prefers tabs");
+		expect(store.index()).toContain("Frontend engineer");
 	});
 
 	it("advances its high-water mark so it doesn't re-mine old messages", async () => {
@@ -115,7 +115,13 @@ describe("MemoryExtractor", () => {
 	});
 
 	it("skips a proposal whose subject already has a memory", async () => {
-		store.save({ filename: "prefers-tabs-abc.md", name: "Prefers tabs", description: "d", type: "user", body: "x" });
+		store.save({
+			filename: "frontend-engineer-abc.md",
+			name: "Frontend engineer",
+			description: "d",
+			type: "user",
+			body: "x",
+		});
 		const model = stubModel(proposal);
 		const ext = new MemoryExtractor({ store, model, threshold: 2 });
 		const saved = await ext.maybeExtract([user("a"), assistant("b")]);
@@ -131,5 +137,37 @@ describe("MemoryExtractor", () => {
 		};
 		const ext = new MemoryExtractor({ store, model, threshold: 1 });
 		await expect(ext.maybeExtract([user("a"), assistant("b")])).resolves.toEqual([]);
+	});
+
+	it("rejects task-local instructions proposed as durable preferences", async () => {
+		const preference = JSON.stringify([
+			{
+				type: "feedback",
+				name: "No dependencies",
+				description: "workflow preference",
+				body: "Never add dependencies and always run the full suite.",
+			},
+		]);
+		const model = stubModel(preference);
+		const ext = new MemoryExtractor({ store, model, threshold: 1 });
+		const saved = await ext.maybeExtract([user("For this task, do not add dependencies. Run the full test suite.")]);
+		expect(saved).toEqual([]);
+		expect(store.list()).toEqual([]);
+	});
+
+	it("keeps explicitly durable user preferences", async () => {
+		const preference = JSON.stringify([
+			{
+				type: "feedback",
+				name: "Ask before dependencies",
+				description: "future dependency changes",
+				body: "Ask before adding a dependency in future sessions.",
+			},
+		]);
+		const model = stubModel(preference);
+		const ext = new MemoryExtractor({ store, model, threshold: 1 });
+		const saved = await ext.maybeExtract([user("Going forward, never add dependencies without asking me first.")]);
+		expect(saved).toHaveLength(1);
+		expect(saved[0]?.type).toBe("feedback");
 	});
 });

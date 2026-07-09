@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { classifyIntent, parseIntent } from "./intent.js";
+import { classifyIntent, isExplicitPlanRequest, parseIntent } from "./intent.js";
 
 function fakeGlue(reply: string) {
 	return {
@@ -55,20 +55,26 @@ describe("classifyIntent", () => {
 		await expect(classifyIntent(glue, "  ", { hasHistory: true })).resolves.toBe("clarify");
 	});
 
-	it("routes greetings to the agent (the glue chat shortcut is gone)", async () => {
-		// Previously "thanks!" would have skipped the LLM and shortcut to
-		// "chat". Now the classifier is asked, and the prompt explicitly
-		// tells it small talk is the agent's job — so we expect "agent".
+	it("routes non-plan requests directly to the tool-using agent", async () => {
 		const glue = fakeGlue("agent");
 		await expect(classifyIntent(glue, "thanks!", { hasHistory: true })).resolves.toBe("agent");
-		expect(glue.fast).toHaveBeenCalled();
+		expect(glue.fast).not.toHaveBeenCalled();
 	});
 
-	it("returns the LLM-classified intent on success", async () => {
+	it("does not auto-plan a complex actionable request", async () => {
 		const glue = fakeGlue("plan");
 		await expect(classifyIntent(glue, "rewrite the worker as a state machine", { hasHistory: false })).resolves.toBe(
-			"plan",
+			"agent",
 		);
+		expect(glue.fast).not.toHaveBeenCalled();
+	});
+
+	it("classifies an explicit plan request", async () => {
+		const glue = fakeGlue("plan");
+		await expect(
+			classifyIntent(glue, "Make an implementation plan before coding", { hasHistory: false }),
+		).resolves.toBe("plan");
+		expect(glue.fast).toHaveBeenCalled();
 	});
 
 	it("falls back to 'agent' on LLM error", async () => {
@@ -86,5 +92,14 @@ describe("classifyIntent", () => {
 		// training data, we don't want to silently strand the request.
 		const glue = fakeGlue("chat");
 		await expect(classifyIntent(glue, "what's up", { hasHistory: true })).resolves.toBe("agent");
+	});
+});
+
+describe("isExplicitPlanRequest", () => {
+	it("recognizes direct planning language without matching negation", () => {
+		expect(isExplicitPlanRequest("Plan this migration before coding")).toBe(true);
+		expect(isExplicitPlanRequest("Please make me an implementation plan")).toBe(true);
+		expect(isExplicitPlanRequest("Do not make a plan, just fix it")).toBe(false);
+		expect(isExplicitPlanRequest("Implement the migration carefully")).toBe(false);
 	});
 });

@@ -55,11 +55,17 @@ export const session: Command = {
 	handler: (_args, ctx) => {
 		const { state, bundle } = ctx;
 		const u = state.usage;
+		const usageUnavailable =
+			bundle.source === "proxy" &&
+			u.input + u.output + u.cacheRead + u.cacheWrite + u.totalTokens === 0 &&
+			state.messages.some((message) => message.role === "assistant");
 		const lines = [
 			`model:    ${state.model.provider}/${state.model.id} (${state.model.name})`,
 			`messages: ${state.messages.length}`,
-			`usage:    ↓${u.input} ↑${u.output} cache ↓${u.cacheRead}/↑${u.cacheWrite}`,
-			`cost:     $${u.cost.total.toFixed(4)}`,
+			usageUnavailable
+				? "usage:    unavailable from proxy"
+				: `usage:    ↓${u.input} ↑${u.output} cache ↓${u.cacheRead}/↑${u.cacheWrite}`,
+			usageUnavailable ? "cost:     unavailable from proxy" : `cost:     $${u.cost.total.toFixed(4)}`,
 			`source:   ${bundle.source}`,
 		];
 		ctx.emit(lines.join("\n"));

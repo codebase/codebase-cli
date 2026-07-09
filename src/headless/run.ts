@@ -2,6 +2,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
+import { visibleMessages } from "../agent/visible-messages.js";
 import { userFacingErrorMessage } from "../errors/user-facing.js";
 import { ReceiptStore } from "./receipt-store.js";
 import {
@@ -26,6 +27,8 @@ export type HeadlessOutputFormat = "text" | "json" | "stream-json";
 export interface HeadlessOptions {
 	prompt: string;
 	resume?: boolean;
+	/** Maximum tool-using model turns before a runaway run is stopped. Default 40. */
+	maxTurns?: number;
 	/** Output shape. Default `text`. */
 	outputFormat?: HeadlessOutputFormat;
 	/**
@@ -79,6 +82,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	try {
 		bundle = createAgent({
 			resume: opts.resume,
+			persistSession: opts.resume === true,
 			autoApprove: opts.autoApprove,
 			systemPromptAddendum: opts.reliable ? RELIABLE_MODE_PROMPT : undefined,
 			configOverride: opts.configOverride,
@@ -143,6 +147,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 	let errorCode: string | undefined;
 	let errorMessage: string | undefined;
 	let errorExitCode = 1;
+	const maxTurns = Math.max(1, Math.min(200, opts.maxTurns ?? 40));
+	let turns = 0;
+	let turnLimitReached = false;
 	let totalUsage: Usage = { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost } };
 	const pendingTools = new Map<string, string>();
 	const reliability = opts.reliable ? new ReliabilityRecorder() : null;
@@ -168,6 +175,14 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		} else if (event.type === "tool_execution_end") {
 			const id = (event as { toolCallId?: string }).toolCallId;
 			if (id) pendingTools.delete(id);
+		} else if (event.type === "turn_end" && event.message.role === "assistant") {
+			turns++;
+			const hasToolCalls =
+				Array.isArray(event.message.content) && event.message.content.some((block) => block.type === "toolCall");
+			if (hasToolCalls && turns >= maxTurns) {
+				turnLimitReached = true;
+				bundle.agent.abort();
+			}
 		}
 	});
 
@@ -195,7 +210,16 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 		// with code 1 and the reason printed to stderr.
 		const submittedPrompt = opts.reliable ? buildReliableUserPrompt(opts.prompt) : opts.prompt;
 		const submitResult = await bundle.submitUserPrompt(submittedPrompt);
-		if (!submitResult.submitted) {
+		if (turnLimitReached) {
+			errored = true;
+			errorCode = "turn_limit_reached";
+			errorMessage = `Agent stopped after ${maxTurns} turns to prevent a runaway tool loop. Re-run with --max-turns <n> only after reviewing the failure pattern.`;
+			if (format === "stream-json") {
+				out(`${JSON.stringify({ type: "error", code: errorCode, error: errorMessage, ts: Date.now() })}\n`);
+			} else if (format !== "json") {
+				err(`error: ${errorMessage}\n`);
+			}
+		} else if (!submitResult.submitted) {
 			errored = true;
 			errorCode = "prompt_blocked";
 			errorMessage = submitResult.reason ?? "Prompt blocked by hook.";
@@ -431,7 +455,9 @@ interface JsonResultInput {
 
 /** Exported for unit tests — production code reaches it through runHeadless. */
 export function buildJsonResult(input: JsonResultInput): Record<string, unknown> {
-	const lastAssistant = [...input.messages].reverse().find((m) => m.role === "assistant");
+	const messages = visibleMessages(input.messages);
+	const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+	const usageAvailable = hasReportedUsage(input.usage);
 	return {
 		ok: input.ok,
 		exitCode: input.exitCode,
@@ -441,12 +467,21 @@ export function buildJsonResult(input: JsonResultInput): Record<string, unknown>
 		source: input.source,
 		durationMs: input.durationMs,
 		usage: input.usage,
+		usageAvailable,
 		...(input.receipt ? { receipt: input.receipt } : {}),
 		...(input.receiptRecord ? { receiptId: input.receiptRecord.id, receiptPath: input.receiptRecord.path } : {}),
-		messageCount: input.messages.length,
+		messageCount: messages.length,
 		finalText: lastAssistant ? extractText(lastAssistant) : "",
-		messages: input.messages,
+		messages,
 	};
+}
+
+function hasReportedUsage(usage: unknown): boolean {
+	if (!usage || typeof usage !== "object") return false;
+	const value = usage as Record<string, unknown>;
+	return ["input", "output", "cacheRead", "cacheWrite", "totalTokens"].some(
+		(key) => typeof value[key] === "number" && value[key] > 0,
+	);
 }
 
 function subscribeStreamJson(bundle: AgentBundle, out: (s: string) => void): () => void {

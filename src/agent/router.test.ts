@@ -18,10 +18,17 @@ describe("routeUserInput", () => {
 		await expect(routeUserInput(glue, "fix the build", { hasHistory: true })).resolves.toEqual({ kind: "agent" });
 	});
 
-	it("returns 'plan' when intent classifies to plan", async () => {
+	it("keeps complex actionable work with the tool-using agent", async () => {
 		const glue = mockGlue({ intent: "plan" });
 		await expect(
 			routeUserInput(glue, "rewrite the worker as a state machine", { hasHistory: false }),
+		).resolves.toEqual({ kind: "agent" });
+	});
+
+	it("uses the reviewable plan flow when the user explicitly requests it", async () => {
+		const glue = mockGlue({ intent: "plan" });
+		await expect(
+			routeUserInput(glue, "Make an implementation plan before coding", { hasHistory: false }),
 		).resolves.toEqual({ kind: "plan" });
 	});
 

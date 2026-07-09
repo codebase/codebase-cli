@@ -13,6 +13,8 @@ interface StatusProps {
 	cwd?: string;
 	/** Context window in tokens; used to render the % used. */
 	contextWindow?: number;
+	/** Proxy sessions do not report dollar cost; hide a misleading $0. */
+	showCost?: boolean;
 }
 
 const STATUS_LABEL: Record<ChatState["status"], string> = {
@@ -39,7 +41,7 @@ const STATUS_COLOR: Record<ChatState["status"], string> = {
  * widths; the cwd basename is the only dynamic-length piece so we
  * always show what matters.
  */
-export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
+export function Status({ state, cwd, contextWindow = 200_000, showCost = true }: StatusProps) {
 	const busy = state.status === "thinking" || state.status === "streaming" || state.status === "tool";
 	const verb = useThinkingVerb(state.status === "thinking");
 	let label = state.status === "thinking" ? verb : STATUS_LABEL[state.status];
@@ -80,7 +82,8 @@ export function Status({ state, cwd, contextWindow = 200_000 }: StatusProps) {
 						{ctxBar(ctxPct)} {ctxPct}%
 					</Text>
 					<Text dimColor>
-						{tokRate !== undefined ? ` · ${tokRate} tok/s` : ""} · ${formatCost(u.cost.total)}
+						{tokRate !== undefined ? ` · ${tokRate} tok/s` : ""}
+						{showCost ? ` · ${formatCost(u.cost.total)}` : ""}
 					</Text>
 				</Box>
 			</Box>

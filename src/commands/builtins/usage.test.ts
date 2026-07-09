@@ -48,11 +48,18 @@ describe("formatUsageBalance", () => {
 		});
 	});
 
-	it("falls back to remaining credits when the allowance is absent", () => {
-		expect(formatUsageBalance({ creditsRemaining: 125, planId: "free" })).toMatchObject({
-			creditLine: "Credits left: 125",
-			pct: null,
+	it("uses the known free allowance when the live endpoint omits it", () => {
+		expect(formatUsageBalance({ creditsRemaining: 25, planId: "free" })).toMatchObject({
+			creditLine: "Credits: 25 / 50 used  ·  25 left",
+			pct: 50,
 			planName: "free",
+		});
+	});
+
+	it("accepts snake-case allowance fields", () => {
+		expect(formatUsageBalance({ creditsRemaining: 30, monthly_credits: 50, planId: "free" })).toMatchObject({
+			creditLine: "Credits: 20 / 50 used  ·  30 left",
+			pct: 40,
 		});
 	});
 

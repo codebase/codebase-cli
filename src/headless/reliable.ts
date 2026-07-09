@@ -213,7 +213,7 @@ export class ReliabilityRecorder {
 				`final answer did not name a fresh passing verification command: ${verificationAfterLastMutation.map((item) => item.command).join(", ")}`,
 			);
 		}
-		if (mutations.length === 0 && verification.length === 0 && completedTasks.length > 0) {
+		if (mutations.length === 0 && completedTasks.length > 0) {
 			if (!finalAnswer.mentionsNoFileChangeVerification) {
 				failures.push("final answer did not state no file-change verification was needed");
 			}

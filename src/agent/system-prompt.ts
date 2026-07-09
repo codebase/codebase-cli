@@ -55,6 +55,9 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 		"Issue independent tool calls together in a single response. If you need to read three files whose contents don't depend on each other, request all three reads at once instead of one per turn — sequential reads are the slow path and should only happen when a later call genuinely needs an earlier call's result. The same applies to greps, glob queries, and any read-only investigation.",
 	);
 	lines.push(
+		"Before editing or overwriting an existing file, inspect that file in the current session. Never guess a path or its current contents; read the target first so the write tools have a fresh snapshot.",
+	);
+	lines.push(
 		"When a task fans out cleanly — multi-file audits, security reviews, broad codebase exploration — prefer dispatching subagents via dispatch_agent so each stream runs in parallel and their context stays out of your main loop. Don't also do the same searches yourself; that wastes turns and doubles the noise.",
 	);
 	lines.push(
