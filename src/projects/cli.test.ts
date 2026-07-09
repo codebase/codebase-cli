@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runProjectSubcommand } from "./cli.js";
 import { type ProjectClient, ProjectClientError } from "./client.js";
+import { BuildHandoffStore } from "./handoff.js";
 import type {
 	BuildCancelResponse,
 	BuildPreviewResponse,
@@ -14,6 +18,9 @@ function fakeClient(
 		projects?: PlatformProject[];
 		pullPath?: string;
 		onStartBuild?: (input: { prompt: string; model?: string; scaffold?: string; projectId?: string }) => void;
+		onGetBuildStatus?: (sessionId: string) => void;
+		onEnsureBuildPreview?: (sessionId: string) => void;
+		onCancelBuild?: (sessionId: string) => void;
 		build?: BuildStartResponse;
 		status?: BuildStatusResponse;
 		preview?: BuildPreviewResponse;
@@ -35,14 +42,23 @@ function fakeClient(
 				}
 			);
 		},
-		getBuildStatus: async () => opts.status ?? { sessionId: "sess-1", status: "completed", projectId: "proj-1" },
-		ensureBuildPreview: async () => opts.preview ?? { ok: true, previewPath: "/preview/proj-1" },
-		cancelBuild: async () => opts.cancel ?? { sessionId: "sess-1", status: "cancelled", stopped: true },
+		getBuildStatus: async (sessionId: string) => {
+			opts.onGetBuildStatus?.(sessionId);
+			return opts.status ?? { sessionId, status: "completed", projectId: "proj-1" };
+		},
+		ensureBuildPreview: async (sessionId: string) => {
+			opts.onEnsureBuildPreview?.(sessionId);
+			return opts.preview ?? { ok: true, previewPath: "/preview/proj-1" };
+		},
+		cancelBuild: async (sessionId: string) => {
+			opts.onCancelBuild?.(sessionId);
+			return opts.cancel ?? { sessionId, status: "cancelled", stopped: true };
+		},
 		absoluteUrl: (path: string) => `https://codebase.design${path.startsWith("/") ? path : `/${path}`}`,
 	} as unknown as ProjectClient;
 }
 
-async function runProject(argv: string[], client: ProjectClient) {
+async function runProject(argv: string[], client: ProjectClient, handoffStore: BuildHandoffStore | null = null) {
 	const stdout: string[] = [];
 	const stderr: string[] = [];
 	const code = await runProjectSubcommand(argv, {
@@ -50,6 +66,7 @@ async function runProject(argv: string[], client: ProjectClient) {
 		stdout: (m) => stdout.push(m),
 		stderr: (m) => stderr.push(m),
 		sleep: async () => undefined,
+		handoffStore,
 	});
 	return { code, stdout, stderr };
 }
@@ -68,6 +85,7 @@ describe("runProjectSubcommand", () => {
 			client,
 			stdout: (m) => stdout.push(m),
 			stderr: (m) => stderr.push(m),
+			handoffStore: null,
 		});
 
 		expect(code).toBe(0);
@@ -235,6 +253,7 @@ describe("runProjectSubcommand", () => {
 			sleep: async (ms) => {
 				sleeps.push(ms);
 			},
+			handoffStore: null,
 		});
 
 		expect(code).toBe(0);
@@ -257,5 +276,88 @@ describe("runProjectSubcommand", () => {
 		);
 		expect(cancel.code).toBe(0);
 		expect(cancel.stdout.join("\n")).toContain("cancel requested");
+	});
+
+	it("records accepted web builds and resolves latest for continuity commands", async () => {
+		const dataRoot = mkdtempSync(join(tmpdir(), "project-handoff-"));
+		try {
+			const handoff = new BuildHandoffStore({ cwd: "/repo/app", dataRoot });
+			const build = await runProject(
+				["project", "build", "--model", "codebase/d4f", "--scaffold", "landing", "Build", "launch", "page"],
+				fakeClient(),
+				handoff,
+			);
+
+			expect(build.code).toBe(0);
+			expect(build.stdout.join("\n")).toContain("latest:  codebase project status latest");
+			expect(handoff.load()).toMatchObject({
+				sessionId: "sess-1",
+				projectId: "proj-1",
+				status: "building",
+				model: "codebase/d4f",
+				scaffold: "landing",
+				promptPreview: "Build launch page",
+			});
+
+			const seen: string[] = [];
+			const client = fakeClient({
+				onGetBuildStatus: (sessionId) => seen.push(`status:${sessionId}`),
+				onEnsureBuildPreview: (sessionId) => seen.push(`preview:${sessionId}`),
+				onCancelBuild: (sessionId) => seen.push(`cancel:${sessionId}`),
+				status: { sessionId: "sess-1", status: "completed", projectId: "proj-1", model: "codebase/d4f" },
+				preview: { ok: true, previewPath: "/preview/proj-1" },
+				cancel: { sessionId: "sess-1", status: "cancelled", stopped: true },
+			});
+
+			const status = await runProject(["project", "status"], client, handoff);
+			expect(status.code).toBe(0);
+			expect(status.stdout.join("\n")).toContain("using latest web build: sess-1");
+			expect(status.stdout.join("\n")).toContain("build sess-1: completed");
+
+			const preview = await runProject(["project", "preview", "latest"], client, handoff);
+			expect(preview.code).toBe(0);
+			expect(preview.stdout.join("\n")).toContain("preview: https://codebase.design/preview/proj-1");
+
+			const cancel = await runProject(["project", "cancel", "last"], client, handoff);
+			expect(cancel.code).toBe(0);
+			expect(cancel.stdout.join("\n")).toContain("cancel requested");
+			expect(seen).toEqual(["status:sess-1", "preview:sess-1", "cancel:sess-1"]);
+			expect(handoff.load()).toMatchObject({
+				sessionId: "sess-1",
+				status: "cancelled",
+				previewUrl: "https://codebase.design/preview/proj-1",
+			});
+
+			await runProject(
+				["project", "build", "Build", "another", "page"],
+				fakeClient({ build: { sessionId: "sess-2", projectId: "proj-2", status: "building" } }),
+				handoff,
+			);
+			expect(handoff.load()).toMatchObject({
+				sessionId: "sess-2",
+				projectId: "proj-2",
+				status: "building",
+				promptPreview: "Build another page",
+			});
+			expect(handoff.load()?.previewUrl).toBeUndefined();
+		} finally {
+			rmSync(dataRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("explains when latest status has no local handoff yet", async () => {
+		const dataRoot = mkdtempSync(join(tmpdir(), "project-handoff-"));
+		try {
+			const result = await runProject(
+				["project", "status", "latest"],
+				fakeClient(),
+				new BuildHandoffStore({ cwd: "/repo/app", dataRoot }),
+			);
+
+			expect(result.code).toBe(2);
+			expect(result.stderr.join("\n")).toContain("no latest web build is recorded");
+		} finally {
+			rmSync(dataRoot, { recursive: true, force: true });
+		}
 	});
 });

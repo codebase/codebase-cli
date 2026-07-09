@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { defaultDownloadPath, NotAuthenticatedError, ProjectClient, ProjectClientError } from "./client.js";
+import { BuildHandoffStore } from "./handoff.js";
 import type { BuildStatusResponse, PlatformProject } from "./types.js";
 
 const DEFAULT_LIST_LIMIT = 25;
@@ -11,6 +12,7 @@ export interface ProjectCliOptions {
 	stderr?: (msg: string) => void;
 	client?: ProjectClient;
 	sleep?: (ms: number) => Promise<void>;
+	handoffStore?: BuildHandoffStore | null;
 }
 
 /**
@@ -24,15 +26,16 @@ export interface ProjectCliOptions {
  *   project pull <id>    → pull project to ~/.codebase/pulls/<id>.zip
  *   project pull <id> <dest>  → pull to <dest>
  *   project build [opts] <prompt> → start a web build on codebase.design
- *   project status <session-id>   → poll a web build
- *   project preview <session-id>  → start/fetch a web preview
- *   project cancel <session-id>   → cancel a running web build
+ *   project status [session-id|latest]  → poll a web build
+ *   project preview [session-id|latest] → start/fetch a web preview
+ *   project cancel <session-id|latest>  → cancel a running web build
  */
 export async function runProjectSubcommand(argv: string[], options: ProjectCliOptions = {}): Promise<number> {
 	const out = options.stdout ?? ((m) => process.stdout.write(`${m}\n`));
 	const err = options.stderr ?? ((m) => process.stderr.write(`${m}\n`));
 	const client = options.client ?? new ProjectClient();
 	const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	const handoffStore = options.handoffStore === undefined ? new BuildHandoffStore() : options.handoffStore;
 
 	const subcommand = argv[1] ?? "list";
 
@@ -42,10 +45,10 @@ export async function runProjectSubcommand(argv: string[], options: ProjectCliOp
 			return 0;
 		}
 		if (subcommand === "pull") return await pullCmd(client, argv[2], argv[3], out, err);
-		if (subcommand === "build") return await buildCmd(client, argv.slice(2), out, err, sleep);
-		if (subcommand === "status") return await statusCmd(client, argv[2], out, err);
-		if (subcommand === "preview") return await previewCmd(client, argv[2], out, err);
-		if (subcommand === "cancel") return await cancelCmd(client, argv[2], out, err);
+		if (subcommand === "build") return await buildCmd(client, argv.slice(2), out, err, sleep, handoffStore);
+		if (subcommand === "status") return await statusCmd(client, argv[2], out, err, handoffStore);
+		if (subcommand === "preview") return await previewCmd(client, argv[2], out, err, handoffStore);
+		if (subcommand === "cancel") return await cancelCmd(client, argv[2], out, err, handoffStore);
 		if (subcommand === "list" || subcommand === "ls" || isListFlag(subcommand)) {
 			const args = subcommand === "list" || subcommand === "ls" ? argv.slice(2) : argv.slice(1);
 			const opts = parseListOptions(args);
@@ -269,6 +272,7 @@ async function buildCmd(
 	out: (msg: string) => void,
 	err: (msg: string) => void,
 	sleep: (ms: number) => Promise<void>,
+	handoffStore: BuildHandoffStore | null,
 ): Promise<number> {
 	const opts = parseBuildOptions(args);
 	if (opts.help) {
@@ -290,21 +294,32 @@ async function buildCmd(
 		scaffold: opts.scaffold,
 		projectId: opts.projectId,
 	});
+	handoffStore?.save({
+		sessionId: started.sessionId,
+		projectId: started.projectId,
+		status: started.status,
+		model: started.model,
+		scaffold: opts.scaffold,
+		prompt: opts.prompt,
+	});
 	out("✓ build accepted");
 	out(`  session: ${started.sessionId}`);
 	out(`  project: ${started.projectId}`);
 	if (started.model) out(`  model:   ${started.model}`);
 	out(`  status:  ${started.status}`);
 	out(`  poll:    codebase project status ${started.sessionId}`);
+	if (handoffStore) out("  latest:  codebase project status latest");
 	out(`  events:  ${client.absoluteUrl(`/api/v1/builds/${started.sessionId}/events`)}`);
 	if (!opts.wait) return 0;
 
 	out("");
 	out("waiting for build to finish...");
 	const status = await waitForBuild(client, started.sessionId, opts.timeoutMs, opts.pollMs, sleep);
+	handoffStore?.update({ sessionId: started.sessionId, status: status.status, model: status.model });
 	printBuildStatus(status, out);
 	if (status.status === "completed") {
-		await printPreview(client, started.sessionId, out);
+		const previewUrl = await printPreview(client, started.sessionId, out);
+		if (previewUrl) handoffStore?.update({ sessionId: started.sessionId, previewUrl });
 		return 0;
 	}
 	return status.status === "failed" ? 1 : 0;
@@ -346,12 +361,13 @@ async function statusCmd(
 	sessionId: string | undefined,
 	out: (msg: string) => void,
 	err: (msg: string) => void,
+	handoffStore: BuildHandoffStore | null,
 ): Promise<number> {
-	if (!sessionId) {
-		err("usage: codebase project status <session-id>");
-		return 2;
-	}
-	const status = await client.getBuildStatus(sessionId);
+	const resolved = resolveBuildSessionId(sessionId, handoffStore, "status", err, { allowMissingAsLatest: true });
+	if (!resolved) return 2;
+	if (resolved.fromLatest) out(`using latest web build: ${resolved.sessionId}`);
+	const status = await client.getBuildStatus(resolved.sessionId);
+	handoffStore?.update({ sessionId: resolved.sessionId, status: status.status, model: status.model });
 	printBuildStatus(status, out);
 	return status.status === "failed" ? 1 : 0;
 }
@@ -361,12 +377,14 @@ async function previewCmd(
 	sessionId: string | undefined,
 	out: (msg: string) => void,
 	err: (msg: string) => void,
+	handoffStore: BuildHandoffStore | null,
 ): Promise<number> {
-	if (!sessionId) {
-		err("usage: codebase project preview <session-id>");
-		return 2;
-	}
-	return (await printPreview(client, sessionId, out)) ? 0 : 1;
+	const resolved = resolveBuildSessionId(sessionId, handoffStore, "preview", err, { allowMissingAsLatest: true });
+	if (!resolved) return 2;
+	if (resolved.fromLatest) out(`using latest web build: ${resolved.sessionId}`);
+	const previewUrl = await printPreview(client, resolved.sessionId, out);
+	if (previewUrl) handoffStore?.update({ sessionId: resolved.sessionId, previewUrl });
+	return previewUrl ? 0 : 1;
 }
 
 async function cancelCmd(
@@ -374,16 +392,43 @@ async function cancelCmd(
 	sessionId: string | undefined,
 	out: (msg: string) => void,
 	err: (msg: string) => void,
+	handoffStore: BuildHandoffStore | null,
 ): Promise<number> {
 	if (!sessionId) {
 		err("usage: codebase project cancel <session-id>");
 		return 2;
 	}
-	const result = await client.cancelBuild(sessionId);
+	const resolved = resolveBuildSessionId(sessionId, handoffStore, "cancel", err, { allowMissingAsLatest: false });
+	if (!resolved) return 2;
+	if (resolved.fromLatest) out(`using latest web build: ${resolved.sessionId}`);
+	const result = await client.cancelBuild(resolved.sessionId);
+	handoffStore?.update({ sessionId: resolved.sessionId, status: result.status });
 	out(`build ${result.sessionId}: ${result.status}`);
 	out(result.stopped ? "✓ cancel requested" : "no active build was running");
 	if (result.events) out(`events: ${client.absoluteUrl(result.events)}`);
 	return 0;
+}
+
+function resolveBuildSessionId(
+	input: string | undefined,
+	handoffStore: BuildHandoffStore | null,
+	command: "status" | "preview" | "cancel",
+	err: (msg: string) => void,
+	opts: { allowMissingAsLatest: boolean },
+): { sessionId: string; fromLatest: boolean } | null {
+	const wantsLatest = !input ? opts.allowMissingAsLatest : input === "latest" || input === "last";
+	if (!wantsLatest && input) return { sessionId: input, fromLatest: false };
+	if (!handoffStore) {
+		err(`usage: codebase project ${command} <session-id>`);
+		return null;
+	}
+	const latest = handoffStore.load();
+	if (!latest) {
+		err(`usage: codebase project ${command} <session-id>`);
+		err("hint: no latest web build is recorded for this directory yet.");
+		return null;
+	}
+	return { sessionId: latest.sessionId, fromLatest: true };
 }
 
 function printBuildStatus(status: BuildStatusResponse, out: (msg: string) => void): void {
@@ -395,14 +440,19 @@ function printBuildStatus(status: BuildStatusResponse, out: (msg: string) => voi
 		out(`  events:  ${status.timeline.length} timeline item${status.timeline.length === 1 ? "" : "s"}`);
 }
 
-async function printPreview(client: ProjectClient, sessionId: string, out: (msg: string) => void): Promise<boolean> {
+async function printPreview(
+	client: ProjectClient,
+	sessionId: string,
+	out: (msg: string) => void,
+): Promise<string | null> {
 	const preview = await client.ensureBuildPreview(sessionId);
 	if (!preview.ok || !preview.previewPath) {
 		out(`preview unavailable${preview.reason ? `: ${preview.reason}` : ""}`);
-		return false;
+		return null;
 	}
-	out(`preview: ${client.absoluteUrl(preview.previewPath)}`);
-	return true;
+	const previewUrl = client.absoluteUrl(preview.previewPath);
+	out(`preview: ${previewUrl}`);
+	return previewUrl;
 }
 
 async function pullCmd(
@@ -495,9 +545,9 @@ function printProjectHelp(out: (msg: string) => void): void {
 	out("  pull <id>     download a project ZIP");
 	out("  build <prompt>");
 	out("                start a web build on codebase.design");
-	out("  status <id>   show a web build status");
-	out("  preview <id>  start/fetch the web preview for a build");
-	out("  cancel <id>   cancel a running web build");
+	out("  status [id]   show a web build status; defaults to latest for this directory");
+	out("  preview [id]  start/fetch the web preview; defaults to latest for this directory");
+	out("  cancel <id>   cancel a running web build (`latest` is accepted)");
 }
 
 function printBuildHelp(out: (msg: string) => void): void {
@@ -512,4 +562,9 @@ function printBuildHelp(out: (msg: string) => void): void {
 	out("  --model MODEL        request a specific web build model");
 	out("  --scaffold ID        request a specific web scaffold");
 	out("  --project ID         continue/build against an existing project when supported by the web API");
+	out("");
+	out("Continuity:");
+	out("  accepted builds are recorded locally so you can later run:");
+	out("  codebase project status latest");
+	out("  codebase project preview latest");
 }

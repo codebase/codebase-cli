@@ -63,7 +63,17 @@ if (build.code !== 0) {
 const session = build.stdout.match(/session:\s*(\S+)/)?.[1];
 const preview = build.stdout.match(/preview:\s*(\S+)/)?.[1];
 if (!session) die("build command exited 0 but did not print a session id", 1);
+if (!/latest:\s+codebase project status latest/.test(build.stdout)) {
+	die("build command exited 0 but did not print the local latest-handoff recovery hint", 1);
+}
 if (wait && !preview) die("build command exited 0 with --wait but did not print a preview URL", 1);
+
+console.log("\nChecking latest handoff recovery...");
+const latest = await runCli(cli, ["project", "status", "latest"], { timeoutMs: 60_000 });
+process.stdout.write(latest.stdout);
+process.stderr.write(latest.stderr);
+if (latest.code !== 0) die(`latest handoff status failed with exit ${latest.code}`, latest.code || 1);
+if (!latest.stdout.includes(session)) die(`latest handoff status did not reference session ${session}`, 1);
 
 console.log("\nWEB BUILD SMOKE OK");
 console.log(`session: ${session}`);
