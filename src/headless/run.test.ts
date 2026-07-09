@@ -861,6 +861,13 @@ describe("runHeadless", () => {
 		expect(
 			isVerificationCommand("node --experimental-strip-types -e \"import { parseTimestamp } from './parse.ts';\""),
 		).toBe(true);
+		expect(
+			isVerificationCommand(`node --input-type=module -e "
+import { parseTimestamp } from './src/parse.ts';
+import { sortByDate } from './src/util.ts';
+console.log(parseTimestamp('2024-01-01T00:00:00Z'), sortByDate([]));
+"`),
+		).toBe(true);
 		expect(isVerificationCommand("npx tsx src/index.ts")).toBe(true);
 		expect(
 			isVerificationCommand("npx tsx -e \"import {greet} from './src/index.ts'; console.log(greet('test'))\""),
