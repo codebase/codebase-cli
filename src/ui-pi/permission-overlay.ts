@@ -29,6 +29,11 @@ export class PermissionOverlay extends Container {
 		if (request.trustScope) {
 			this.addChild(new Text(ansi.dim(`Trust scope: ${request.trustScope}`), 1, 0));
 		}
+		if (request.guidance?.length) {
+			for (const line of request.guidance.slice(0, 4)) {
+				this.addChild(new Text(ansi.dim(line), 1, 0));
+			}
+		}
 
 		this.list = new SelectList(
 			[

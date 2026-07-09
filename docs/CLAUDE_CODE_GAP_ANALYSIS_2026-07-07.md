@@ -101,11 +101,11 @@ Recommended next work:
 
 Claude has a deeper shell permission classifier. It extracts stable command prefixes, suggests scoped allow rules, blocks overly broad shell wrappers, has mode-specific validation, and maintains a detailed read-only command validation layer (`src/tools/BashTool/bashPermissions.ts`, `modeValidation.ts`, `readOnlyValidation.ts`). It also has richer permission request UI components.
 
-Codebase has the right philosophy: explicit permissions, always-allowed read tools, reversible/irreversible classification, shell warnings, and scoped shell trust (`src/permissions/store.ts`, `src/permissions/reversibility.ts`, `src/tools/shell-validator.ts`, `src/tools/permission.ts`). The gap is depth and user ergonomics, especially around "allow this family of commands safely."
+Codebase has the right philosophy: explicit permissions, always-allowed read tools, reversible/irreversible classification, shell warnings, scoped shell trust, and live permission prompts that now show safer-path guidance plus exact scoped allow/deny commands (`src/permissions/store.ts`, `src/permissions/reversibility.ts`, `src/tools/shell-validator.ts`, `src/tools/permission.ts`). The remaining gap is deeper classification and preview tooling, especially before long autonomous tasks.
 
 Recommended next work:
 
-- Expand command-prefix extraction and add permission suggestions like "allow `npm test` in this project for this session."
+- Keep expanding command-prefix extraction for more CLIs and framework-specific subcommands.
 - Separate "read-only shell" from "mutating but reversible" more visibly in the prompt UI.
 - Add a permissions simulator: given a task or command, explain what would be auto-allowed, prompted, or denied.
 - Add benchmark cases for denied shell commands, recovery from denial, and scoped trust.
@@ -155,7 +155,7 @@ These are the highest leverage items before a public push:
    - Relevant body recall now exists; the launch gap is explicit update/delete UX plus stronger source session, last-used, and stale/reverify metadata.
 
 6. Permission UX polish.
-   - Better trust suggestions and clearer irreversible/reversible/read-only language will make the CLI feel safer than a generic autonomous shell.
+   - Live permission prompts now show scoped trust/persist guidance; clearer irreversible/reversible/read-only language and simulator previews remain.
 
 ## P1/P2 Work
 

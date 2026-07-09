@@ -212,6 +212,7 @@ describe("runAppServer", () => {
 		expect(request.tool).toBe("shell");
 		expect(request.reason).toContain("not in the read-only allowlist");
 		expect(request.trustScope).toBe("shell:git commit*");
+		expect(request.guidance).toContain("Persist allow: /permissions allow shell:git commit*");
 
 		h.send({ id: "perm", type: "permission_respond", requestId: request.id, choice: "deny" });
 		const response = await h.waitFor((m) => m.type === "response" && m.id === "perm");

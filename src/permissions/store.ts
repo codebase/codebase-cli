@@ -91,6 +91,8 @@ export interface PermissionRequest {
 	detail?: string;
 	/** Scope granted by a "trust tool" response. */
 	trustScope?: string;
+	/** Actionable approval guidance for UI/app clients to show below the request. */
+	guidance?: readonly string[];
 	/** Hint about how risky this is. UI may color accordingly. */
 	risk: "low" | "medium" | "high";
 }
@@ -235,6 +237,7 @@ export class PermissionStore {
 				reason: reasonFor(toolName, args),
 				detail: detailFor(toolName, args),
 				trustScope: trustScopeFor(toolName, shellPrefix),
+				guidance: guidanceFor(toolName, args, shellPrefix),
 				risk: riskFor(toolName, args),
 			};
 			// For shell, capture the command prefix so a trust-tool response
@@ -360,12 +363,12 @@ function reasonFor(tool: string, args: unknown): string | undefined {
 		const cmd = stringOf(a.command);
 		const verdict = validateShellCommand(cmd);
 		if (verdict.verdict === "block" && verdict.reason) {
-			return `Shell validator will hard-block this command: ${verdict.reason}.`;
+			return `High risk: shell validator will hard-block this command: ${verdict.reason}.`;
 		}
 		if (verdict.verdict === "warn" && verdict.reason) {
-			return `Shell validator warning: ${verdict.reason}.`;
+			return `High risk: shell validator warning: ${verdict.reason}.`;
 		}
-		return "This shell command is not in the read-only allowlist, so it needs approval before running.";
+		return "Medium risk: this shell command is not in the read-only allowlist, so it needs approval before running.";
 	}
 	if (tool === "write_file") return "This will create or overwrite a file in the workspace.";
 	if (tool === "edit_file" || tool === "multi_edit" || tool === "notebook_edit") {
@@ -375,6 +378,44 @@ function reasonFor(tool: string, args: unknown): string | undefined {
 	if (tool === "git_branch") return "This will change git branch state.";
 	if (tool === "enter_worktree" || tool === "exit_worktree") return "This will change the active worktree.";
 	return undefined;
+}
+
+function guidanceFor(tool: string, args: unknown, shellPrefix?: string): string[] | undefined {
+	if (tool !== "shell") return undefined;
+	const cmd = stringOf((args as Record<string, unknown> | undefined)?.command);
+	const verdict = validateShellCommand(cmd);
+	const lines: string[] = [];
+
+	if (verdict.verdict === "block") {
+		lines.push("No allow rule is offered for hard-blocked commands; rewrite it to target a safe path.");
+		return lines;
+	}
+
+	if (verdict.verdict === "warn" && verdict.reason) {
+		const advice = warningAdvice(verdict.reason);
+		if (advice) lines.push(`Safer path: ${advice}`);
+	}
+
+	if (shellPrefix && shellNeedsPermission(cmd)) {
+		const scope = `shell:${shellPrefix}*`;
+		lines.push(`Trust tool grants ${scope} for this session only.`);
+		lines.push(`Persist allow: /permissions allow ${scope}`);
+		lines.push(`Persist deny: /permissions deny ${scope}`);
+	} else if (shellNeedsPermission(cmd)) {
+		lines.push("Use allow-once; no stable command prefix was detected.");
+	}
+	return lines.length > 0 ? lines : undefined;
+}
+
+function warningAdvice(reason: string): string | null {
+	if (reason.includes("downloaded script"))
+		return "download to a file, inspect it, then run the local script explicitly.";
+	if (reason.includes("sudo"))
+		return "prefer a non-sudo command, or keep this as allow-once unless elevation is truly needed.";
+	if (reason.includes("force-pushes")) return "push without force, or confirm branch/protection before allowing once.";
+	if (reason.includes("world-writable")) return "prefer narrower permissions like 755, 644, or targeted +x.";
+	if (reason.includes("parent directories")) return "target a project-relative directory explicitly.";
+	return null;
 }
 
 function trustScopeFor(tool: string, shellPrefix?: string): string {

@@ -97,6 +97,15 @@ export function Permission({ request, onRespond }: PermissionProps) {
 					<Text dimColor>Trust scope: {request.trustScope}</Text>
 				</Box>
 			) : null}
+			{request.guidance?.length ? (
+				<Box marginTop={1} flexDirection="column">
+					{request.guidance.slice(0, 4).map((line) => (
+						<Text key={line} dimColor>
+							{line}
+						</Text>
+					))}
+				</Box>
+			) : null}
 			<Box marginTop={1} flexDirection="row">
 				{CHOICES.map((c, i) => {
 					const selected = i === cursor;

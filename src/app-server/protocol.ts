@@ -100,6 +100,7 @@ export interface PendingPermission {
 	reason?: string;
 	detail?: string;
 	trustScope?: string;
+	guidance?: readonly string[];
 	risk: "low" | "medium" | "high";
 }
 

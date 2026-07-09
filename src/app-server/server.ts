@@ -134,6 +134,7 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 			reason: req.reason,
 			detail: req.detail,
 			trustScope: req.trustScope,
+			guidance: req.guidance,
 			risk: req.risk,
 		};
 		status = "awaiting-permission";

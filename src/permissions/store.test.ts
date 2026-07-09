@@ -161,6 +161,11 @@ describe("PermissionStore request shape", () => {
 		expect(store.current()).toMatchObject({
 			reason: expect.stringContaining("not in the read-only allowlist"),
 			trustScope: "shell:git commit*",
+			guidance: expect.arrayContaining([
+				"Trust tool grants shell:git commit* for this session only.",
+				"Persist allow: /permissions allow shell:git commit*",
+				"Persist deny: /permissions deny shell:git commit*",
+			]),
 		});
 	});
 
@@ -170,8 +175,23 @@ describe("PermissionStore request shape", () => {
 
 		expect(store.current()).toMatchObject({
 			risk: "high",
-			reason: expect.stringContaining("Shell validator warning"),
+			reason: expect.stringContaining("shell validator warning"),
 			trustScope: "shell:apt update*",
+			guidance: expect.arrayContaining([
+				expect.stringContaining("Safer path: prefer a non-sudo command"),
+				"Persist allow: /permissions allow shell:apt update*",
+			]),
+		});
+	});
+
+	it("does not offer persistent allow guidance for hard-blocked shell commands", async () => {
+		const store = new PermissionStore();
+		store.evaluate("shell", { command: "rm -rf /" });
+
+		expect(store.current()).toMatchObject({
+			risk: "high",
+			reason: expect.stringContaining("hard-block"),
+			guidance: ["No allow rule is offered for hard-blocked commands; rewrite it to target a safe path."],
 		});
 	});
 
