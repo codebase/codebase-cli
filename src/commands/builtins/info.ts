@@ -403,7 +403,9 @@ function formatRelevantMemoryLine(match: RelevantMemoryMatch): string {
 	const record = match.record;
 	const label = truncateOneLine(record.name, 72);
 	const source = truncateOneLine(record.source, 54);
-	return `${record.filename} score:${match.score} [${record.type}; source: ${source}; last used: ${formatOptionalShortDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}; stale: ${match.stale ? "yes" : "no"}] ${label}`;
+	const terms = match.matchedTerms.length > 0 ? ` terms:${match.matchedTerms.join(",")}` : "";
+	const fields = match.matchedFields.length > 0 ? ` fields:${match.matchedFields.join(",")}` : "";
+	return `${record.filename} score:${match.score}${terms}${fields} [${record.type}; source: ${source}; last used: ${formatOptionalShortDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}; stale: ${match.stale ? "yes" : "no"}] ${label}`;
 }
 
 function roleCounts(messages: readonly { role: string }[]): string {

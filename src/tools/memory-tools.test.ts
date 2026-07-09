@@ -126,6 +126,7 @@ describe("read_memory", () => {
 		expect((result.content[0] as { text: string }).text).toContain("source: save_memory tool");
 		expect((result.content[0] as { text: string }).text).toContain("last_used: never");
 		expect((result.content[0] as { text: string }).text).toContain("retrievals: 0");
+		expect((result.content[0] as { text: string }).text).toContain("stale: no");
 	});
 
 	it("errors with a clear message on missing filename", async () => {

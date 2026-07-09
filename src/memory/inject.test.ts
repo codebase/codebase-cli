@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildMemoryAddendum, buildRelevantMemoryReminder } from "./inject.js";
+import { buildMemoryAddendum, buildRelevantMemoryReminder, findRelevantMemories } from "./inject.js";
 import { MemoryStore } from "./store.js";
 
 describe("memory injection", () => {
@@ -52,6 +52,9 @@ describe("memory injection", () => {
 
 		expect(reminder).toContain("<system-reminder>");
 		expect(reminder).toContain("Deploy checklist");
+		expect(reminder).toContain("match: score");
+		expect(reminder).toContain("terms: deploy,validate");
+		expect(reminder).toContain("fields: body,description,filename,name");
 		expect(reminder).toContain("file: deploy.md; type: project; source: local project memory");
 		expect(reminder).toContain("created:");
 		expect(reminder).toContain("updated:");
@@ -60,6 +63,76 @@ describe("memory injection", () => {
 		expect(reminder).toContain("stale: no");
 		expect(reminder).toContain("Run npm run check before deploy");
 		expect(reminder).not.toContain("Brand colors");
+	});
+
+	it("prefers a current memory over a stale distractor with overlapping deploy terms", () => {
+		const staleDate = Date.UTC(2026, 0, 1);
+		const currentDate = Date.UTC(2026, 6, 7);
+		store.save({
+			filename: "nimbus_billing_deploy.md",
+			name: "Nimbus billing deploy runbook",
+			description: "Nimbus billing deploy runbook for release handoffs",
+			type: "project",
+			source: "bench seed: release-ops fixture",
+			body: "Release codename: cobalt-sparrow. Verification command: npm run test:billing.",
+			now: currentDate,
+		});
+		store.save({
+			filename: "nimbus_billing_legacy.md",
+			name: "Legacy Nimbus billing deploy note",
+			description: "Old Nimbus billing deploy runbook retained for audit history",
+			type: "project",
+			source: "bench seed: stale legacy fixture",
+			body:
+				"Nimbus billing deploy deploy deploy handoff validation note. " +
+				"Release codename: amber-river. Verification command: npm run test:legacy-billing.",
+			now: staleDate,
+		});
+
+		const reminder = buildRelevantMemoryReminder(
+			store,
+			"Use project memory for the current Nimbus billing deployment handoff validation.",
+			{ now: Date.UTC(2026, 6, 8), max: 1 },
+		);
+
+		expect(reminder).toContain("Nimbus billing deploy runbook");
+		expect(reminder).toContain("stale: no");
+		expect(reminder).toContain("cobalt-sparrow");
+		expect(reminder).not.toContain("Legacy Nimbus billing deploy note");
+		expect(reminder).not.toContain("amber-river");
+	});
+
+	it("allows stale memories to rank first when the user explicitly asks for legacy history", () => {
+		const staleDate = Date.UTC(2026, 0, 1);
+		const currentDate = Date.UTC(2026, 6, 7);
+		store.save({
+			filename: "nimbus_billing_deploy.md",
+			name: "Nimbus billing deploy runbook",
+			description: "Nimbus billing deploy runbook for release handoffs",
+			type: "project",
+			body: "Current release codename: cobalt-sparrow.",
+			now: currentDate,
+		});
+		store.save({
+			filename: "nimbus_billing_legacy.md",
+			name: "Legacy Nimbus billing deploy note",
+			description: "Old Nimbus billing deploy runbook retained for audit history",
+			type: "project",
+			body: "Legacy audit codename: amber-river.",
+			now: staleDate,
+		});
+
+		const matches = findRelevantMemories(store, "Find the legacy audit history for Nimbus billing deploy.", {
+			now: Date.UTC(2026, 6, 8),
+			max: 1,
+		});
+
+		expect(matches[0]).toMatchObject({
+			stale: true,
+			record: { filename: "nimbus_billing_legacy.md" },
+		});
+		expect(matches[0].matchedTerms).toContain("legacy");
+		expect(matches[0].matchedFields).toContain("description");
 	});
 
 	it("can record prompt-time retrieval provenance", () => {

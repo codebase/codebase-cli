@@ -170,6 +170,8 @@ describe("/context", () => {
 		expect(emits[0]).toContain("project_notes.md [project; source: local project memory");
 		expect(emits[0]).toContain("Matching latest prompt (would be recalled on the next model turn):");
 		expect(emits[0]).toContain("project_notes.md score:");
+		expect(emits[0]).toContain("terms:");
+		expect(emits[0]).toContain("fields:");
 		expect(emits[0]).toContain("Memory reminder messages retained: none detected");
 		expect(emits[0]).toContain("Last summary: summary");
 		expect(emits[0]).toContain("Attached/imported files detected:");

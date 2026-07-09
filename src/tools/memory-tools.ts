@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, type TSchema, Type } from "typebox";
 import { rebuildMemoryIndex } from "../memory/index-file.js";
+import { isMemoryStale } from "../memory/inject.js";
 import type { MemoryRecord, MemoryType } from "../memory/types.js";
 import type { ToolContext } from "./types.js";
 
@@ -251,7 +252,7 @@ function formatRecord(record: MemoryRecord): string {
 	return [
 		`# ${record.name}  (${record.type})`,
 		`> ${record.description}`,
-		`> file: ${record.filename}; source: ${record.source}; source_session: ${record.sourceSessionId ?? "unknown"}; created: ${formatDate(record.createdAt)}; updated: ${formatDate(record.updatedAt)}; last_used: ${formatOptionalDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}`,
+		`> file: ${record.filename}; source: ${record.source}; source_session: ${record.sourceSessionId ?? "unknown"}; created: ${formatDate(record.createdAt)}; updated: ${formatDate(record.updatedAt)}; last_used: ${formatOptionalDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}; stale: ${isMemoryStale(record) ? "yes" : "no"}`,
 		"",
 		record.body.trim(),
 	].join("\n");

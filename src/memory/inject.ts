@@ -4,6 +4,18 @@ import type { MemoryRecord } from "./types.js";
 const MAX_RELEVANT_MEMORIES = 3;
 const MAX_MEMORY_BODY_CHARS = 1600;
 const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+const STALE_RANK_PENALTY = 6;
+
+const FIELD_WEIGHTS = {
+	filename: 5,
+	name: 5,
+	description: 4,
+	body: 1,
+	source: 1,
+	type: 1,
+} as const;
+
+type MatchField = keyof typeof FIELD_WEIGHTS;
 
 const STOPWORDS = new Set([
 	"about",
@@ -19,6 +31,9 @@ const STOPWORDS = new Set([
 	"from",
 	"how",
 	"into",
+	"make",
+	"must",
+	"new",
 	"not",
 	"now",
 	"our",
@@ -31,10 +46,39 @@ const STOPWORDS = new Set([
 	"you",
 ]);
 
+const TOKEN_ALIASES = new Map([
+	["deployed", "deploy"],
+	["deploying", "deploy"],
+	["deployment", "deploy"],
+	["deployments", "deploy"],
+	["deploys", "deploy"],
+	["validated", "validate"],
+	["validating", "validate"],
+	["validation", "validate"],
+	["validations", "validate"],
+	["verified", "verify"],
+	["verifying", "verify"],
+	["verification", "verify"],
+	["verifications", "verify"],
+]);
+
+const HISTORICAL_QUERY_TOKENS = new Set([
+	"archive",
+	"archived",
+	"audit",
+	"history",
+	"historical",
+	"legacy",
+	"old",
+	"stale",
+]);
+
 export interface RelevantMemoryMatch {
 	record: MemoryRecord;
 	score: number;
 	stale: boolean;
+	matchedTerms: string[];
+	matchedFields: MatchField[];
 }
 
 /**
@@ -73,7 +117,7 @@ export function buildRelevantMemoryReminder(
 		"",
 	];
 	for (const [idx, item] of scored.entries()) {
-		lines.push(formatMemory(idx + 1, item.record, now));
+		lines.push(formatMemory(idx + 1, item));
 	}
 	lines.push("</system-reminder>");
 	return lines.join("\n");
@@ -88,25 +132,36 @@ export function findRelevantMemories(
 	if (queryTokens.size === 0) return [];
 	const now = options.now ?? Date.now();
 	const max = options.max ?? MAX_RELEVANT_MEMORIES;
+	const wantsHistorical = [...queryTokens].some((token) => HISTORICAL_QUERY_TOKENS.has(token));
 	return store
 		.list()
-		.map((record) => ({ record, score: scoreMemory(record, queryTokens) }))
-		.filter((item) => item.score > 0)
-		.sort((a, b) => b.score - a.score || b.record.updatedAt - a.record.updatedAt)
-		.slice(0, max)
-		.map((item) => ({ ...item, stale: isMemoryStale(item.record, now) }));
+		.map((record) => {
+			const scored = scoreMemory(record, queryTokens);
+			const stale = isMemoryStale(record, now);
+			const score = stale && !wantsHistorical ? Math.max(1, scored.score - STALE_RANK_PENALTY) : scored.score;
+			return { record, stale, score, matchedTerms: scored.matchedTerms, matchedFields: scored.matchedFields };
+		})
+		.filter((item) => item.matchedTerms.length > 0)
+		.sort(
+			(a, b) =>
+				b.score - a.score ||
+				(wantsHistorical ? 0 : Number(a.stale) - Number(b.stale)) ||
+				b.record.updatedAt - a.record.updatedAt,
+		)
+		.slice(0, max);
 }
 
 export function isMemoryStale(record: MemoryRecord, now = Date.now()): boolean {
 	return now - record.updatedAt > STALE_AFTER_MS;
 }
 
-function formatMemory(index: number, record: MemoryRecord, now: number): string {
-	const stale = isMemoryStale(record, now);
+function formatMemory(index: number, item: RelevantMemoryMatch): string {
+	const record = item.record;
 	const body = truncate(record.body.trim(), MAX_MEMORY_BODY_CHARS);
 	const lines = [
 		`${index}. ${record.name}`,
-		`   file: ${record.filename}; type: ${record.type}; source: ${record.source}; source_session: ${record.sourceSessionId ?? "unknown"}; created: ${formatDate(record.createdAt)}; updated: ${formatDate(record.updatedAt)}; last_used: ${formatOptionalDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}; stale: ${stale ? "yes" : "no"}`,
+		`   match: score ${item.score}; terms: ${formatList(item.matchedTerms)}; fields: ${formatList(item.matchedFields)}`,
+		`   file: ${record.filename}; type: ${record.type}; source: ${record.source}; source_session: ${record.sourceSessionId ?? "unknown"}; created: ${formatDate(record.createdAt)}; updated: ${formatDate(record.updatedAt)}; last_used: ${formatOptionalDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}; stale: ${item.stale ? "yes" : "no"}`,
 		`   description: ${record.description}`,
 	];
 	if (body) {
@@ -117,25 +172,52 @@ function formatMemory(index: number, record: MemoryRecord, now: number): string 
 	return lines.join("\n");
 }
 
-function scoreMemory(record: MemoryRecord, queryTokens: Set<string>): number {
-	const headerTokens = tokenize(`${record.name} ${record.description} ${record.type} ${record.filename}`);
-	const bodyTokens = tokenize(record.body);
+function scoreMemory(
+	record: MemoryRecord,
+	queryTokens: Set<string>,
+): { score: number; matchedTerms: string[]; matchedFields: MatchField[] } {
+	const fieldTokens: Record<MatchField, Set<string>> = {
+		filename: tokenize(record.filename),
+		name: tokenize(record.name),
+		description: tokenize(record.description),
+		body: tokenize(record.body),
+		source: tokenize(record.source),
+		type: tokenize(record.type),
+	};
 	let score = 0;
+	const matchedTerms = new Set<string>();
+	const matchedFields = new Set<MatchField>();
 	for (const token of queryTokens) {
-		if (headerTokens.has(token)) score += 4;
-		if (bodyTokens.has(token)) score += 1;
+		for (const field of Object.keys(fieldTokens) as MatchField[]) {
+			if (!fieldTokens[field].has(token)) continue;
+			score += FIELD_WEIGHTS[field];
+			matchedTerms.add(token);
+			matchedFields.add(field);
+		}
 	}
-	return score;
+	return {
+		score,
+		matchedTerms: [...matchedTerms].sort().slice(0, 12),
+		matchedFields: [...matchedFields].sort(),
+	};
 }
 
 function tokenize(value: string): Set<string> {
 	const tokens = new Set<string>();
 	for (const raw of value.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) ?? []) {
-		const token = raw.replace(/^_+|_+$/g, "");
+		const token = normalizeToken(raw.replace(/^_+|_+$/g, ""));
 		if (!token || STOPWORDS.has(token)) continue;
 		tokens.add(token);
 	}
 	return tokens;
+}
+
+function normalizeToken(token: string): string {
+	return TOKEN_ALIASES.get(token) ?? token;
+}
+
+function formatList(values: readonly string[]): string {
+	return values.length > 0 ? values.join(",") : "none";
 }
 
 function truncate(value: string, maxChars: number): string {
