@@ -137,7 +137,7 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 		process.exit(2);
 	}
 	await ensureFreshCredentials();
-	runHeadless({ prompt, outputFormat, autoApprove, reliable }).then((code) => process.exit(code));
+	settleExitCode(runHeadless({ prompt, outputFormat, autoApprove, reliable }));
 } else if (argv[0] === "auto") {
 	if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
 		printAutoHelp();
@@ -153,7 +153,7 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 		process.exit(2);
 	}
 	await ensureFreshCredentials();
-	runHeadless({ prompt, outputFormat, autoApprove: true, reliable }).then((code) => process.exit(code));
+	settleExitCode(runHeadless({ prompt, outputFormat, autoApprove: true, reliable }));
 } else {
 	setTerminalTitle("codebase");
 	// Print a one-line warning if any restriction is off so the user can't
@@ -189,6 +189,18 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	instance.waitUntilExit().catch(() => {
 		process.exit(1);
 	});
+}
+
+function settleExitCode(run: Promise<number>): void {
+	run.then(
+		(code) => {
+			process.exitCode = code;
+		},
+		(err) => {
+			process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+			process.exitCode = 1;
+		},
+	);
 }
 
 function parseRunArgs(args: string[]): ParsedRunArgs {

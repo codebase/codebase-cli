@@ -588,6 +588,7 @@ function isNegatedCommandMention(before: string, after: string): boolean {
 export function isVerificationCommand(command: string): boolean {
 	const normalized = command.toLowerCase();
 	if (/\|\|\s*(?::|true|echo)\b/.test(normalized)) return false;
+	if (/^(?:which|command\s+-v)\b/.test(normalized)) return false;
 	const patterns = [
 		/\bnpm\s+(test|run\s+(test|check|lint|build|typecheck|verify))\b/,
 		/\bpnpm\s+(test|run\s+(test|check|lint|build|typecheck|verify))\b/,
@@ -599,6 +600,7 @@ export function isVerificationCommand(command: string): boolean {
 		/\bnode\s+(?:[\w./-]*\/)?[\w.-]*(?:test|spec|verify|check)[\w.-]*\.[cm]?[jt]s\b/,
 		/\b(?:npx\s+)?(?:tsx|ts-node)\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?tsx?\b/,
 		/\bnode\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?js\b/,
+		/\bbun\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?[jt]sx?\b/,
 		/\b(go test|cargo test|cargo clippy|mvn test|gradle test|swift test|zig build test)\b/,
 		/\b(make|just)\s+(test|check|verify|lint|build)\b/,
 		/(^|[ /])verify\.sh\b/,

@@ -757,7 +757,9 @@ describe("runHeadless", () => {
 		expect(isVerificationCommand("node --test")).toBe(true);
 		expect(isVerificationCommand("npx tsx src/index.ts")).toBe(true);
 		expect(isVerificationCommand("deno check src/parse.ts")).toBe(true);
+		expect(isVerificationCommand("bun src/index.ts")).toBe(true);
 		expect(isVerificationCommand("npx tsc --noEmit 2>&1 || true")).toBe(false);
+		expect(isVerificationCommand("which node && node --version && which tsc")).toBe(false);
 		expect(isVerificationCommand("node scripts/generate-fixture.mjs")).toBe(false);
 	});
 
