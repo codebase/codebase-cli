@@ -7,8 +7,11 @@ export interface MemoryFrontmatter {
 	description: string;
 	type: MemoryType;
 	source?: string;
+	sourceSessionId?: string;
 	createdAt?: number;
 	updatedAt?: number;
+	lastUsedAt?: number;
+	retrievalCount?: number;
 }
 
 export interface MemoryRecord extends MemoryFrontmatter {
@@ -17,6 +20,7 @@ export interface MemoryRecord extends MemoryFrontmatter {
 	createdAt: number;
 	body: string;
 	updatedAt: number;
+	retrievalCount: number;
 }
 
 export function parseMemoryType(raw: string): MemoryType | null {

@@ -55,9 +55,35 @@ describe("memory injection", () => {
 		expect(reminder).toContain("file: deploy.md; type: project; source: local project memory");
 		expect(reminder).toContain("created:");
 		expect(reminder).toContain("updated:");
+		expect(reminder).toContain("last_used: never");
+		expect(reminder).toContain("retrievals: 0");
 		expect(reminder).toContain("stale: no");
 		expect(reminder).toContain("Run npm run check before deploy");
 		expect(reminder).not.toContain("Brand colors");
+	});
+
+	it("can record prompt-time retrieval provenance", () => {
+		store.save({
+			filename: "deploy.md",
+			name: "Deploy checklist",
+			description: "Release deploy validation",
+			type: "project",
+			body: "Run npm run check before deploy and record the build URL.",
+			now: Date.UTC(2026, 6, 7),
+		});
+
+		const reminder = buildRelevantMemoryReminder(store, "Please handle the deploy validation.", {
+			now: Date.UTC(2026, 6, 8),
+			recordUsage: true,
+		});
+
+		expect(reminder).toContain("last_used: 2026-07-08");
+		expect(reminder).toContain("retrievals: 1");
+		expect(store.read("deploy.md")).toMatchObject({
+			lastUsedAt: Date.UTC(2026, 6, 8),
+			retrievalCount: 1,
+			updatedAt: Date.UTC(2026, 6, 7),
+		});
 	});
 
 	it("marks older matching memories stale", () => {

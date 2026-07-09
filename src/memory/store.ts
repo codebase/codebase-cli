@@ -14,6 +14,8 @@ export interface MemoryStoreOptions {
 	cwd: string;
 	/** Override the data root. Defaults to ~/.codebase. */
 	dataRoot?: string;
+	/** Session id that created/updated memories in this store, when known. */
+	sourceSessionId?: string;
 }
 
 /**
@@ -26,9 +28,11 @@ export interface MemoryStoreOptions {
 export class MemoryStore {
 	private readonly cwd: string;
 	private readonly dir: string;
+	private readonly sourceSessionId?: string;
 
 	constructor(options: MemoryStoreOptions) {
 		this.cwd = options.cwd;
+		this.sourceSessionId = cleanOptional(options.sourceSessionId);
 		const dataRoot = options.dataRoot ?? join(homedir(), ".codebase");
 		const projectHash = createHash("sha256").update(this.cwd).digest("hex").slice(0, 8);
 		this.dir = join(dataRoot, "projects", projectHash, "memory");
@@ -52,9 +56,12 @@ export class MemoryStore {
 			filename: safe,
 			...parsed.frontmatter,
 			source: parsed.frontmatter.source ?? DEFAULT_SOURCE,
+			sourceSessionId: parsed.frontmatter.sourceSessionId,
 			createdAt: parsed.frontmatter.createdAt ?? stat.birthtimeMs ?? stat.mtimeMs,
 			body: parsed.body,
 			updatedAt: parsed.frontmatter.updatedAt ?? stat.mtimeMs,
+			lastUsedAt: parsed.frontmatter.lastUsedAt,
+			retrievalCount: parsed.frontmatter.retrievalCount ?? 0,
 		};
 	}
 
@@ -80,6 +87,7 @@ export class MemoryStore {
 		type: MemoryType;
 		body: string;
 		source?: string;
+		sourceSessionId?: string;
 		now?: number;
 	}): MemoryRecord {
 		const safe = sanitizeFilename(input.filename);
@@ -95,10 +103,21 @@ export class MemoryStore {
 		const description = redactSecrets(input.description);
 		const redactedBody = redactSecrets(input.body);
 		const source = cleanSource(input.source ?? existing?.source ?? DEFAULT_SOURCE);
+		const sourceSessionId = cleanOptional(input.sourceSessionId ?? this.sourceSessionId ?? existing?.sourceSessionId);
 		const createdAt = existing?.createdAt ?? now;
 		mkdirSync(this.dir, { recursive: true });
 		const body = serializeMemoryFile({
-			frontmatter: { name, description, type: input.type, source, createdAt, updatedAt: now },
+			frontmatter: {
+				name,
+				description,
+				type: input.type,
+				source,
+				sourceSessionId,
+				createdAt,
+				updatedAt: now,
+				lastUsedAt: existing?.lastUsedAt,
+				retrievalCount: existing?.retrievalCount,
+			},
 			body: redactedBody,
 		});
 		const path = join(this.dir, safe);
@@ -109,10 +128,42 @@ export class MemoryStore {
 			description,
 			type: input.type,
 			source,
+			sourceSessionId,
 			createdAt,
 			body: redactedBody,
 			updatedAt: now,
+			lastUsedAt: existing?.lastUsedAt,
+			retrievalCount: existing?.retrievalCount ?? 0,
 		};
+	}
+
+	markUsed(filename: string, options: { now?: number } = {}): MemoryRecord | null {
+		const safe = sanitizeFilename(filename);
+		if (!safe) return null;
+		const record = this.read(safe);
+		if (!record) return null;
+		const lastUsedAt = options.now ?? Date.now();
+		const retrievalCount = record.retrievalCount + 1;
+		const path = join(this.dir, safe);
+		writeFileSync(
+			path,
+			serializeMemoryFile({
+				frontmatter: {
+					name: record.name,
+					description: record.description,
+					type: record.type,
+					source: record.source,
+					sourceSessionId: record.sourceSessionId,
+					createdAt: record.createdAt,
+					updatedAt: record.updatedAt,
+					lastUsedAt,
+					retrievalCount,
+				},
+				body: record.body,
+			}),
+			{ mode: 0o644 },
+		);
+		return { ...record, lastUsedAt, retrievalCount };
 	}
 
 	delete(filename: string): boolean {
@@ -169,6 +220,11 @@ function cleanSource(source: string): string {
 	return redacted ? redacted.slice(0, 120) : DEFAULT_SOURCE;
 }
 
+function cleanOptional(value?: string): string | undefined {
+	const cleaned = value?.trim().replace(/\s+/g, " ");
+	return cleaned ? redactSecrets(cleaned).slice(0, 120) : undefined;
+}
+
 interface ParsedMemory {
 	frontmatter: MemoryFrontmatter;
 	body: string;
@@ -200,8 +256,11 @@ function parseMemoryFile(raw: string): ParsedMemory | null {
 			description: fields.description,
 			type,
 			source: fields.source || undefined,
+			sourceSessionId: fields.source_session_id || undefined,
 			createdAt: parseDateMs(fields.created_at),
 			updatedAt: parseDateMs(fields.updated_at),
+			lastUsedAt: parseDateMs(fields.last_used_at),
+			retrievalCount: parseCount(fields.retrieval_count),
 		},
 		body,
 	};
@@ -214,13 +273,15 @@ function serializeMemoryFile(input: ParsedMemory): string {
 		`description: ${input.frontmatter.description}`,
 		`type: ${input.frontmatter.type}`,
 		`source: ${input.frontmatter.source ?? DEFAULT_SOURCE}`,
+	];
+	if (input.frontmatter.sourceSessionId) lines.push(`source_session_id: ${input.frontmatter.sourceSessionId}`);
+	lines.push(
 		`created_at: ${formatDate(input.frontmatter.createdAt ?? Date.now())}`,
 		`updated_at: ${formatDate(input.frontmatter.updatedAt ?? Date.now())}`,
-		"---",
-		"",
-		input.body.replace(/\n+$/, ""),
-		"",
-	];
+	);
+	if (input.frontmatter.lastUsedAt) lines.push(`last_used_at: ${formatDate(input.frontmatter.lastUsedAt)}`);
+	if (input.frontmatter.retrievalCount) lines.push(`retrieval_count: ${input.frontmatter.retrievalCount}`);
+	lines.push("---", "", input.body.replace(/\n+$/, ""), "");
 	return lines.join("\n");
 }
 
@@ -228,6 +289,12 @@ function parseDateMs(value?: string): number | undefined {
 	if (!value) return undefined;
 	const ms = Date.parse(value);
 	return Number.isFinite(ms) ? ms : undefined;
+}
+
+function parseCount(value?: string): number | undefined {
+	if (!value) return undefined;
+	const count = Number.parseInt(value, 10);
+	return Number.isFinite(count) && count > 0 ? count : undefined;
 }
 
 function formatDate(ms: number): string {

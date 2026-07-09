@@ -193,6 +193,11 @@ describe("agent bundle end-to-end", () => {
 		expect(userTextsFromContext({ messages: bundle.agent.state.messages, tools: [] })).toEqual([
 			"Please handle the orchard deploy now.",
 		]);
+		expect(bundle.memory.read("orchard_deploy.md")).toMatchObject({
+			retrievalCount: 1,
+			lastUsedAt: expect.any(Number),
+			sourceSessionId: bundle.sessions.id,
+		});
 	});
 });
 

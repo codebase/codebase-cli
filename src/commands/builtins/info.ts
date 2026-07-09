@@ -378,14 +378,14 @@ function formatMemoryRecordLine(record: MemoryRecord): string {
 	const label = truncateOneLine(`${record.name} - ${record.description}`, 96);
 	const source = truncateOneLine(record.source, 54);
 	const bodyBytes = Buffer.byteLength(record.body, "utf8").toLocaleString();
-	return `${record.filename} [${record.type}; source: ${source}; updated: ${formatShortDate(record.updatedAt)}; stale: ${stale}] ${label} (${bodyBytes} bytes)`;
+	return `${record.filename} [${record.type}; source: ${source}; updated: ${formatShortDate(record.updatedAt)}; last used: ${formatOptionalShortDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}; stale: ${stale}] ${label} (${bodyBytes} bytes)`;
 }
 
 function formatRelevantMemoryLine(match: RelevantMemoryMatch): string {
 	const record = match.record;
 	const label = truncateOneLine(record.name, 72);
 	const source = truncateOneLine(record.source, 54);
-	return `${record.filename} score:${match.score} [${record.type}; source: ${source}; stale: ${match.stale ? "yes" : "no"}] ${label}`;
+	return `${record.filename} score:${match.score} [${record.type}; source: ${source}; last used: ${formatOptionalShortDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}; stale: ${match.stale ? "yes" : "no"}] ${label}`;
 }
 
 function roleCounts(messages: readonly { role: string }[]): string {
@@ -547,6 +547,10 @@ function formatTaskLine(task: {
 function formatShortDate(ms: number): string {
 	const date = new Date(ms);
 	return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "unknown";
+}
+
+function formatOptionalShortDate(ms?: number): string {
+	return ms ? formatShortDate(ms) : "never";
 }
 
 function messagePreview(message: ContextMessage, maxChars: number): string {

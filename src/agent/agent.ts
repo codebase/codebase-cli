@@ -197,7 +197,6 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	});
 	const userQueries = new UserQueryStore();
 	const planMode = new PlanModeStore();
-	const memory = new MemoryStore({ cwd });
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
 	const diagnostics = new DiagnosticsEngine({ cwd });
@@ -220,6 +219,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const compactionMonitor = new CompactionMonitor();
 	const sessions = new SessionStore({ cwd });
 	const resumed = opts.sessionId ? sessions.loadById(opts.sessionId) : opts.resume ? sessions.load(model.id) : null;
+	const memory = new MemoryStore({ cwd, sourceSessionId: sessions.id });
 
 	// Background memory extraction: a cheap-model pass mines settled turns
 	// for durable facts. Seeded past any resumed transcript so it only
@@ -637,7 +637,7 @@ function buildOutputStyleAddendum(config: ConfigStore, cwd: string): string {
 function withRelevantMemoryReminder(memory: MemoryStore, messages: AgentMessage[]): AgentMessage[] {
 	const target = latestRealUserMessage(messages);
 	if (!target) return messages;
-	const reminder = buildRelevantMemoryReminder(memory, target.text);
+	const reminder = buildRelevantMemoryReminder(memory, target.text, { recordUsage: true });
 	if (!reminder) return messages;
 	const reminderMessage: AgentMessage = {
 		role: "user",

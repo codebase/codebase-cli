@@ -88,12 +88,12 @@ Recommended next work:
 
 Claude's memory system is more productized. The `memdir` prompt defines typed memory files, a `MEMORY.md` index, and careful "write/update/remove" rules. `findRelevantMemories.ts` asks a side model to select up to five clearly useful memory files from headers. Team memory sync is repo-scoped, OAuth-gated, API-backed, size-limited, and guarded by secret scanning before upload (`src/memdir/*`, `src/services/teamMemorySync/*`, `src/services/extractMemories/*`).
 
-Codebase's memory is cleaner and safer than many OSS agents: typed files, index injection, background extraction, manual `#note`, high-confidence secret redaction, and prompt-time relevant-memory recall. The system prompt carries the truncated index, then `src/memory/inject.ts` selects matching full memory bodies with filename/type/source/timestamps/stale markers before the model call. The benchmark surface now includes `memory-retrieval`, which seeds fresh, stale, and unrelated memories and fails if the agent uses stale or distractor values.
+Codebase's memory is cleaner and safer than many OSS agents: typed files, index injection, background extraction, manual `#note`, high-confidence secret redaction, and prompt-time relevant-memory recall. The system prompt carries the truncated index, then `src/memory/inject.ts` selects matching full memory bodies with filename/type/source/session/timestamps/last-used/retrieval-count/stale markers before the model call. The tool surface now includes explicit `update_memory` and `forget_memory`; `/memory list|show|forget` gives users a local cleanup path. The benchmark surface includes `memory-retrieval`, which seeds fresh, stale, and unrelated memories and fails if the agent uses stale or distractor values.
 
 Recommended next work:
 
-- Add `forget_memory` / `update_memory` as explicit tools and slash commands.
-- Store source session id, creation time, last-used time, and optional expiry/reverify hints in memory frontmatter.
+- Add a `/memory update` editor flow for manual multiline edits; agent-side `update_memory` already exists.
+- Add optional expiry/reverify hints in memory frontmatter.
 - Keep `memory-retrieval` in the public sweep and expand it with more stale-fact cases if retrieval starts looking too easy.
 - Add optional web/team memory sync only after local provenance and secret boundaries are crisp.
 
@@ -152,7 +152,7 @@ These are the highest leverage items before a public push:
    - The web app/CLI bridge should demonstrate a complete OAuth -> prompt -> permission -> build -> usage update path.
 
 5. Memory update/forget + provenance hardening.
-   - Relevant body recall now exists; the launch gap is explicit update/delete UX plus stronger source session, last-used, and stale/reverify metadata.
+   - Relevant body recall, source session, last-used tracking, retrieval counts, agent-side update/delete tools, and `/memory list|show|forget` now exist. Remaining launch gap is manual `/memory update` ergonomics plus optional stale/reverify metadata.
 
 6. Permission UX polish.
    - Live permission prompts now show scoped trust/persist guidance; clearer irreversible/reversible/read-only language and simulator previews remain.

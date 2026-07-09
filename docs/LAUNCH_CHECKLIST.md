@@ -166,6 +166,20 @@ For a forced reliable-mode failure, verify `codebase receipt` shows gate
 status plus next actions, and `codebase receipt list` includes the first
 failure reason.
 
+## Memory provenance
+
+Inside a project with at least one saved memory, verify:
+
+- `/memory` shows the `MEMORY.md` index.
+- `/memory list` shows filename, type, source, source session, updated date,
+  last-used date, and retrieval count.
+- `/memory show <file.md>` shows one memory body with provenance metadata.
+- `/memory forget <file.md>` deletes the file and rebuilds the index.
+- A prompt that matches a memory causes `/context explain` and later
+  `/memory list` output to show updated last-used/retrieval metadata.
+- Agent tools include `read_memory`, `save_memory`, `update_memory`, and
+  `forget_memory` in the system prompt/tool list.
+
 ## Public benchmark surface
 
 ```sh
@@ -200,6 +214,7 @@ In an interactive session:
 - [ ] `/models` — lists available models
 - [ ] `/clear` — wipes visible transcript
 - [ ] `/context` and `/context explain` — show context budget, tasks, memory, compaction state (`npm run build && npm run smoke:context`)
+- [ ] `/memory`, `/memory list`, `/memory show`, `/memory forget` — inspect and clean durable notes
 - [ ] `/cost` — shows running cost
 - [ ] `/copy` — copies last assistant message
 - [ ] `/diff` — shows working-tree diff

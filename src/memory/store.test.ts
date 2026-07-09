@@ -42,6 +42,7 @@ describe("MemoryStore", () => {
 	it("writes durable provenance frontmatter and preserves created_at on overwrite", () => {
 		const createdAt = Date.UTC(2026, 6, 7, 12);
 		const updatedAt = Date.UTC(2026, 6, 8, 12);
+		store = new MemoryStore({ cwd, dataRoot, sourceSessionId: "s-source-session" });
 		store.save({
 			filename: "project_rule.md",
 			name: "Project rule",
@@ -54,6 +55,7 @@ describe("MemoryStore", () => {
 
 		let raw = readFileSync(join(store.directory, "project_rule.md"), "utf8");
 		expect(raw).toContain("source: unit test");
+		expect(raw).toContain("source_session_id: s-source-session");
 		expect(raw).toContain("created_at: 2026-07-07T12:00:00.000Z");
 		expect(raw).toContain("updated_at: 2026-07-07T12:00:00.000Z");
 
@@ -67,11 +69,39 @@ describe("MemoryStore", () => {
 		});
 
 		expect(overwritten.source).toBe("unit test");
+		expect(overwritten.sourceSessionId).toBe("s-source-session");
 		expect(overwritten.createdAt).toBe(createdAt);
 		expect(overwritten.updatedAt).toBe(updatedAt);
 		raw = readFileSync(join(store.directory, "project_rule.md"), "utf8");
 		expect(raw).toContain("created_at: 2026-07-07T12:00:00.000Z");
 		expect(raw).toContain("updated_at: 2026-07-08T12:00:00.000Z");
+	});
+
+	it("marks retrieval usage without refreshing updated_at", () => {
+		const updatedAt = Date.UTC(2026, 6, 7, 12);
+		const usedAt = Date.UTC(2026, 6, 9, 12);
+		store.save({
+			filename: "runbook.md",
+			name: "Runbook",
+			description: "Deploy runbook",
+			type: "project",
+			body: "Deploy carefully.",
+			now: updatedAt,
+		});
+
+		const marked = store.markUsed("runbook.md", { now: usedAt });
+
+		expect(marked).toMatchObject({
+			filename: "runbook.md",
+			updatedAt,
+			lastUsedAt: usedAt,
+			retrievalCount: 1,
+		});
+		const raw = readFileSync(join(store.directory, "runbook.md"), "utf8");
+		expect(raw).toContain("updated_at: 2026-07-07T12:00:00.000Z");
+		expect(raw).toContain("last_used_at: 2026-07-09T12:00:00.000Z");
+		expect(raw).toContain("retrieval_count: 1");
+		expect(store.read("runbook.md")).toMatchObject({ updatedAt, lastUsedAt: usedAt, retrievalCount: 1 });
 	});
 
 	it("reads legacy memory files without provenance frontmatter", () => {
@@ -88,6 +118,7 @@ describe("MemoryStore", () => {
 			description: "Old format",
 			type: "project",
 			source: "local project memory",
+			retrievalCount: 0,
 		});
 		expect(record?.createdAt).toEqual(expect.any(Number));
 		expect(record?.updatedAt).toEqual(expect.any(Number));

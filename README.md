@@ -78,7 +78,7 @@ OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash)
 - **🏁 Tournaments.** `/tournament <task>` races several agents on the same change in isolated worktrees, a judge ranks them, you merge the winner. `--models opus,sonnet,haiku` pits models head-to-head on *your* code.
 - **Receipts.** `codebase auto --reliable` turns a one-shot task into an audited run: task lifecycle, per-task evidence, verification, tool calls, usage, and checkpoints are saved locally and inspectable with `codebase receipt`.
 - **↺ Rewind anything.** `/rewind` rolls the conversation *and* the files back to before any earlier prompt — a bad turn fully un-happens. Every edit is checkpointed.
-- **🧠 Remembers across sessions.** Pulls durable facts (your prefs, project decisions, the rules you set) out of a session, then recalls matching notes with file/source/staleness labels. `#note` to add one by hand.
+- **🧠 Remembers across sessions.** Pulls durable facts (your prefs, project decisions, the rules you set) out of a session, then recalls matching notes with file/source/session/last-used/staleness labels. `#note` to add one by hand; `/memory list|show|forget` to inspect or clean them up.
 - **🔌 MCP.** Connect external tool servers (filesystem, Postgres, git, fetch, …) over stdio or remote HTTP, OAuth and all. Their tools splice straight into the agent.
 - **🤖 Subagents.** Fan out read-only researchers or write-capable workers that keep their tool-noise out of your main context — each can run in its own git worktree, on its own model and reasoning level.
 - **🪝 Hooks.** Shell commands on lifecycle events (pre/post tool, edit, prompt, session start/end) — run a formatter on save, block secrets, commit on exit.
@@ -89,7 +89,7 @@ OAuth uses Codebase Auto by default (`codebase/d4f`, in-house DeepSeek V4 Flash)
 ## Cheat sheet
 
 ```
-/model /effort /plan /context /tournament /rewind /resume /permissions /mcp /help
+/model /effort /plan /context /memory /tournament /rewind /resume /permissions /mcp /help
 !cmd     run a shell command without spending a turn
 @path    pin a file into the next prompt
 #note    save a memory   ·   \<Enter>  multi-line   ·   Ctrl-C  stop turn / exit

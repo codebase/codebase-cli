@@ -57,10 +57,14 @@ export function buildMemoryAddendum(store: MemoryStore): string {
 export function buildRelevantMemoryReminder(
 	store: MemoryStore,
 	query: string,
-	options: { now?: number; max?: number } = {},
+	options: { now?: number; max?: number; recordUsage?: boolean } = {},
 ): string {
 	const now = options.now ?? Date.now();
-	const scored = findRelevantMemories(store, query, { ...options, now });
+	const scored = findRelevantMemories(store, query, { ...options, now }).map((item) => {
+		if (!options.recordUsage) return item;
+		const record = store.markUsed(item.record.filename, { now }) ?? item.record;
+		return { ...item, record };
+	});
 	if (scored.length === 0) return "";
 
 	const lines = [
@@ -102,7 +106,7 @@ function formatMemory(index: number, record: MemoryRecord, now: number): string 
 	const body = truncate(record.body.trim(), MAX_MEMORY_BODY_CHARS);
 	const lines = [
 		`${index}. ${record.name}`,
-		`   file: ${record.filename}; type: ${record.type}; source: ${record.source}; created: ${formatDate(record.createdAt)}; updated: ${formatDate(record.updatedAt)}; stale: ${stale ? "yes" : "no"}`,
+		`   file: ${record.filename}; type: ${record.type}; source: ${record.source}; source_session: ${record.sourceSessionId ?? "unknown"}; created: ${formatDate(record.createdAt)}; updated: ${formatDate(record.updatedAt)}; last_used: ${formatOptionalDate(record.lastUsedAt)}; retrievals: ${record.retrievalCount}; stale: ${stale ? "yes" : "no"}`,
 		`   description: ${record.description}`,
 	];
 	if (body) {
@@ -141,4 +145,8 @@ function truncate(value: string, maxChars: number): string {
 
 function formatDate(ms: number): string {
 	return new Date(ms).toISOString().slice(0, 10);
+}
+
+function formatOptionalDate(ms?: number): string {
+	return ms ? formatDate(ms) : "never";
 }

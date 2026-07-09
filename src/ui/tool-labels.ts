@@ -68,6 +68,10 @@ export function toolActionLabel(name: string, args: unknown): string {
 			return `Saving memory: ${str("name") || str("type")}`;
 		case "read_memory":
 			return str("filename") ? `Reading memory ${str("filename")}` : "Reading MEMORY.md";
+		case "update_memory":
+			return `Updating memory ${str("filename")}`;
+		case "forget_memory":
+			return `Forgetting memory ${str("filename")}`;
 		case "config":
 			return str("path") ? `config(${str("path")})` : "Reading config";
 		default:
@@ -141,6 +145,10 @@ export function toolActionPast(name: string, args: unknown): string {
 			return `Saved memory: ${str("name") || str("type")}`;
 		case "read_memory":
 			return str("filename") ? `Read memory ${str("filename")}` : "Read MEMORY.md";
+		case "update_memory":
+			return `Updated memory ${str("filename")}`;
+		case "forget_memory":
+			return `Forgot memory ${str("filename")}`;
 		case "config":
 			return str("path") ? `config(${str("path")})` : "Read config";
 		default:

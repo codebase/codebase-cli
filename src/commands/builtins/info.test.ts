@@ -49,6 +49,7 @@ function makeCtx(): { ctx: CommandContext; emits: string[] } {
 			createdAt: now,
 			body: "When you inspect this project or edit src/app.ts, surface context UX gaps.",
 			updatedAt: now,
+			retrievalCount: 0,
 		},
 		{
 			filename: "user_preference.md",
@@ -59,6 +60,7 @@ function makeCtx(): { ctx: CommandContext; emits: string[] } {
 			createdAt: now,
 			body: "Keep launch-readiness summaries concise.",
 			updatedAt: now,
+			retrievalCount: 0,
 		},
 	];
 	const ctx = {
