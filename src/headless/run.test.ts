@@ -858,6 +858,7 @@ describe("runHeadless", () => {
 		expect(isVerificationCommand("node test.mjs")).toBe(true);
 		expect(isVerificationCommand("node --test")).toBe(true);
 		expect(isVerificationCommand("node --experimental-strip-types _verify_rename.ts")).toBe(true);
+		expect(isVerificationCommand("node --experimental-strip-types src/index.ts")).toBe(true);
 		expect(
 			isVerificationCommand("node --experimental-strip-types -e \"import { parseTimestamp } from './parse.ts';\""),
 		).toBe(true);

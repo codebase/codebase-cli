@@ -616,7 +616,7 @@ export function isVerificationCommand(command: string): boolean {
 		/\bnpx(?:\s+-[\w-]+(?:=\S+)?)*\s+typescript(?:@[\w.-]+)?\b(?=.*\s--noemit\b)(?=.*\.[cm]?tsx?\b)/,
 		/\b(?:npx(?:\s+-[\w-]+(?:=\S+)?)*\s+)?(?:tsx|ts-node)\s+-e\b[\s\S]*(?:from\s+['"]\.\/|import\(['"]\.\/|require\(['"]\.\/|src\/)/,
 		/\b(?:npx(?:\s+-[\w-]+(?:=\S+)?)*\s+)?(?:tsx|ts-node)\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?tsx?\b/,
-		/\bnode(?:\s+--[\w=-]+)*\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?js\b/,
+		/\bnode(?:\s+--[\w=-]+)*\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?[jt]s\b/,
 		/\bbun\s+(?:[\w./-]*\/)?(?:index|main|cli|app|server|smoke)[\w.-]*\.[cm]?[jt]sx?\b/,
 		/\b(go test|cargo test|cargo clippy|mvn test|gradle test|swift test|zig build test)\b/,
 		/\b(make|just)\s+(test|check|verify|lint|build)\b/,
