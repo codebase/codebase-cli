@@ -187,6 +187,10 @@ pipeline without scraping markdown.
 
 ## Slash commands (smoke test the obvious ones)
 
+Before entering the TUI:
+
+- [ ] Top-level help/discovery routes return quickly and never enter the TUI (`npm run build && npm run smoke:help`)
+
 In an interactive session:
 
 - [ ] `/help` — lists commands

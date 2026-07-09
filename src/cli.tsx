@@ -74,6 +74,19 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 } else if (argv[0] === "--help" || argv[0] === "-h") {
 	printHelp();
 	process.exit(0);
+} else if (argv[0] === "help") {
+	const topic = argv[1];
+	if (!topic || topic === "--help" || topic === "-h") {
+		printHelp();
+		printHelpTopics();
+		process.exit(0);
+	}
+	if (printTopicHelp(topic)) process.exit(0);
+	process.stderr.write(`unknown help topic: ${topic}\nRun \`codebase help\` to list topics.\n`);
+	process.exit(2);
+} else if (isHelpTopicShim(argv[0])) {
+	printTopicHelp(argv[0]);
+	process.exit(0);
 } else if (argv[0] === "auth") {
 	runAuthSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "ssh") {
@@ -106,6 +119,10 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 } else if (argv[0] === "receipt" || argv[0] === "receipts") {
 	runReceiptSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "app-server") {
+	if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
+		printAppServerHelp();
+		process.exit(0);
+	}
 	// JSON-RPC-ish over stdio for IDE extensions. Auto-approve permissions
 	// by default — IDE clients render approval UIs themselves and we don't
 	// want the server to hang waiting on a TUI prompt no one's watching.
@@ -270,6 +287,7 @@ function printHelp(): void {
 			"                               one-shot build/change in a trusted workspace",
 			"  codebase receipt             inspect the latest reliable-mode receipt",
 			"  codebase receipt list        list saved reliable-mode receipts",
+			"  codebase help <topic>        show CLI or TUI feature help",
 			"  codebase auth login          sign in via codebase.design browser OAuth",
 			"  codebase auth logout         revoke the current session",
 			"  codebase auth status         show current sign-in",
@@ -286,6 +304,11 @@ function printHelp(): void {
 			"  codebase web-build <prompt>  shortcut for project build",
 			"  codebase doctor              diagnose runtime, auth, config, MCP, storage",
 			"  codebase mcp                 show MCP setup help",
+			"  codebase memory              show memory help (TUI: /memory, #note)",
+			"  codebase permissions         show permission help (TUI: /permissions)",
+			"  codebase agents              show subagent help (TUI: /agents)",
+			"  codebase skills              show skill help (TUI: /skills)",
+			"  codebase tournament          show tournament help (TUI: /tournament)",
 			"  codebase director list       manage trained directors (hire, status, fire)",
 			"  codebase app-server          JSON-RPC server on stdio (for IDE extensions)",
 			"  codebase --version           print version and exit",
@@ -305,6 +328,118 @@ function printHelp(): void {
 			"",
 		].join("\n"),
 	);
+}
+
+function isHelpTopicShim(topic: string | undefined): boolean {
+	if (!topic) return false;
+	return [
+		"memory",
+		"permissions",
+		"allowed-tools",
+		"agents",
+		"skills",
+		"tournament",
+		"race",
+		"context",
+		"model",
+		"models",
+		"effort",
+		"rewind",
+	].includes(topic);
+}
+
+function printHelpTopics(): void {
+	process.stdout.write(
+		[
+			"Help topics:",
+			"  auth, run, auto, project, web-build, ssh, usage, doctor, mcp, receipt, director, app-server",
+			"  memory, permissions, agents, skills, tournament, context, model, effort, rewind",
+			"",
+			"Examples:",
+			"  codebase help permissions",
+			"  codebase permissions",
+			"  codebase help web-build",
+			"",
+		].join("\n"),
+	);
+}
+
+function printTopicHelp(rawTopic: string): boolean {
+	const topic = rawTopic.replace(/^\/+/, "").trim().toLowerCase();
+	switch (topic) {
+		case "run":
+			printRunHelp();
+			return true;
+		case "auto":
+			printAutoHelp();
+			return true;
+		case "mcp":
+			printMcpHelp();
+			return true;
+		case "usage":
+			process.stdout.write("usage: codebase usage\n\nShow Codebase plan credits, reset date, and build turns.\n");
+			return true;
+		case "doctor":
+			process.stdout.write("usage: codebase doctor\n\nDiagnose local runtime, auth, config, MCP, and storage.\n");
+			return true;
+		case "app-server":
+			printAppServerHelp();
+			return true;
+		case "web-build":
+			printWebBuildHelp();
+			return true;
+		case "project":
+		case "projects":
+			printProjectHelp();
+			return true;
+		case "auth":
+			printAuthHelpSummary();
+			return true;
+		case "ssh":
+			printSshHelpSummary();
+			return true;
+		case "receipt":
+		case "receipts":
+			printReceiptHelpSummary();
+			return true;
+		case "director":
+		case "directors":
+			printDirectorHelpSummary();
+			return true;
+		case "memory":
+			printMemoryHelp();
+			return true;
+		case "permissions":
+		case "allowed-tools":
+			printPermissionsHelp();
+			return true;
+		case "agents":
+		case "subagents":
+			printAgentsHelp();
+			return true;
+		case "skills":
+			printSkillsHelp();
+			return true;
+		case "tournament":
+		case "race":
+			printTournamentHelp();
+			return true;
+		case "context":
+			printContextHelp();
+			return true;
+		case "model":
+		case "models":
+			printModelHelp();
+			return true;
+		case "effort":
+			printEffortHelp();
+			return true;
+		case "rewind":
+			printRewindHelp();
+			return true;
+		default:
+			return false;
+	}
 }
 
 function printMcpHelp(): void {
@@ -334,6 +469,286 @@ function printMcpHelp(): void {
 			"",
 			"Restart codebase after editing config. Inside the TUI, run /mcp to see",
 			"connected servers, tools, resources, and prompts.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printAppServerHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase app-server [--resume] [--no-auto-approve]",
+			"",
+			"Run the JSONL app/IDE bridge on stdin/stdout.",
+			"",
+			"Protocol:",
+			"  initialize, prompt, abort, get_state, get_messages, set_model, permission_respond",
+			"",
+			"Events:",
+			"  server_ready, agent events, permission_request, permission_cleared, usage_update, server_error",
+			"",
+			"Options:",
+			"  --resume             resume the previous session for this directory",
+			"  --no-auto-approve    emit permission_request events instead of auto-approving",
+			"  --help, -h           show this help",
+			"",
+		].join("\n"),
+	);
+}
+
+function printProjectHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase project [list|pull|build|status|preview|cancel] [options]",
+			"",
+			"Work with projects and web builds on codebase.design.",
+			"",
+			"Common commands:",
+			"  codebase project list",
+			"  codebase project pull <id>",
+			"  codebase project build [--wait] [--model MODEL] [--scaffold ID] [--project ID] <prompt>",
+			"  codebase web-build [--wait] [--model MODEL] [--scaffold ID] [--project ID] <prompt>",
+			"",
+			"Run `codebase project --help` or `codebase project build --help` for full project help.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printWebBuildHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase web-build [--wait] [--model MODEL] [--scaffold ID] [--project ID] <prompt>",
+			"",
+			"Shortcut for `codebase project build`: start a web build on codebase.design.",
+			"",
+			"Options:",
+			"  --wait               stream build events until completion",
+			"  --model MODEL        request a specific model id",
+			"  --scaffold ID        start from a saved scaffold/template",
+			"  --project ID         continue an existing project",
+			"  --help, -h           show this help",
+			"",
+		].join("\n"),
+	);
+}
+
+function printAuthHelpSummary(): void {
+	process.stdout.write(
+		[
+			"usage: codebase auth [login|status|refresh|logout|<token>]",
+			"",
+			"Manage Codebase OAuth or pasted bearer-token credentials.",
+			"",
+			"Common commands:",
+			"  codebase auth login",
+			"  codebase auth status",
+			"  codebase auth refresh",
+			"  codebase auth logout",
+			"",
+			"Run `codebase auth --help` for full auth help.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printSshHelpSummary(): void {
+	process.stdout.write(
+		[
+			"usage: codebase ssh [add|list|rm|test|keygen] ...",
+			"",
+			"Manage enrolled SSH hosts for remote tool execution.",
+			"",
+			"Run `codebase ssh --help` for full SSH help.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printReceiptHelpSummary(): void {
+	process.stdout.write(
+		[
+			"usage: codebase receipt [list | show [id] | export [id]] [--json|--markdown] [--out path]",
+			"",
+			"Inspect reliable-mode receipts saved by `codebase auto --reliable`.",
+			"",
+			"Run `codebase receipt --help` for full receipt help.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printDirectorHelpSummary(): void {
+	process.stdout.write(
+		[
+			"usage: codebase director [list|hire|status|fire] ...",
+			"",
+			"Manage trained design directors used by web-build prompts.",
+			"",
+			"Run `codebase director --help` for full director help.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printMemoryHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase memory",
+			"",
+			"Show memory help for the interactive TUI.",
+			"",
+			"Inside `codebase`:",
+			"  /memory              show this project's MEMORY.md index",
+			"  #note text           save a quick memory without spending an agent turn",
+			"  save_memory          tool the agent uses for durable project/user facts",
+			"  read_memory          tool the agent uses to read saved memory bodies",
+			"",
+			"Storage:",
+			"  ~/.codebase/projects/<project-hash>/memory/",
+			"",
+		].join("\n"),
+	);
+}
+
+function printPermissionsHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase permissions",
+			"",
+			"Show permission help for the interactive TUI.",
+			"",
+			"Inside `codebase`:",
+			"  /permissions                         list effective allow/deny rules",
+			"  /permissions shell                   explain shell auto-allow policy",
+			"  /permissions suggest <command>       preview shell risk and trust scope",
+			"  /permissions allow <pattern>         persist an allow rule",
+			"  /permissions deny <pattern>          persist a deny rule",
+			"  /permissions remove <pattern>        remove a user-layer rule",
+			"",
+			"Pattern examples:",
+			"  shell:git status*",
+			"  shell:npm run build*",
+			"  read_file:src/**",
+			"",
+		].join("\n"),
+	);
+}
+
+function printAgentsHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase agents",
+			"",
+			"Show subagent help for the interactive TUI.",
+			"",
+			"Inside `codebase`:",
+			"  /agents              list available subagent types",
+			"  dispatch_agent       tool for launching focused read-only or write-capable workers",
+			"",
+			"Custom agents:",
+			"  ~/.codebase/agents/<name>.md",
+			"  <project>/.codebase/agents/<name>.md",
+			"",
+			"Frontmatter supports: description, tools, model, effort, max_turns.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printSkillsHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase skills",
+			"",
+			"Show skill help for the interactive TUI.",
+			"",
+			"Inside `codebase`:",
+			"  /skills              list loaded markdown skills",
+			"  /<skill-id> args     invoke a skill as a slash command",
+			"",
+			"Skill locations:",
+			"  ~/.codebase/skills/<id>.md",
+			"  <project>/.codebase/skills/<id>.md",
+			"",
+		].join("\n"),
+	);
+}
+
+function printTournamentHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase tournament",
+			"",
+			"Show tournament help for the interactive TUI.",
+			"",
+			"Inside `codebase`:",
+			"  /tournament <task>                 race 3 agents in isolated worktrees",
+			"  /tournament 5 <task>               choose contestant count (max 5)",
+			"  /tournament --models a,b,c <task>  race specific model ids",
+			"",
+			"The pi-tui merge picker lets you inspect contestants and merge the winner.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printContextHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase context",
+			"",
+			"Show context-visibility help for the interactive TUI.",
+			"",
+			"Inside `codebase`:",
+			"  /context             summarize model context pressure, tasks, memory, tools, and compaction",
+			"  /context explain     show recent/largest messages, memory matches, and compaction details",
+			"",
+			"Launch smoke:",
+			"  npm run build && npm run smoke:context",
+			"",
+		].join("\n"),
+	);
+}
+
+function printModelHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase help model",
+			"",
+			"Inside `codebase`:",
+			"  /model               open the model picker",
+			"  /model <id>          switch to a model id",
+			"  /models              list available models when the provider supports it",
+			"",
+			"OAuth users route models through Codebase Auto/codebase.design unless BYOK is configured.",
+			"",
+		].join("\n"),
+	);
+}
+
+function printEffortHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase help effort",
+			"",
+			"Inside `codebase`:",
+			"  /effort              show current reasoning effort",
+			"  /effort low|medium|high|xhigh",
+			"",
+		].join("\n"),
+	);
+}
+
+function printRewindHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase help rewind",
+			"",
+			"Inside `codebase`:",
+			"  /rewind              open the timeline/checkpoint picker when available",
+			"  /rewind list         list file checkpoints",
+			"  /rewind <seq>        restore one checkpoint",
 			"",
 		].join("\n"),
 	);
