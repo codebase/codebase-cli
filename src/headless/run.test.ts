@@ -757,10 +757,19 @@ describe("runHeadless", () => {
 		expect(isVerificationCommand("node --test")).toBe(true);
 		expect(isVerificationCommand("node --experimental-strip-types _verify_rename.ts")).toBe(true);
 		expect(isVerificationCommand("npx tsx src/index.ts")).toBe(true);
+		expect(
+			isVerificationCommand("npx tsx -e \"import {greet} from './src/index.ts'; console.log(greet('test'))\""),
+		).toBe(true);
+		expect(
+			isVerificationCommand(
+				"npx -y typescript@latest --noEmit --lib es2020 --module nodenext --target es2020 src/parse.ts src/main.ts 2>&1",
+			),
+		).toBe(true);
 		expect(isVerificationCommand("deno check src/parse.ts")).toBe(true);
 		expect(isVerificationCommand("bun src/index.ts")).toBe(true);
 		expect(isVerificationCommand("npx tsc --noEmit 2>&1 || true")).toBe(false);
 		expect(isVerificationCommand("which node && node --version && which tsc")).toBe(false);
+		expect(isVerificationCommand("npx tsx -e \"console.log('hello')\"")).toBe(false);
 		expect(isVerificationCommand("node scripts/generate-fixture.mjs")).toBe(false);
 	});
 
