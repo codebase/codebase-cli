@@ -276,8 +276,6 @@ interface TaskLifecycleAnalysis {
 function analyzeTaskLifecycle(tools: ReceiptToolCall[]): TaskLifecycleAnalysis {
 	const byId = new Map<string, TaskLifecycleEvidence>();
 	const statuses = new Map<string, TaskStatus>();
-	const sawInProgress = new Set<string>();
-	const completedWithoutInProgress: string[] = [];
 	const active = new Set<string>();
 	const activeOverlaps: string[][] = [];
 
@@ -298,21 +296,35 @@ function analyzeTaskLifecycle(tools: ReceiptToolCall[]): TaskLifecycleAnalysis {
 		if (statuses.get(id) === status && tool.name !== "create_task") continue;
 		statuses.set(id, status);
 		if (status === "in_progress") {
-			sawInProgress.add(id);
 			const overlap = [...active].filter((activeId) => activeId !== id);
 			if (overlap.length > 0) activeOverlaps.push([...overlap, id]);
 			active.add(id);
 		} else {
 			active.delete(id);
-			if (status === "completed" && !sawInProgress.has(id)) completedWithoutInProgress.push(id);
 		}
 	}
+	const completedWithoutInProgress = [...byId.values()]
+		.filter((item) => lastCompletedSkippedInProgress(item.transitions))
+		.map((item) => item.id);
 
 	return {
 		tasks: [...byId.values()].sort((a, b) => taskNumber(a.id) - taskNumber(b.id)),
 		completedWithoutInProgress: [...new Set(completedWithoutInProgress)],
 		activeOverlaps: activeOverlaps.map((ids) => [...new Set(ids)]),
 	};
+}
+
+function lastCompletedSkippedInProgress(transitions: TaskLifecycleEvidence["transitions"]): boolean {
+	const sorted = [...transitions].sort((a, b) => a.order - b.order);
+	let lastCompletedIndex = -1;
+	for (let i = sorted.length - 1; i >= 0; i--) {
+		if (sorted[i]?.status === "completed") {
+			lastCompletedIndex = i;
+			break;
+		}
+	}
+	if (lastCompletedIndex === -1) return false;
+	return !sorted.slice(0, lastCompletedIndex).some((transition) => transition.status === "in_progress");
 }
 
 interface TaskActiveInterval {
@@ -493,6 +505,8 @@ export function formatReliabilityRepairPrompt(receipt: ReliabilityReceipt): stri
 		"Repair rules:",
 		"- Do not undo correct work.",
 		"- If no task list exists, create a verification/finalization task, set it in_progress, do the missing auditable work, then complete it.",
+		"- If failures name existing task ids that lacked evidence or skipped in_progress, repair those exact tasks. Do not create replacement tasks for them.",
+		"- To repair an existing task, update that task id to in_progress, perform relevant auditable work for that task, then update that same task id to completed before moving on.",
 		"- If verification is missing for file changes, run a meaningful passing command now while a task is in_progress.",
 		"- Do not use fallbacks that hide failure, such as `|| true` or `|| echo`.",
 		"- If the final answer missed proof, include the exact fresh passing command string in the final answer.",

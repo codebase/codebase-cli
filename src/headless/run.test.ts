@@ -315,6 +315,108 @@ describe("runHeadless", () => {
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
+	it("reliable repair can reopen a task that was completed before in_progress", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-reopen-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Write result file" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done without proper task evidence."),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage(
+				[
+					fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 }),
+					fauxToolCall("update_task", { id: "task-1", status: "completed" }),
+				],
+				{
+					stopReason: "toolUse",
+				},
+			),
+			fauxAssistantMessage("Repaired the task evidence and verified with npm test."),
+			fauxAssistantMessage("Repaired the task evidence and verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "write result",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			receipt: {
+				ok: boolean;
+				failures: string[];
+				taskEvidence: Array<{ id: string; verification: Array<{ command: string }> }>;
+			};
+		};
+		expect(parsed.ok).toBe(true);
+		expect(parsed.receipt.ok).toBe(true);
+		expect(parsed.receipt.failures).toEqual([]);
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			verification: [{ command: "npm test" }],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable repair prompt tells the agent to repair named tasks", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-repair-prompt-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Write result file" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done without proper task evidence."),
+			fauxAssistantMessage("Still not repaired."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "write result",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			messages: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
+		};
+		expect(exitCode).toBe(1);
+		const repairPrompt = parsed.messages.find((message) =>
+			message.content.some(
+				(block) =>
+					block.type === "text" &&
+					block.text?.includes("If failures name existing task ids that lacked evidence or skipped in_progress"),
+			),
+		);
+		expect(repairPrompt).toBeDefined();
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
 	it("reliable json mode fails when verification is not tied to a completed task", async () => {
 		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-detached-verify-"));
 		writeFileSync(
