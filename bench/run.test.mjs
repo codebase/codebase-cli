@@ -82,4 +82,38 @@ describe("bench run", () => {
 		expect(typeof run.bench.repoCommit === "string" || run.bench.repoCommit === null).toBe(true);
 		expect(run.verifyStdout).toContain("ok");
 	});
+
+	it("runs scenario setup-home hooks before invoking the CLI", () => {
+		sweepId = `run-memory-test-${process.pid}-${Date.now()}`;
+
+		const stdout = execFileSync(
+			process.execPath,
+			[
+				runPath,
+				"--scenario",
+				"memory-retrieval",
+				"--runs",
+				"1",
+				"--cli",
+				fakeCliPath,
+				"--sweep-id",
+				sweepId,
+			],
+			{ cwd: repoRoot, encoding: "utf8" },
+		);
+
+		expect(stdout).toContain("✓ PASS");
+
+		const jsonl = readFileSync(join(resultsDir, sweepId, "runs.jsonl"), "utf8").trim();
+		const run = JSON.parse(jsonl);
+		expect(run).toMatchObject({
+			scenario: "memory-retrieval",
+			run: 1,
+			ok: true,
+			exitCode: 0,
+			verifyPassed: true,
+		});
+		expect(run.toolNames).not.toContain("read_memory");
+		expect(run.verifyStdout).toContain("memory retrieval ok");
+	});
 });

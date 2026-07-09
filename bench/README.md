@@ -174,6 +174,7 @@ launch reviewer without opening the JSONL:
 - **task fidelity**: `task-list-fidelity`,
   `durable-task-dependencies`, `complex-issue-recovery`
 - **memory hygiene**: `memory-secret-hygiene`
+- **memory retrieval**: `memory-retrieval`
 - **complex recovery**: `complex-issue-recovery`
 
 The public scorecard reports pass rate, reliable receipt health, task evidence,
@@ -201,12 +202,13 @@ launch-facing table to publish when comparing agent builds.
 
 ## Add a new scenario
 
-Each scenario lives in `bench/scenarios/<name>/` with three pieces:
+Each scenario lives in `bench/scenarios/<name>/` with these pieces:
 
 ```
 bench/scenarios/<name>/
 ├── prompt.txt        # what to give the agent (one paragraph, plain text)
 ├── verify.sh         # exits 0 = pass, anything else = fail
+├── setup-home.mjs    # optional: seed isolated HOME before the CLI runs
 └── setup/            # files copied into the tmp project before the run
     └── …
 ```
@@ -248,6 +250,9 @@ Claude Code's task and memory systems:
   verification as tracked work.
 - `memory-secret-hygiene`: requires a durable `save_memory` call while
   ensuring a fake token in the prompt is not retained in memory files.
+- `memory-retrieval`: seeds fresh, stale, and unrelated project memories in
+  the isolated benchmark HOME; the agent must use the relevant non-stale memory
+  without leaking stale or unrelated distractors into the output.
 - `complex-issue-recovery`: multi-file config bug with deterministic tests;
   grades code inspection, task tracking, minimal repair, and verification.
 

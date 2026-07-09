@@ -28,7 +28,8 @@ describe("bench aggregate", () => {
 		writeFileSync(
 			join(sweepDir, "runs.jsonl"),
 			`${JSON.stringify(makeRun({ scenario: "task-list-fidelity", run: 1, failure: `leaked ${fakeSecret}` }))}\n` +
-				`${JSON.stringify(makeRun({ scenario: "memory-secret-hygiene", run: 1, writerRedactions: 2 }))}\n`,
+				`${JSON.stringify(makeRun({ scenario: "memory-secret-hygiene", run: 1, writerRedactions: 2 }))}\n` +
+				`${JSON.stringify(makeRun({ scenario: "memory-retrieval", run: 1 }))}\n`,
 		);
 		const jsonOut = join(sweepDir, "scorecard.json");
 
@@ -42,17 +43,17 @@ describe("bench aggregate", () => {
 		expect(markdown).not.toContain(fakeSecret);
 		expect(markdown).toContain("leaked [REDACTED]");
 		expect(JSON.stringify(scorecard)).not.toContain(fakeSecret);
-		expect(markdown).toContain("CLI builds: 2.0.0-test @ /tmp/codebase x2");
-		expect(markdown).toContain("Repo commits: abc123def456 x2; dirty runs 0/2");
-		expect(markdown).toContain("Runner flags: reliable 2/2, isolated HOME 2/2");
+		expect(markdown).toContain("CLI builds: 2.0.0-test @ /tmp/codebase x3");
+		expect(markdown).toContain("Repo commits: abc123def456 x3; dirty runs 0/3");
+		expect(markdown).toContain("Runner flags: reliable 3/3, isolated HOME 3/3");
 		expect(markdown).toContain("Public artifact redaction: ruleset v1; writer redactions 2; report-time redactions 1");
 		expect(sweep.provenance).toMatchObject({
-			recordedRuns: 2,
+			recordedRuns: 3,
 			repoDirtyRuns: 0,
-			reliableRuns: 2,
-			isolatedHomeRuns: 2,
+			reliableRuns: 3,
+			isolatedHomeRuns: 3,
 		});
-		expect(sweep.provenance.cliBuilds).toEqual([{ value: "2.0.0-test @ /tmp/codebase", runs: 2 }]);
+		expect(sweep.provenance.cliBuilds).toEqual([{ value: "2.0.0-test @ /tmp/codebase", runs: 3 }]);
 		expect(sweep.redaction).toMatchObject({
 			applied: true,
 			rulesVersion: 1,
@@ -63,6 +64,8 @@ describe("bench aggregate", () => {
 		});
 		expect(sweep.claims.taskFidelity.taskEvidenceCount).toBe(1);
 		expect(sweep.claims.memoryHygiene.passCount).toBe(1);
+		expect(sweep.claims.memoryRetrieval.passCount).toBe(1);
+		expect(markdown).toContain("| Memory retrieval | 1/1 (100%) on memory-retrieval scenarios |");
 	});
 
 	it("does not present all-zero usage as measured free cost", () => {

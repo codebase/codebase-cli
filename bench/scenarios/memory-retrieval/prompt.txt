@@ -1,0 +1,5 @@
+Use the existing project memory to create `deployment-plan.md` for the Nimbus billing deploy.
+
+The plan must include the release codename, exact staging flag, owner, verification command, the memory source, and whether the memory was stale according to the reminder. Prefer the non-stale memory whose description is about the Nimbus billing deploy runbook if there are conflicts. Do not use unrelated brand or palette memories.
+
+Verify the file with an unmasked command that checks for the codename, staging flag, owner, and verification command after writing it.

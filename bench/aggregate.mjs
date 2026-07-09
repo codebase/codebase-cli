@@ -39,6 +39,10 @@ const CAPABILITY_DIMENSIONS = [
 		scenarios: new Set(["memory-secret-hygiene"]),
 	},
 	{
+		label: "memory retrieval",
+		scenarios: new Set(["memory-retrieval"]),
+	},
+	{
 		label: "complex recovery",
 		scenarios: new Set(["complex-issue-recovery"]),
 	},
@@ -128,6 +132,7 @@ function buildScorecardJson(sweeps, generatedAt) {
 					overall: byScope.get("overall"),
 					taskFidelity: byScope.get("task fidelity") ?? null,
 					memoryHygiene: byScope.get("memory hygiene") ?? null,
+					memoryRetrieval: byScope.get("memory retrieval") ?? null,
 				},
 			};
 		}),
@@ -213,6 +218,7 @@ function renderLaunchClaims(scorecard) {
 	const claim = scorecard.claims;
 	const task = claim.taskFidelity;
 	const memory = claim.memoryHygiene;
+	const retrieval = claim.memoryRetrieval;
 	return [
 		"### Claim-ready summary",
 		"",
@@ -221,6 +227,7 @@ function renderLaunchClaims(scorecard) {
 		`| Overall pass rate | ${formatRatio(claim.overall.passCount, claim.overall.runs)} across ${claim.overall.runs} runs |`,
 		`| Task fidelity | ${task ? `${formatRatio(task.passCount, task.runs)} on task-fidelity scenarios; task evidence ${formatReceiptCount(task, "taskEvidenceCount")}; task verification ${formatReceiptCount(task, "taskVerifiedCount")}` : "not in sweep"} |`,
 		`| Memory hygiene | ${memory ? `${formatRatio(memory.passCount, memory.runs)} on memory hygiene scenarios` : "not in sweep"} |`,
+		`| Memory retrieval | ${retrieval ? `${formatRatio(retrieval.passCount, retrieval.runs)} on memory-retrieval scenarios` : "not in sweep"} |`,
 		`| Speed | p50 passing run ${formatSeconds(claim.overall.medianPassSeconds)} |`,
 		`| Cost | average passing run ${formatCost(claim.overall.avgPassCost)} |`,
 		`| Receipt proof | receipt ok ${formatReceiptCount(claim.overall, "receiptOkCount")}; final proof ${formatReceiptCount(claim.overall, "finalProofCount")}; fresh verification ${formatReceiptCount(claim.overall, "freshVerifiedCount")} |`,

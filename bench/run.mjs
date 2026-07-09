@@ -118,6 +118,7 @@ async function runOne(scenarioName, runIndex) {
 	const promptPath = join(scenarioDir, "prompt.txt");
 	const verifyPath = join(scenarioDir, "verify.sh");
 	const setupDir = join(scenarioDir, "setup");
+	const setupHomePath = join(scenarioDir, "setup-home.mjs");
 
 	if (!existsSync(promptPath)) {
 		return errorResult(scenarioName, runIndex, `missing prompt.txt at ${promptPath}`);
@@ -134,6 +135,12 @@ async function runOne(scenarioName, runIndex) {
 	// Copy setup/ → tmpProject if present.
 	if (existsSync(setupDir)) {
 		cpSync(setupDir, tmpProject, { recursive: true });
+	}
+	const setupHome = runScenarioHomeSetup({ setupHomePath, tmpProject, tmpHome });
+	if (setupHome) {
+		const result = errorResult(scenarioName, runIndex, setupHome);
+		cleanupTmp({ tmpProject, tmpHome, isolateHome, keepTmp });
+		return result;
 	}
 
 	const startedAt = Date.now();
@@ -196,22 +203,45 @@ async function runOne(scenarioName, runIndex) {
 		ts: Date.now(),
 	};
 
-	if (!keepTmp) {
-		try {
-			rmSync(tmpProject, { recursive: true, force: true });
-		} catch {
-			// best effort
-		}
-		if (isolateHome) {
-			try {
-				rmSync(tmpHome, { recursive: true, force: true });
-			} catch {
-				// best effort
-			}
-		}
-	}
+	cleanupTmp({ tmpProject, tmpHome, isolateHome, keepTmp });
 
 	return result;
+}
+
+function runScenarioHomeSetup({ setupHomePath, tmpProject, tmpHome }) {
+	if (!existsSync(setupHomePath)) return null;
+	const result = spawnSync(process.execPath, [setupHomePath], {
+		cwd: tmpProject,
+		env: {
+			...process.env,
+			HOME: tmpHome,
+			CODEBASE_BENCH_HOME: tmpHome,
+			CODEBASE_BENCH_PROJECT: tmpProject,
+			CODEBASE_BENCH_SCENARIO_DIR: dirname(setupHomePath),
+		},
+		encoding: "utf8",
+		timeout: 30_000,
+	});
+	if (result.status === 0) return null;
+	const stderr = result.stderr?.trim();
+	const stdout = result.stdout?.trim();
+	const detail = [stderr, stdout].filter(Boolean).join("\n").slice(-1000);
+	return `setup-home.mjs failed${detail ? `: ${detail}` : ""}`;
+}
+
+function cleanupTmp({ tmpProject, tmpHome, isolateHome, keepTmp }) {
+	if (keepTmp) return;
+	try {
+		rmSync(tmpProject, { recursive: true, force: true });
+	} catch {
+		// best effort
+	}
+	if (!isolateHome) return;
+	try {
+		rmSync(tmpHome, { recursive: true, force: true });
+	} catch {
+		// best effort
+	}
 }
 
 function errorResult(scenarioName, runIndex, message) {

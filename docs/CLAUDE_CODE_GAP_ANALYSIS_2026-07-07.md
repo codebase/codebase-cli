@@ -88,13 +88,13 @@ Recommended next work:
 
 Claude's memory system is more productized. The `memdir` prompt defines typed memory files, a `MEMORY.md` index, and careful "write/update/remove" rules. `findRelevantMemories.ts` asks a side model to select up to five clearly useful memory files from headers. Team memory sync is repo-scoped, OAuth-gated, API-backed, size-limited, and guarded by secret scanning before upload (`src/memdir/*`, `src/services/teamMemorySync/*`, `src/services/extractMemories/*`).
 
-Codebase's memory is cleaner and safer than many OSS agents: typed files, index injection, background extraction, manual `#note`, high-confidence secret redaction, and prompt-time relevant-memory recall. The system prompt carries the truncated index, then `src/memory/inject.ts` selects matching full memory bodies with filename/type/source/timestamps/stale markers before the model call.
+Codebase's memory is cleaner and safer than many OSS agents: typed files, index injection, background extraction, manual `#note`, high-confidence secret redaction, and prompt-time relevant-memory recall. The system prompt carries the truncated index, then `src/memory/inject.ts` selects matching full memory bodies with filename/type/source/timestamps/stale markers before the model call. The benchmark surface now includes `memory-retrieval`, which seeds fresh, stale, and unrelated memories and fails if the agent uses stale or distractor values.
 
 Recommended next work:
 
 - Add `forget_memory` / `update_memory` as explicit tools and slash commands.
 - Store source session id, creation time, last-used time, and optional expiry/reverify hints in memory frontmatter.
-- Add a memory-retrieval benchmark with distractor memories and stale facts.
+- Keep `memory-retrieval` in the public sweep and expand it with more stale-fact cases if retrieval starts looking too easy.
 - Add optional web/team memory sync only after local provenance and secret boundaries are crisp.
 
 ### 5. Permissions And Shell Safety

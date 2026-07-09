@@ -14,6 +14,63 @@ if (args[0] !== "run") {
 }
 
 const reliable = args.includes("--reliable");
+const prompt = args.at(-1) ?? "";
+if (/Nimbus billing deploy/i.test(prompt)) {
+	writeFileSync(
+		join(process.cwd(), "deployment-plan.md"),
+		[
+			"# Nimbus billing deploy",
+			"",
+			"- Release codename: cobalt-sparrow",
+			"- Staging flag: NIMBUS_BILLING_V2=true",
+			"- Owner: Mira Chen",
+			"- Verification command: npm run test:billing && npm run smoke:nimbus",
+			"- Memory source: bench seed: release-ops fixture",
+			"- Memory stale: no",
+			"",
+		].join("\n"),
+	);
+	process.stdout.write(
+		`${JSON.stringify({
+			ok: true,
+			exitCode: 0,
+			durationMs: 123,
+			model: { provider: "fake", id: "fake-model", name: "Fake Model" },
+			source: "byok",
+			usage: {
+				input: 100,
+				output: 25,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 125,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 },
+			},
+			messages: [
+				{ role: "user", content: prompt },
+				{
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "call-1", name: "create_task", arguments: { title: "Use memory" } },
+						{ type: "toolCall", id: "call-2", name: "update_task", arguments: { id: "task-1", status: "in_progress" } },
+						{ type: "toolCall", id: "call-3", name: "write_file", arguments: { path: "deployment-plan.md" } },
+						{
+							type: "toolCall",
+							id: "call-4",
+							name: "shell",
+							arguments: { command: "grep -F cobalt-sparrow deployment-plan.md" },
+						},
+						{ type: "toolCall", id: "call-5", name: "update_task", arguments: { id: "task-1", status: "completed" } },
+					],
+				},
+				{ role: "assistant", content: [{ type: "text", text: "Wrote deployment-plan.md from memory." }] },
+			],
+			messageCount: 3,
+			finalText: "Wrote deployment-plan.md from memory.",
+		})}\n`,
+	);
+	process.exit(0);
+}
+
 const target = join(process.cwd(), "src", "index.ts");
 const before = readFileSync(target, "utf8");
 writeFileSync(target, before.replace("helo world", "hello world"));
@@ -70,7 +127,7 @@ const output = {
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 },
 	},
 	messages: [
-		{ role: "user", content: args.at(-1) ?? "" },
+		{ role: "user", content: prompt },
 		{
 			role: "assistant",
 			content: [
