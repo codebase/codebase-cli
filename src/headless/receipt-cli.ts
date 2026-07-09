@@ -302,7 +302,7 @@ function reliabilityGates(record: ReceiptRecord): ReliabilityGate[] {
 			ok:
 				s.completedTasks > 0 &&
 				s.completedTasksWithEvidence === s.completedTasks &&
-				!matchesAny(failures, [/lacked evidence/]),
+				!matchesAny(failures, [/lacked evidence/, /mutation lacked completed task evidence/]),
 			detail: `${s.completedTasksWithEvidence}/${s.completedTasks} completed tasks have tool evidence`,
 		},
 		{
@@ -349,6 +349,10 @@ function nextActions(record: ReceiptRecord): string[] {
 			actions.push("End with a positive final proof sentence that names the passing command exactly.");
 		} else if (failure.includes("final answer did not state no file-change verification was needed")) {
 			actions.push("For read-only or memory-only runs, state that no file-change verification was needed.");
+		} else if (failure.includes("file mutation lacked completed task evidence")) {
+			actions.push(
+				"Set the implementation task in_progress before editing; file mutations cannot be attached to task evidence retroactively.",
+			);
 		} else if (failure.includes("lacked evidence")) {
 			actions.push(
 				"Keep each task in_progress while reads, edits, searches, shell commands, or checks create evidence.",

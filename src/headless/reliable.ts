@@ -184,6 +184,10 @@ export class ReliabilityRecorder {
 		const completedTasksWithVerification = taskEvidence.filter(
 			(item) => item.status === "completed" && item.verification.length > 0,
 		);
+		const mutationsWithoutCompletedTaskEvidence = collectMutationsWithoutCompletedTaskEvidence(
+			mutations,
+			taskEvidence,
+		);
 		const maskedVerificationAttempts = collectMaskedVerificationAttempts(tools);
 		const failures: string[] = [];
 		const warnings: string[] = [];
@@ -217,6 +221,11 @@ export class ReliabilityRecorder {
 		if (completedTasksWithoutEvidence.length > 0) {
 			failures.push(
 				`completed task${completedTasksWithoutEvidence.length === 1 ? "" : "s"} lacked evidence: ${completedTasksWithoutEvidence.map((item) => item.id).join(", ")}`,
+			);
+		}
+		if (mutationsWithoutCompletedTaskEvidence.length > 0) {
+			failures.push(
+				`file mutation lacked completed task evidence: ${formatMutationListForFailure(mutationsWithoutCompletedTaskEvidence)}`,
 			);
 		}
 		if (lifecycle.completedWithoutInProgress.length > 0) {
@@ -453,6 +462,18 @@ function hasTaskEvidence(item: TaskEvidence): boolean {
 	);
 }
 
+function collectMutationsWithoutCompletedTaskEvidence(
+	mutations: MutationEvidence[],
+	taskEvidence: TaskEvidence[],
+): MutationEvidence[] {
+	const captured = new Set(
+		taskEvidence
+			.filter((task) => task.status === "completed")
+			.flatMap((task) => task.mutations.map((mutation) => mutation.toolCallId)),
+	);
+	return mutations.filter((mutation) => !captured.has(mutation.toolCallId));
+}
+
 function collectMutations(tools: ReceiptToolCall[], checkpoints: readonly CheckpointEntry[]): MutationEvidence[] {
 	const matchedCheckpointSeqs = new Set<number>();
 	const sortedCheckpoints = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp || a.seq - b.seq);
@@ -542,6 +563,7 @@ export function formatReliabilityRepairPrompt(receipt: ReliabilityReceipt): stri
 		"- If no task list exists, create a verification/finalization task, set it in_progress, do the missing auditable work, then complete it.",
 		"- If failures name existing task ids that lacked evidence or skipped in_progress, repair those exact tasks. Do not create replacement tasks for them.",
 		"- To repair an existing task, update that task id to in_progress, perform relevant auditable work for that task, then update that same task id to completed before moving on.",
+		"- If a failure says a file mutation lacked completed task evidence, do not fabricate evidence; edits cannot be attached retroactively, so future reliable runs must set the relevant task in_progress before editing.",
 		"- If verification is missing for file changes, run a meaningful passing command now while a task is in_progress.",
 		"- Do not use fallbacks that hide failure, such as `|| true`, `|| echo`, `|| :`, or `; echo $?`.",
 		"- For absence checks, use an unmasked command like `! grep ... && grep ...`, or create a verify script that exits non-zero on failure.",
@@ -701,6 +723,15 @@ function looksLikeVerificationAttempt(command: string): boolean {
 function formatCommandForFailure(command: string): string {
 	const singleLine = command.replace(/\s+/g, " ").trim();
 	return singleLine.length > 160 ? `${singleLine.slice(0, 157)}...` : singleLine;
+}
+
+function formatMutationListForFailure(mutations: MutationEvidence[]): string {
+	const items = mutations.slice(0, 5).map((mutation) => {
+		const label = mutation.path ? `${mutation.tool} ${mutation.path}` : `${mutation.tool} ${mutation.toolCallId}`;
+		return formatCommandForFailure(label);
+	});
+	if (mutations.length > items.length) items.push(`+${mutations.length - items.length} more`);
+	return items.join(", ");
 }
 
 function summarizeArgs(toolName: string, args: unknown): Record<string, unknown> {

@@ -72,6 +72,7 @@ describe("runReceiptSubcommand", () => {
 		expect(text).toContain("Next actions:");
 		expect(text).toContain("Run verification while the implementation task is in_progress");
 		expect(text).toContain("End with a positive final proof sentence");
+		expect(text).toContain("file mutations cannot be attached to task evidence retroactively");
 
 		out.length = 0;
 		expect(await run(["receipt", "export", record.id])).toBe(0);
@@ -167,6 +168,7 @@ function makeFailedInput(): Parameters<ReceiptStore["save"]>[0] {
 			failures: [
 				"no completed task captured verification evidence",
 				"final answer did not name a fresh passing verification command: npm test",
+				"file mutation lacked completed task evidence: write_file result.txt",
 			],
 		},
 	};
