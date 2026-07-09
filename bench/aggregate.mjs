@@ -435,8 +435,14 @@ function taskEvidenceCount(item) {
 }
 
 function hasFinalAnswerProof(receipt) {
-	if (receipt.summary?.finalAnswerMentionsFreshVerification === true) return true;
-	return receipt.finalAnswer?.mentionsFreshVerification === true;
+	const mutationCount = receipt.summary?.mutationCount ?? receipt.mutations?.length ?? 0;
+	const verificationCount = receipt.summary?.verificationCount ?? receipt.verification?.length ?? 0;
+	if (mutationCount > 0 || verificationCount > 0) {
+		if (receipt.summary?.finalAnswerMentionsFreshVerification === true) return true;
+		return receipt.finalAnswer?.mentionsFreshVerification === true;
+	}
+	if (receipt.summary?.finalAnswerMentionsNoFileChangeVerification === true) return true;
+	return receipt.finalAnswer?.mentionsNoFileChangeVerification === true;
 }
 
 function hasFreshVerification(receipt) {

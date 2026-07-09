@@ -45,11 +45,12 @@ codebase auto --reliable "fix the auth refresh race and prove it"
 tasks through `in_progress` without overlapping active work, attaches evidence
 to each completed task, records a passing verification command after the final
 file change, ties verification to completed task work, and requires the final
-answer to positively name the fresh verification command. With `--output json`,
-the result includes a receipt: task lifecycle, per-task evidence, file
-mutations, verification evidence, final-answer proof, usage, and rewind
-checkpoints. Obvious secret-looking values are redacted before receipts are
-saved.
+answer to positively name the fresh verification command. For read-only or
+memory-only runs with no file mutations, the final answer must state that no
+file-change verification was needed. With `--output json`, the result includes a
+receipt: task lifecycle, per-task evidence, file mutations, verification
+evidence, final-answer proof, usage, and rewind checkpoints. Obvious
+secret-looking values are redacted before receipts are saved.
 Failed receipt summaries show gate status and next actions instead of only
 dumping raw audit strings.
 Inspect the latest one with `codebase receipt`, list saved runs with

@@ -89,9 +89,52 @@ describe("bench aggregate", () => {
 		expect(markdown).toContain("| fix-typo | 1 | 12.0s | 4.00 | not reported | not reported | not reported | not reported |");
 		expect(markdown).not.toContain("$0.0000");
 	});
+
+	it("counts read-only no-verification final answers as receipt proof", () => {
+		const jsonOut = join(sweepDir, "scorecard.json");
+		writeFileSync(
+			join(sweepDir, "runs.jsonl"),
+			`${JSON.stringify(makeRun({ scenario: "read-only-explain", run: 1, readOnlyReceipt: true }))}\n`,
+		);
+
+		const markdown = execFileSync(process.execPath, [aggregatePath, sweepId, "--json-out", jsonOut], {
+			cwd: join(__dirname, ".."),
+			encoding: "utf8",
+		});
+		const scorecard = JSON.parse(readFileSync(jsonOut, "utf8"));
+		const overall = scorecard.sweeps[0].claims.overall;
+
+		expect(markdown).toContain("| Receipt proof | receipt ok 1/1 (100%); final proof 1/1 (100%); fresh verification 0/1 (0%) |");
+		expect(overall.finalProofCount).toBe(1);
+	});
 });
 
-function makeRun({ scenario, run, failure, writerRedactions = 0, unreportedUsage = false }) {
+function makeRun({ scenario, run, failure, writerRedactions = 0, unreportedUsage = false, readOnlyReceipt = false }) {
+	const receiptSummary = readOnlyReceipt
+		? {
+				completedTasks: 1,
+				openTasks: 0,
+				mutationCount: 0,
+				verificationCount: 0,
+				verificationAfterLastMutationCount: 0,
+				completedTasksWithEvidence: 1,
+				completedTasksWithVerification: 0,
+				finalAnswerMentionsFreshVerification: false,
+				finalAnswerMentionsNoFileChangeVerification: true,
+				checkpoints: 0,
+			}
+		: {
+				completedTasks: 1,
+				openTasks: 0,
+				mutationCount: 1,
+				verificationCount: 1,
+				verificationAfterLastMutationCount: 1,
+				completedTasksWithEvidence: 1,
+				completedTasksWithVerification: 1,
+				finalAnswerMentionsFreshVerification: true,
+				finalAnswerMentionsNoFileChangeVerification: false,
+				checkpoints: 1,
+			};
 	return {
 		scenario,
 		run,
@@ -139,17 +182,7 @@ function makeRun({ scenario, run, failure, writerRedactions = 0, unreportedUsage
 		toolNames: ["create_task", "update_task", "shell", "update_task"],
 		receipt: {
 			ok: true,
-			summary: {
-				completedTasks: 1,
-				openTasks: 0,
-				mutationCount: 1,
-				verificationCount: 1,
-				verificationAfterLastMutationCount: 1,
-				completedTasksWithEvidence: 1,
-				completedTasksWithVerification: 1,
-				finalAnswerMentionsFreshVerification: true,
-				checkpoints: 1,
-			},
+			summary: receiptSummary,
 			failures: failure ? [failure] : [],
 		},
 		receiptPassed: true,

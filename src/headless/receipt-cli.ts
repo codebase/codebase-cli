@@ -167,6 +167,7 @@ function renderReceipt(record: ReceiptRecord, format: ParsedReceiptArgs["format"
 function renderText(record: ReceiptRecord, path: string): string {
 	const s = record.receipt.summary;
 	const completedTasksWithVerification = completedTaskVerificationCount(record);
+	const finalProof = finalProofSummary(record);
 	const lines = [
 		`Receipt: ${record.id}`,
 		`Status: ${record.ok ? "OK" : "FAILED"} (exit ${record.exitCode})`,
@@ -176,7 +177,7 @@ function renderText(record: ReceiptRecord, path: string): string {
 		`Duration: ${formatMs(record.durationMs)}`,
 		`Tasks: ${s.completedTasks}/${s.taskCount} completed, ${s.completedTasksWithEvidence} with evidence`,
 		`Verification: ${s.verificationAfterLastMutationCount}/${s.verificationCount} fresh after final mutation, ${completedTasksWithVerification}/${s.completedTasks} completed tasks verified`,
-		`Final answer: ${s.finalAnswerMentionsFreshVerification ? "named fresh verification" : "missing fresh verification"}`,
+		`Final answer: ${finalProof.summary}`,
 		`Mutations: ${s.mutationCount}, checkpoints: ${s.checkpoints}`,
 		`File: ${path}`,
 	];
@@ -216,6 +217,7 @@ function renderText(record: ReceiptRecord, path: string): string {
 function renderMarkdown(record: ReceiptRecord, path: string): string {
 	const s = record.receipt.summary;
 	const completedTasksWithVerification = completedTaskVerificationCount(record);
+	const finalProof = finalProofSummary(record);
 	const lines = [
 		`# Codebase Reliable Receipt`,
 		"",
@@ -231,7 +233,7 @@ function renderMarkdown(record: ReceiptRecord, path: string): string {
 		"",
 		`- Tasks: ${s.completedTasks}/${s.taskCount} completed, ${s.completedTasksWithEvidence} with evidence`,
 		`- Verification: ${s.verificationAfterLastMutationCount}/${s.verificationCount} fresh after final mutation, ${completedTasksWithVerification}/${s.completedTasks} completed tasks verified`,
-		`- Final answer: ${s.finalAnswerMentionsFreshVerification ? "named fresh verification" : "missing fresh verification"}`,
+		`- Final answer: ${finalProof.summary}`,
 		`- Mutations: ${s.mutationCount}`,
 		`- Checkpoints: ${s.checkpoints}`,
 	];
@@ -278,6 +280,8 @@ function reliabilityGates(record: ReceiptRecord): ReliabilityGate[] {
 	const s = record.receipt.summary;
 	const failures = record.receipt.failures.join("\n");
 	const completedTasksWithVerification = completedTaskVerificationCount(record);
+	const mutationCount = s.mutationCount ?? record.receipt.mutations.length;
+	const finalProof = finalProofSummary(record);
 	return [
 		{
 			label: "Task list",
@@ -304,22 +308,24 @@ function reliabilityGates(record: ReceiptRecord): ReliabilityGate[] {
 		{
 			label: "Verification",
 			ok:
-				s.verificationCount > 0 &&
-				s.verificationAfterLastMutationCount > 0 &&
-				completedTasksWithVerification > 0 &&
-				!matchesAny(failures, [
-					/no successful verification/,
-					/no completed task captured verification/,
-					/before the last file mutation/,
-				]),
-			detail: `${s.verificationAfterLastMutationCount}/${s.verificationCount} fresh, ${completedTasksWithVerification}/${s.completedTasks} completed tasks verified`,
+				mutationCount === 0 ||
+				(s.verificationCount > 0 &&
+					s.verificationAfterLastMutationCount > 0 &&
+					completedTasksWithVerification > 0 &&
+					!matchesAny(failures, [
+						/no successful verification/,
+						/no completed task captured verification/,
+						/before the last file mutation/,
+					])),
+			detail:
+				mutationCount === 0
+					? "no file mutations; command verification not required"
+					: `${s.verificationAfterLastMutationCount}/${s.verificationCount} fresh, ${completedTasksWithVerification}/${s.completedTasks} completed tasks verified`,
 		},
 		{
 			label: "Final proof",
-			ok: s.finalAnswerMentionsFreshVerification && !matchesAny(failures, [/final answer did not name/]),
-			detail: s.finalAnswerMentionsFreshVerification
-				? "final answer named fresh verification"
-				: "final answer must positively name fresh verification",
+			ok: finalProof.ok,
+			detail: finalProof.detail,
 		},
 	];
 }
@@ -341,6 +347,8 @@ function nextActions(record: ReceiptRecord): string[] {
 			actions.push("Rerun verification after the final file mutation.");
 		} else if (failure.includes("final answer did not name")) {
 			actions.push("End with a positive final proof sentence that names the passing command exactly.");
+		} else if (failure.includes("final answer did not state no file-change verification was needed")) {
+			actions.push("For read-only or memory-only runs, state that no file-change verification was needed.");
 		} else if (failure.includes("lacked evidence")) {
 			actions.push(
 				"Keep each task in_progress while reads, edits, searches, shell commands, or checks create evidence.",
@@ -362,6 +370,60 @@ function completedTaskVerificationCount(record: ReceiptRecord): number {
 	if (typeof summary.completedTasksWithVerification === "number") return summary.completedTasksWithVerification;
 	return record.receipt.taskEvidence.filter((item) => item.status === "completed" && item.verification.length > 0)
 		.length;
+}
+
+function finalProofSummary(record: ReceiptRecord): { ok: boolean; summary: string; detail: string } {
+	const summary = record.receipt.summary as {
+		mutationCount?: number;
+		verificationCount?: number;
+		finalAnswerMentionsFreshVerification?: unknown;
+		finalAnswerMentionsNoFileChangeVerification?: unknown;
+	};
+	const failures = record.receipt.failures.join("\n");
+	const mutationCount = summary.mutationCount ?? record.receipt.mutations.length;
+	const verificationCount = summary.verificationCount ?? record.receipt.verification.length;
+	const mentionsFresh =
+		summary.finalAnswerMentionsFreshVerification === true ||
+		record.receipt.finalAnswer?.mentionsFreshVerification === true;
+	const mentionsNoFileChange =
+		summary.finalAnswerMentionsNoFileChangeVerification === true ||
+		record.receipt.finalAnswer?.mentionsNoFileChangeVerification === true ||
+		finalTextMentionsNoFileChangeVerification(record.finalText);
+
+	if (mutationCount > 0 || verificationCount > 0) {
+		const ok = mentionsFresh && !matchesAny(failures, [/final answer did not name/]);
+		return {
+			ok,
+			summary: ok ? "named fresh verification" : "missing fresh verification",
+			detail: ok ? "final answer named fresh verification" : "final answer must positively name fresh verification",
+		};
+	}
+
+	const ok =
+		mentionsNoFileChange &&
+		!matchesAny(failures, [/final answer did not state no file-change verification was needed/]);
+	return {
+		ok,
+		summary: ok ? "stated no file-change verification was needed" : "missing no-change verification statement",
+		detail: ok
+			? "final answer explained no file-change verification was needed"
+			: "final answer must state no file-change verification was needed",
+	};
+}
+
+function finalTextMentionsNoFileChangeVerification(text: string): boolean {
+	const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+	return (
+		/\bno\s+(?:file[- ]?change|code[- ]?change|source[- ]?change)\s+verification\s+(?:was\s+)?(?:needed|required|necessary)\b/.test(
+			normalized,
+		) ||
+		/\b(?:file|code|source|working tree)\s+changes?\s+(?:were\s+)?(?:not\s+)?(?:made|needed|required)\b[\s\S]*\bno\s+(?:verification|test|tests|check)\s+(?:was\s+)?(?:needed|required|necessary)\b/.test(
+			normalized,
+		) ||
+		/\bread[- ]only\b[\s\S]*\bno\s+(?:file[- ]?change\s+)?verification\s+(?:was\s+)?(?:needed|required|necessary)\b/.test(
+			normalized,
+		)
+	);
 }
 
 function formatMs(value: number | undefined): string {

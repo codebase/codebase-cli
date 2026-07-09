@@ -180,7 +180,11 @@ describe("runHeadless", () => {
 					completedTasksWithVerification: number;
 					verificationCount: number;
 				};
-				finalAnswer: { mentionsFreshVerification: boolean; matchedVerificationCommands: string[] };
+				finalAnswer: {
+					mentionsFreshVerification: boolean;
+					mentionsNoFileChangeVerification: boolean;
+					matchedVerificationCommands: string[];
+				};
 				taskEvidence: Array<{
 					id: string;
 					toolCalls: Array<{ name: string }>;
@@ -197,6 +201,7 @@ describe("runHeadless", () => {
 		expect(parsed.receipt.summary.verificationCount).toBe(1);
 		expect(parsed.receipt.finalAnswer).toEqual({
 			mentionsFreshVerification: true,
+			mentionsNoFileChangeVerification: false,
 			matchedVerificationCommands: ["cd . && npm test 2>&1"],
 		});
 		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
@@ -250,7 +255,17 @@ describe("runHeadless", () => {
 			ok: boolean;
 			receipt: {
 				ok: boolean;
-				summary: { mutationCount: number; verificationCount: number; completedTasksWithEvidence: number };
+				summary: {
+					mutationCount: number;
+					verificationCount: number;
+					completedTasksWithEvidence: number;
+					finalAnswerMentionsNoFileChangeVerification: boolean;
+				};
+				finalAnswer: {
+					mentionsFreshVerification: boolean;
+					mentionsNoFileChangeVerification: boolean;
+					matchedVerificationCommands: string[];
+				};
 				failures: string[];
 			};
 		};
@@ -260,8 +275,70 @@ describe("runHeadless", () => {
 			mutationCount: 0,
 			verificationCount: 0,
 			completedTasksWithEvidence: 1,
+			finalAnswerMentionsNoFileChangeVerification: true,
+		});
+		expect(parsed.receipt.finalAnswer).toMatchObject({
+			mentionsFreshVerification: false,
+			mentionsNoFileChangeVerification: true,
+			matchedVerificationCommands: [],
 		});
 		expect(parsed.receipt.failures).not.toContain("no successful verification command was recorded");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails read-only work that omits the no-verification-needed proof", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-read-only-proof-"));
+		writeFileSync(join(tmpProject, "README.md"), "project notes\n");
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Inspect project notes" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("read_file", { path: "README.md" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Read README.md."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "explain the project notes",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				ok: boolean;
+				failures: string[];
+				summary: {
+					mutationCount: number;
+					verificationCount: number;
+					finalAnswerMentionsNoFileChangeVerification: boolean;
+				};
+				finalAnswer: { mentionsNoFileChangeVerification: boolean };
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.ok).toBe(false);
+		expect(parsed.receipt.summary).toMatchObject({
+			mutationCount: 0,
+			verificationCount: 0,
+			finalAnswerMentionsNoFileChangeVerification: false,
+		});
+		expect(parsed.receipt.finalAnswer.mentionsNoFileChangeVerification).toBe(false);
+		expect(parsed.receipt.failures).toContain("final answer did not state no file-change verification was needed");
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
@@ -523,7 +600,11 @@ describe("runHeadless", () => {
 			code: string;
 			receipt: {
 				failures: string[];
-				finalAnswer: { mentionsFreshVerification: boolean; matchedVerificationCommands: string[] };
+				finalAnswer: {
+					mentionsFreshVerification: boolean;
+					mentionsNoFileChangeVerification: boolean;
+					matchedVerificationCommands: string[];
+				};
 				summary: { finalAnswerMentionsFreshVerification: boolean };
 			};
 		};
@@ -534,6 +615,7 @@ describe("runHeadless", () => {
 		);
 		expect(parsed.receipt.finalAnswer).toEqual({
 			mentionsFreshVerification: false,
+			mentionsNoFileChangeVerification: false,
 			matchedVerificationCommands: [],
 		});
 		expect(parsed.receipt.summary.finalAnswerMentionsFreshVerification).toBe(false);
@@ -580,7 +662,11 @@ describe("runHeadless", () => {
 			code: string;
 			receipt: {
 				failures: string[];
-				finalAnswer: { mentionsFreshVerification: boolean; matchedVerificationCommands: string[] };
+				finalAnswer: {
+					mentionsFreshVerification: boolean;
+					mentionsNoFileChangeVerification: boolean;
+					matchedVerificationCommands: string[];
+				};
 			};
 		};
 		expect(parsed.ok).toBe(false);
@@ -590,6 +676,7 @@ describe("runHeadless", () => {
 		);
 		expect(parsed.receipt.finalAnswer).toEqual({
 			mentionsFreshVerification: false,
+			mentionsNoFileChangeVerification: false,
 			matchedVerificationCommands: [],
 		});
 		rmSync(tmpProject, { recursive: true, force: true });

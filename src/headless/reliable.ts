@@ -81,6 +81,7 @@ export interface TaskEvidence {
 
 export interface FinalAnswerEvidence {
 	mentionsFreshVerification: boolean;
+	mentionsNoFileChangeVerification: boolean;
 	matchedVerificationCommands: string[];
 }
 
@@ -100,6 +101,7 @@ export interface ReliabilityReceipt {
 		completedTasksWithEvidence: number;
 		completedTasksWithVerification: number;
 		finalAnswerMentionsFreshVerification: boolean;
+		finalAnswerMentionsNoFileChangeVerification: boolean;
 		checkpoints: number;
 		durationMs: number;
 	};
@@ -207,6 +209,11 @@ export class ReliabilityRecorder {
 				`final answer did not name a fresh passing verification command: ${verificationAfterLastMutation.map((item) => item.command).join(", ")}`,
 			);
 		}
+		if (mutations.length === 0 && verification.length === 0 && completedTasks.length > 0) {
+			if (!finalAnswer.mentionsNoFileChangeVerification) {
+				failures.push("final answer did not state no file-change verification was needed");
+			}
+		}
 		if (completedTasksWithoutEvidence.length > 0) {
 			failures.push(
 				`completed task${completedTasksWithoutEvidence.length === 1 ? "" : "s"} lacked evidence: ${completedTasksWithoutEvidence.map((item) => item.id).join(", ")}`,
@@ -244,6 +251,7 @@ export class ReliabilityRecorder {
 				completedTasksWithEvidence: completedTasksWithEvidence.length,
 				completedTasksWithVerification: completedTasksWithVerification.length,
 				finalAnswerMentionsFreshVerification: finalAnswer.mentionsFreshVerification,
+				finalAnswerMentionsNoFileChangeVerification: finalAnswer.mentionsNoFileChangeVerification,
 				checkpoints: input.checkpoints.length,
 				durationMs: input.durationMs,
 			},
@@ -274,8 +282,24 @@ function collectFinalAnswerEvidence(finalText: string, freshVerification: Verifi
 		.filter((command) => mentionsCommand(finalText, command));
 	return {
 		mentionsFreshVerification: matchedVerificationCommands.length > 0,
+		mentionsNoFileChangeVerification: mentionsNoFileChangeVerification(finalText),
 		matchedVerificationCommands,
 	};
+}
+
+function mentionsNoFileChangeVerification(text: string): boolean {
+	const normalized = normalizeCommandText(text);
+	return (
+		/\bno\s+(?:file[- ]?change|code[- ]?change|source[- ]?change)\s+verification\s+(?:was\s+)?(?:needed|required|necessary)\b/.test(
+			normalized,
+		) ||
+		/\b(?:file|code|source|working tree)\s+changes?\s+(?:were\s+)?(?:not\s+)?(?:made|needed|required)\b[\s\S]*\bno\s+(?:verification|test|tests|check)\s+(?:was\s+)?(?:needed|required|necessary)\b/.test(
+			normalized,
+		) ||
+		/\bread[- ]only\b[\s\S]*\bno\s+(?:file[- ]?change\s+)?verification\s+(?:was\s+)?(?:needed|required|necessary)\b/.test(
+			normalized,
+		)
+	);
 }
 
 interface TaskLifecycleAnalysis {

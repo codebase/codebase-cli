@@ -127,6 +127,7 @@ if (/Context Guardian/i.test(prompt)) {
 					completedTasksWithEvidence: 5,
 					completedTasksWithVerification: 1,
 					finalAnswerMentionsFreshVerification: true,
+					finalAnswerMentionsNoFileChangeVerification: false,
 					checkpoints: 2,
 					durationMs: 123,
 				},
@@ -141,7 +142,11 @@ if (/Context Guardian/i.test(prompt)) {
 					},
 				],
 				verification: [{ toolCallId: "call-7", command: "npm test", exitCode: 0, order: 7 }],
-				finalAnswer: { mentionsFreshVerification: true, matchedVerificationCommands: ["npm test"] },
+				finalAnswer: {
+					mentionsFreshVerification: true,
+					mentionsNoFileChangeVerification: false,
+					matchedVerificationCommands: ["npm test"],
+				},
 				failures: [],
 				warnings: [],
 			}
@@ -237,6 +242,7 @@ if (/permission-denial recovery|Quarantine Cleanup|tmp\/quarantine/i.test(prompt
 					completedTasksWithEvidence: 4,
 					completedTasksWithVerification: 1,
 					finalAnswerMentionsFreshVerification: true,
+					finalAnswerMentionsNoFileChangeVerification: false,
 					checkpoints: 2,
 					durationMs: 123,
 				},
@@ -251,7 +257,11 @@ if (/permission-denial recovery|Quarantine Cleanup|tmp\/quarantine/i.test(prompt
 					},
 				],
 				verification: [{ toolCallId: "call-8", command: "npm test", exitCode: 0, order: 8 }],
-				finalAnswer: { mentionsFreshVerification: true, matchedVerificationCommands: ["npm test"] },
+				finalAnswer: {
+					mentionsFreshVerification: true,
+					mentionsNoFileChangeVerification: false,
+					matchedVerificationCommands: ["npm test"],
+				},
 				failures: [],
 				warnings: [],
 			}
@@ -333,6 +343,7 @@ const receipt = reliable
 				completedTasksWithEvidence: 1,
 				completedTasksWithVerification: 1,
 				finalAnswerMentionsFreshVerification: true,
+				finalAnswerMentionsNoFileChangeVerification: false,
 				checkpoints: 1,
 				durationMs: 123,
 			},
@@ -347,7 +358,11 @@ const receipt = reliable
 				},
 			],
 			verification: [{ toolCallId: "call-5", command: `GITHUB_TOKEN=${fakeSecret} npm test`, exitCode: 0, order: 5 }],
-			finalAnswer: { mentionsFreshVerification: true, matchedVerificationCommands: ["npm test"] },
+			finalAnswer: {
+				mentionsFreshVerification: true,
+				mentionsNoFileChangeVerification: false,
+				matchedVerificationCommands: ["npm test"],
+			},
 			failures: [],
 			warnings: [],
 		}

@@ -81,6 +81,17 @@ describe("runReceiptSubcommand", () => {
 		expect(markdown).toContain("## Next Actions");
 	});
 
+	it("shows read-only final proof without requiring command verification", async () => {
+		const record = store.save(makeReadOnlyInput());
+
+		expect(await run(["receipt", "show", record.id])).toBe(0);
+		const text = out.join("");
+		expect(text).toContain("Status: OK");
+		expect(text).toContain("Final answer: stated no file-change verification was needed");
+		expect(text).toContain("- [ok] Verification: no file mutations; command verification not required");
+		expect(text).toContain("- [ok] Final proof: final answer explained no file-change verification was needed");
+	});
+
 	it("prints full json", async () => {
 		const record = store.save(makeInput());
 		expect(await run(["receipt", "--json", record.id])).toBe(0);
@@ -136,6 +147,7 @@ function makeFailedInput(): Parameters<ReceiptStore["save"]>[0] {
 				...receipt.summary,
 				completedTasksWithVerification: 0,
 				finalAnswerMentionsFreshVerification: false,
+				finalAnswerMentionsNoFileChangeVerification: false,
 			},
 			taskEvidence: [
 				{
@@ -147,11 +159,42 @@ function makeFailedInput(): Parameters<ReceiptStore["save"]>[0] {
 					verification: [],
 				},
 			],
-			finalAnswer: { mentionsFreshVerification: false, matchedVerificationCommands: [] },
+			finalAnswer: {
+				mentionsFreshVerification: false,
+				mentionsNoFileChangeVerification: false,
+				matchedVerificationCommands: [],
+			},
 			failures: [
 				"no completed task captured verification evidence",
 				"final answer did not name a fresh passing verification command: npm test",
 			],
+		},
+	};
+}
+
+function makeReadOnlyInput(): Parameters<ReceiptStore["save"]>[0] {
+	return {
+		...makeInput(),
+		finalText: "Read README.md. No file-change verification was needed.",
+		receipt: {
+			...makeReceipt(),
+			summary: {
+				...makeReceipt().summary,
+				mutationCount: 0,
+				verificationCount: 0,
+				verificationAfterLastMutationCount: 0,
+				completedTasksWithVerification: 0,
+				finalAnswerMentionsFreshVerification: false,
+				finalAnswerMentionsNoFileChangeVerification: true,
+				checkpoints: 0,
+			},
+			mutations: [],
+			verification: [],
+			finalAnswer: {
+				mentionsFreshVerification: false,
+				mentionsNoFileChangeVerification: true,
+				matchedVerificationCommands: [],
+			},
 		},
 	};
 }
@@ -173,6 +216,7 @@ function makeReceipt(): ReliabilityReceipt {
 			completedTasksWithEvidence: 1,
 			completedTasksWithVerification: 1,
 			finalAnswerMentionsFreshVerification: true,
+			finalAnswerMentionsNoFileChangeVerification: false,
 			checkpoints: 1,
 			durationMs: 1234,
 		},
@@ -191,7 +235,11 @@ function makeReceipt(): ReliabilityReceipt {
 		tools: [],
 		mutations: [],
 		verification: [{ toolCallId: "call-1", command: "npm test", exitCode: 0, order: 1, startedAt: 1, endedAt: 2 }],
-		finalAnswer: { mentionsFreshVerification: true, matchedVerificationCommands: ["npm test"] },
+		finalAnswer: {
+			mentionsFreshVerification: true,
+			mentionsNoFileChangeVerification: false,
+			matchedVerificationCommands: ["npm test"],
+		},
 		checkpoints: [],
 		failures: [],
 		warnings: [],
