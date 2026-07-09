@@ -931,6 +931,11 @@ console.log(parseTimestamp('2024-01-01T00:00:00Z'), sortByDate([]));
 		expect(isVerificationCommand("grep -q 'hello world' src/index.ts && ! grep -q 'helo world' src/index.ts")).toBe(
 			true,
 		);
+		expect(
+			isVerificationCommand(
+				"test -f src/math.test.ts && grep -q 'describe(' src/math.test.ts && grep -q 'it(' src/math.test.ts && grep -q 'expect(' src/math.test.ts",
+			),
+		).toBe(true);
 		expect(isVerificationCommand("! grep -REn '\\bparseDate\\b' src/ && grep -REn '\\bparseTimestamp\\b' src/")).toBe(
 			true,
 		);
@@ -938,6 +943,9 @@ console.log(parseTimestamp('2024-01-01T00:00:00Z'), sortByDate([]));
 		expect(isVerificationCommand('npm test; echo "exit:$?"')).toBe(false);
 		expect(isVerificationCommand("which node && node --version && which tsc")).toBe(false);
 		expect(isVerificationCommand("grep -q 'hello world' src/index.ts || echo missing")).toBe(false);
+		expect(
+			isVerificationCommand("test -f src/math.test.ts && grep -q 'expect(' src/math.test.ts || echo missing"),
+		).toBe(false);
 		expect(isVerificationCommand("grep -rn 'parseDate' src/ 2>&1; echo \"---EXIT:$?\"")).toBe(false);
 		expect(isVerificationCommand("npx tsx -e \"console.log('hello')\"")).toBe(false);
 		expect(isVerificationCommand("node -e \"console.log('hello')\"")).toBe(false);
