@@ -13,7 +13,10 @@ const usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-function makeCtx(): { ctx: CommandContext; emits: string[] } {
+function makeCtx(overrides: { turnUsage?: typeof usage; contextWindow?: number; compactAt?: number } = {}): {
+	ctx: CommandContext;
+	emits: string[];
+} {
 	const emits: string[] = [];
 	const now = Date.now();
 	const messages = [
@@ -36,7 +39,7 @@ function makeCtx(): { ctx: CommandContext; emits: string[] } {
 		tools,
 		status: "idle",
 		usage,
-		turnUsage: usage,
+		turnUsage: overrides.turnUsage ?? usage,
 		model: { provider: "faux", id: "test-model", name: "Test Model" },
 	} satisfies ChatState;
 	const memoryRecords: MemoryRecord[] = [
@@ -67,11 +70,12 @@ function makeCtx(): { ctx: CommandContext; emits: string[] } {
 		state,
 		emit: (text: string) => emits.push(text),
 		bundle: {
-			model: { contextWindow: 10_000 },
+			model: { contextWindow: overrides.contextWindow ?? 10_000 },
 			agent: { state: { messages } },
-			compaction: { threshold: () => 7500 },
+			compaction: { threshold: () => overrides.compactAt ?? 7500 },
 			compactionMonitor: { current: () => ({ active: false, startedAt: null, messageCount: 0 }) },
 			toolContext: {
+				cwd: "/tmp/context-project",
 				tasks: {
 					list: () => [
 						{
@@ -106,9 +110,13 @@ describe("/context", () => {
 
 		expect(emits).toHaveLength(1);
 		expect(emits[0]).toContain("Context:");
+		expect(emits[0]).toContain("model:      Test Model");
+		expect(emits[0]).toContain("cwd:        /tmp/context-project");
 		expect(emits[0]).toContain("used:       1,200 / 10,000 tokens");
 		expect(emits[0]).toContain("estimate:   last model-reported input + streaming estimate");
 		expect(emits[0]).toContain("compacts:   at 7,500 tokens");
+		expect(emits[0]).toContain("pressure:   low; transcript still has plenty of room");
+		expect(emits[0]).toContain("why:        6,300 tokens until compaction");
 		expect(emits[0]).toContain("messages:   3 agent / 3 display");
 		expect(emits[0]).toContain("summaries:  1 compaction summary in context");
 		expect(emits[0]).toContain("tasks:      1/3 complete, 1 open, 1 cancelled");
@@ -119,6 +127,18 @@ describe("/context", () => {
 		expect(emits[0]).toContain("last summary: summary");
 		expect(emits[0]).toContain("Largest messages:");
 		expect(emits[0]).toContain("Use /context explain for details");
+	});
+
+	it("marks pressure high when close to compaction even below most of the model window", () => {
+		const highUsage = { ...usage, input: 7000, cacheRead: 200, totalTokens: 7225 };
+		const { ctx, emits } = makeCtx({ turnUsage: highUsage, compactAt: 7500 });
+
+		context.handler("", ctx);
+
+		expect(emits).toHaveLength(1);
+		expect(emits[0]).toContain("used:       7,200 / 10,000 tokens");
+		expect(emits[0]).toContain("pressure:   high; within 300 tokens of compaction");
+		expect(emits[0]).toContain("why:        300 tokens until compaction (96.0% of threshold used)");
 	});
 
 	it("explains context pressure, recent messages, tasks, compaction, and inline files", () => {
@@ -138,6 +158,8 @@ describe("/context", () => {
 		expect(emits).toHaveLength(1);
 		expect(emits[0]).toContain("Context explanation:");
 		expect(emits[0]).toContain("Budget:");
+		expect(emits[0]).toContain("model: Test Model");
+		expect(emits[0]).toContain("cwd: /tmp/context-project");
 		expect(emits[0]).toContain("Top context contributors:");
 		expect(emits[0]).toContain("tool calls: read_file");
 		expect(emits[0]).toContain("Recent messages still in context:");
@@ -153,6 +175,9 @@ describe("/context", () => {
 		expect(emits[0]).toContain("Attached/imported files detected:");
 		expect(emits[0]).toContain("src/app.ts");
 		expect(emits[0]).toContain("What is at risk:");
+		expect(emits[0]).toContain("Why pressure is this level:");
+		expect(emits[0]).toContain("Good next moves:");
+		expect(emits[0]).toContain("Reattach @files if exact contents matter after compaction.");
 	});
 
 	it("shows usage for unknown /context arguments", () => {

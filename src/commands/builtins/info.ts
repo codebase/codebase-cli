@@ -128,12 +128,16 @@ export const context: Command = {
 		const snapshot = contextSnapshot(ctx);
 		const lines = [
 			"Context:",
+			`  model:      ${snapshot.modelLabel}`,
+			...(snapshot.cwd ? [`  cwd:        ${snapshot.cwd}`] : []),
 			`  ${contextBar(snapshot.used, snapshot.window, snapshot.compactAt)}`,
 			`  used:       ${snapshot.used.toLocaleString()} / ${snapshot.window.toLocaleString()} tokens (${pct(snapshot.used, snapshot.window)})`,
 			`  estimate:   ${snapshot.usageReported ? "last model-reported input + streaming estimate" : "transcript estimate + static prompt budget"}`,
 			`  compacts:   at ${snapshot.compactAt.toLocaleString()} tokens (${pct(snapshot.compactAt, snapshot.window)})${
 				snapshot.compaction.active ? `; compacting ${snapshot.compaction.messageCount} messages now` : ""
 			}`,
+			`  pressure:   ${contextPressure(snapshot)}`,
+			`  why:        ${contextPressureReasons(snapshot).slice(0, 2).join("; ")}`,
 			`  messages:   ${snapshot.internal.length} agent / ${snapshot.display.length} display (${roleCounts(snapshot.internal)})`,
 			`  summaries:  ${snapshot.summaryCount} compaction summar${snapshot.summaryCount === 1 ? "y" : "ies"} in context`,
 			`  tasks:      ${snapshot.taskStats.completed}/${snapshot.taskStats.total} complete, ${snapshot.taskStats.open} open, ${snapshot.taskStats.cancelled} cancelled`,
@@ -169,6 +173,8 @@ function renderContextExplanation(ctx: ContextCommandContext): string {
 		"Context explanation:",
 		"",
 		"Budget:",
+		`  model: ${snapshot.modelLabel}`,
+		...(snapshot.cwd ? [`  cwd: ${snapshot.cwd}`] : []),
 		`  ${snapshot.used.toLocaleString()} / ${snapshot.window.toLocaleString()} tokens used (${pct(snapshot.used, snapshot.window)})`,
 		`  compaction threshold: ${snapshot.compactAt.toLocaleString()} tokens (${remainingToCompact > 0 ? `${remainingToCompact.toLocaleString()} left` : `${Math.abs(remainingToCompact).toLocaleString()} over`})`,
 		`  pressure: ${contextPressure(snapshot.used, snapshot.window, snapshot.compactAt)}`,
@@ -259,6 +265,12 @@ function renderContextExplanation(ctx: ContextCommandContext): string {
 	lines.push("");
 	lines.push("What is at risk:");
 	for (const risk of contextRisks(snapshot)) lines.push(`  ${risk}`);
+	lines.push("");
+	lines.push("Why pressure is this level:");
+	for (const reason of contextPressureReasons(snapshot)) lines.push(`  ${reason}`);
+	lines.push("");
+	lines.push("Good next moves:");
+	for (const action of contextActions(snapshot)) lines.push(`  ${action}`);
 	return lines.join("\n");
 }
 
@@ -267,6 +279,10 @@ function contextSnapshot(ctx: ContextCommandContext) {
 	const usageReported = Boolean(ctx.state.turnUsage && ctx.state.turnUsage.input + ctx.state.turnUsage.cacheRead > 0);
 	const window = ctx.bundle.model.contextWindow ?? 200_000;
 	const compactAt = ctx.bundle.compaction.threshold();
+	const cwd = stringProp(ctx.bundle.toolContext, "cwd");
+	const modelName = ctx.bundle.model.name || ctx.state.model?.name || ctx.bundle.model.id;
+	const modelProvider = ctx.bundle.model.provider || ctx.state.model?.provider || "unknown";
+	const modelId = ctx.bundle.model.id || ctx.state.model?.id || "unknown";
 	const internal = ctx.bundle.agent.state.messages;
 	const display = ctx.state.messages;
 	const tasks = ctx.bundle.toolContext.tasks.list();
@@ -289,6 +305,8 @@ function contextSnapshot(ctx: ContextCommandContext) {
 		usageReported,
 		window,
 		compactAt,
+		cwd,
+		modelLabel: `${modelName} (${modelProvider}/${modelId})`,
 		internal,
 		display,
 		tasks,
@@ -445,11 +463,22 @@ function recentMessages(
 	}));
 }
 
-function contextPressure(used: number, window: number, compactAt: number): string {
-	if (used >= compactAt) return "over compaction threshold; the next turn may summarize older context";
-	const ratio = window > 0 ? used / window : 0;
-	if (ratio >= 0.85) return "high; older details are close to being summarized";
-	if (ratio >= 0.6) return "moderate; large tool results and attachments are worth watching";
+function contextPressure(
+	input: number | ReturnType<typeof contextSnapshot>,
+	window?: number,
+	compactAt?: number,
+): string {
+	const used = typeof input === "number" ? input : input.used;
+	const resolvedWindow = typeof input === "number" ? (window ?? 0) : input.window;
+	const resolvedCompactAt = typeof input === "number" ? (compactAt ?? resolvedWindow) : input.compactAt;
+	const remaining = resolvedCompactAt - used;
+	const ratioToCompact = resolvedCompactAt > 0 ? used / resolvedCompactAt : 0;
+	if (used >= resolvedCompactAt) return "over compaction threshold; the next turn may summarize older context";
+	if (remaining <= Math.max(1_000, resolvedCompactAt * 0.05)) {
+		return `high; within ${remaining.toLocaleString()} tokens of compaction`;
+	}
+	if (ratioToCompact >= 0.85) return "high; close to compaction threshold";
+	if (ratioToCompact >= 0.6) return "moderate; large tool results and attachments are worth watching";
 	return "low; transcript still has plenty of room";
 }
 
@@ -480,6 +509,92 @@ function contextRisks(snapshot: ReturnType<typeof contextSnapshot>): string[] {
 		);
 	}
 	return risks;
+}
+
+function contextPressureReasons(snapshot: ReturnType<typeof contextSnapshot>): string[] {
+	const reasons: string[] = [];
+	const remaining = snapshot.compactAt - snapshot.used;
+	const ratioToCompact = snapshot.compactAt > 0 ? snapshot.used / snapshot.compactAt : 0;
+	if (remaining <= 0) {
+		reasons.push(`${Math.abs(remaining).toLocaleString()} tokens over the compaction threshold`);
+	} else {
+		reasons.push(
+			`${remaining.toLocaleString()} tokens until compaction (${pct(snapshot.used, snapshot.compactAt)} of threshold used)`,
+		);
+	}
+	if (snapshot.usageReported) {
+		reasons.push("estimate comes from provider-reported input/cache, so it reflects the last real model call");
+	} else {
+		reasons.push("estimate is local because no provider token report is available yet");
+	}
+	const largest = snapshot.largest[0];
+	if (largest && (largest.tokens >= 500 || ratioToCompact >= 0.6)) {
+		reasons.push(
+			`largest retained message is #${largest.index + 1} ${largest.role} at ${largest.tokens.toLocaleString()} est tokens`,
+		);
+	}
+	const toolResults = toolResultStats(snapshot.internal);
+	if (toolResults.count > 0) {
+		reasons.push(
+			`${toolResults.count} tool result message${toolResults.count === 1 ? "" : "s"} retained (${toolResults.tokens.toLocaleString()} est tokens)`,
+		);
+	}
+	if (snapshot.inlineFiles.length > 0) {
+		reasons.push(
+			`${snapshot.inlineFiles.length} inline/imported file${snapshot.inlineFiles.length === 1 ? "" : "s"} in transcript`,
+		);
+	}
+	if (snapshot.summaryCount > 0) {
+		reasons.push(
+			`${snapshot.summaryCount} prior compaction summar${snapshot.summaryCount === 1 ? "y" : "ies"} already retained`,
+		);
+	}
+	if (snapshot.relevantMemories.length > 0) {
+		reasons.push(
+			`${snapshot.relevantMemories.length} memory bod${snapshot.relevantMemories.length === 1 ? "y" : "ies"} match the latest prompt`,
+		);
+	}
+	return reasons;
+}
+
+function contextActions(snapshot: ReturnType<typeof contextSnapshot>): string[] {
+	const actions: string[] = [];
+	const ratioToCompact = snapshot.compactAt > 0 ? snapshot.used / snapshot.compactAt : 0;
+	if (snapshot.used >= snapshot.compactAt || ratioToCompact >= 0.85) {
+		actions.push("Run /compact before starting a long or delicate change.");
+	}
+	const toolResults = toolResultStats(snapshot.internal);
+	if (toolResults.count > 0) {
+		actions.push("Prefer a fresh narrow read/grep over relying on old bulky tool output.");
+	}
+	if (snapshot.inlineFiles.length > 0) {
+		actions.push("Reattach @files if exact contents matter after compaction.");
+	}
+	if (snapshot.relevantMemories.length > 0) {
+		actions.push("Use /memory or read_memory when a matched memory needs exact provenance or full body text.");
+	}
+	if (snapshot.openTasks.length > 0) {
+		actions.push("Keep active work in tasks; details buried only in chat are easier to lose during summarization.");
+	}
+	if (actions.length === 0) actions.push("No immediate action needed; context pressure is low.");
+	return actions;
+}
+
+function toolResultStats(messages: readonly ContextMessage[]): { count: number; tokens: number } {
+	let count = 0;
+	let tokens = 0;
+	for (const message of messages) {
+		if (message.role !== "toolResult") continue;
+		count++;
+		tokens += Math.round(messageChars(message) / 4);
+	}
+	return { count, tokens };
+}
+
+function stringProp(value: unknown, key: string): string | null {
+	if (!value || typeof value !== "object") return null;
+	const out = (value as Record<string, unknown>)[key];
+	return typeof out === "string" && out.trim() ? out : null;
 }
 
 function detectInlineFiles(messages: readonly ContextMessage[]): string[] {
