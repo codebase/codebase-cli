@@ -996,7 +996,7 @@ console.log(parseTimestamp('2024-01-01T00:00:00Z'), sortByDate([]));
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
-	it("reliable json mode warns when active tasks overlap", async () => {
+	it("reliable json mode fails when active tasks overlap", async () => {
 		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-overlap-"));
 		writeFileSync(
 			join(tmpProject, "package.json"),
@@ -1035,14 +1035,16 @@ console.log(parseTimestamp('2024-01-01T00:00:00Z'), sortByDate([]));
 			configOverride: { model, apiKey: "faux-key", source: "byok" },
 			...write,
 		});
-		expect(exitCode).toBe(0);
+		expect(exitCode).toBe(1);
 		const parsed = JSON.parse(capture.stdout.trim()) as {
 			ok: boolean;
+			code: string;
 			receipt: { failures: string[]; warnings: string[] };
 		};
-		expect(parsed.ok).toBe(true);
-		expect(parsed.receipt.failures).toEqual([]);
-		expect(parsed.receipt.warnings).toContain("multiple tasks were in_progress at once: task-1, task-2");
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("multiple tasks were in_progress at once: task-1, task-2");
+		expect(parsed.receipt.warnings).not.toContain("multiple tasks were in_progress at once: task-1, task-2");
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 

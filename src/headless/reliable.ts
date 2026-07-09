@@ -218,7 +218,7 @@ export class ReliabilityRecorder {
 			);
 		}
 		if (lifecycle.activeOverlaps.length > 0) {
-			warnings.push(`multiple tasks were in_progress at once: ${lifecycle.activeOverlaps[0]?.join(", ")}`);
+			failures.push(`multiple tasks were in_progress at once: ${lifecycle.activeOverlaps[0]?.join(", ")}`);
 		}
 		if (maskedVerificationAttempts.length > 0) {
 			warnings.push(
