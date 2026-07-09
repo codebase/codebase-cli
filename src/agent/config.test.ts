@@ -73,6 +73,25 @@ describe("resolveConfig", () => {
 		expect(config.model.contextWindow).toBe(131_072);
 	});
 
+	it("treats provider=codebase model overrides as proxy-routed model ids", () => {
+		credentials.save({
+			accessToken: "oauth-token",
+			scopes: ["inference"],
+			source: "codebase",
+		});
+
+		const config = resolveConfig({
+			env: {},
+			credentials,
+			modelOverride: { provider: "codebase", modelId: "deepseek-r1:14b" },
+		});
+
+		expect(config.source).toBe("proxy");
+		expect(config.model.provider).toBe("codebase");
+		expect(config.model.id).toBe("deepseek-r1:14b");
+		expect(config.model.baseUrl).toBe("https://codebase.design/api/inference");
+	});
+
 	it("a scan-detected context window overrides the template default", () => {
 		credentials.save({
 			accessToken: "none",

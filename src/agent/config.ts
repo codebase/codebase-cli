@@ -198,7 +198,10 @@ function buildProxiedConfig(
 	override?: { provider?: string; modelId: string },
 ): ResolvedConfig | null {
 	// Runtime override (set via /model) wins over env vars wins over the default.
-	const explicitProvider = (override?.provider ?? env.CODEBASE_PROVIDER) as KnownProvider | undefined;
+	const rawProvider = override?.provider ?? env.CODEBASE_PROVIDER;
+	const explicitProvider = (rawProvider && rawProvider !== "codebase" ? rawProvider : undefined) as
+		| KnownProvider
+		| undefined;
 	const explicitModel = override?.modelId ?? env.CODEBASE_MODEL;
 	const proxyBase = (env.CODEBASE_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE).replace(/\/+$/, "");
 

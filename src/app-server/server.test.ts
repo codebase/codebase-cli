@@ -1,7 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CredentialsStore } from "../auth/credentials.js";
+import { ConfigStore } from "../config/store.js";
 import { runAppServer } from "./server.js";
 
 /**
@@ -24,7 +29,7 @@ interface Harness {
 	close: () => Promise<number>;
 }
 
-function makeHarness(opts: { model: Model<string>; autoApprove?: boolean }): Harness {
+function makeHarness(opts: { model?: Model<string>; autoApprove?: boolean; cwd?: string }): Harness {
 	const stdin = new PassThrough();
 	const stdout = new PassThrough();
 	const stderr = new PassThrough();
@@ -51,7 +56,8 @@ function makeHarness(opts: { model: Model<string>; autoApprove?: boolean }): Har
 		stdout,
 		stderr,
 		autoApprove: opts.autoApprove ?? true,
-		configOverride: { model: opts.model, apiKey: "faux-key", source: "byok" },
+		cwd: opts.cwd,
+		configOverride: opts.model ? { model: opts.model, apiKey: "faux-key", source: "byok" } : undefined,
 	});
 
 	const send = (cmd: Record<string, unknown>): void => {
@@ -87,8 +93,18 @@ function makeHarness(opts: { model: Model<string>; autoApprove?: boolean }): Har
 describe("runAppServer", () => {
 	let faux: ReturnType<typeof registerFauxProvider>;
 	let model: Model<string>;
+	let home: string;
+	let cwd: string;
+	let prevHome: string | undefined;
+	let prevNoAutoMemory: string | undefined;
 
 	beforeEach(() => {
+		prevHome = process.env.HOME;
+		prevNoAutoMemory = process.env.CODEBASE_NO_AUTO_MEMORY;
+		home = mkdtempSync(join(tmpdir(), "app-server-home-"));
+		cwd = mkdtempSync(join(tmpdir(), "app-server-cwd-"));
+		process.env.HOME = home;
+		process.env.CODEBASE_NO_AUTO_MEMORY = "1";
 		faux = registerFauxProvider({
 			models: [
 				{
@@ -108,17 +124,23 @@ describe("runAppServer", () => {
 
 	afterEach(() => {
 		faux.unregister();
+		rmSync(cwd, { recursive: true, force: true });
+		rmSync(home, { recursive: true, force: true });
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
+		if (prevNoAutoMemory === undefined) delete process.env.CODEBASE_NO_AUTO_MEMORY;
+		else process.env.CODEBASE_NO_AUTO_MEMORY = prevNoAutoMemory;
 	});
 
 	it("emits server_ready on startup", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		const ready = await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		expect(ready).toBeTruthy();
 		await h.close();
 	});
 
 	it("rejects commands before initialize", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "1", type: "get_state" });
 		const err = await h.waitFor((m) => m.type === "response" && m.id === "1");
@@ -128,7 +150,7 @@ describe("runAppServer", () => {
 	});
 
 	it("initializes successfully and returns model info", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		const resp = await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -141,7 +163,7 @@ describe("runAppServer", () => {
 
 	it("routes a prompt through the agent and streams events back", async () => {
 		faux.setResponses([fauxAssistantMessage("response from faux")]);
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -159,7 +181,7 @@ describe("runAppServer", () => {
 	});
 
 	it("get_state reports cwd, model, status, message count", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -176,7 +198,7 @@ describe("runAppServer", () => {
 
 	it("rejects a second prompt while one is in flight", async () => {
 		faux.setResponses([fauxAssistantMessage("first response")]);
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -197,7 +219,7 @@ describe("runAppServer", () => {
 			}),
 			fauxAssistantMessage("Permission denied, so I stopped."),
 		]);
-		const h = makeHarness({ model, autoApprove: false });
+		const h = makeHarness({ model, autoApprove: false, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -222,7 +244,7 @@ describe("runAppServer", () => {
 	});
 
 	it("rejects malformed JSON with a parse error", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.stdin.write("not-json\n");
 		const err = await h.waitFor((m) => m.type === "response" && m.command === "parse");
@@ -231,15 +253,29 @@ describe("runAppServer", () => {
 		await h.close();
 	});
 
-	it("set_model returns the not-yet-supported error", async () => {
-		const h = makeHarness({ model });
+	it("set_model switches the app-server bundle and persists the preference", async () => {
+		new CredentialsStore().save({
+			accessToken: "oauth-token",
+			scopes: ["inference"],
+			source: "codebase",
+		});
+		const h = makeHarness({ cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
-		await h.waitFor((m) => m.type === "response" && m.id === "init");
-		h.send({ id: "m", type: "set_model", provider: "anthropic", modelId: "claude" });
+		const init = await h.waitFor((m) => m.type === "response" && m.id === "init");
+		expect((init.data as { model: { id: string } }).model.id).toBe("d4f");
+		h.send({ id: "m", type: "set_model", provider: "codebase", modelId: "deepseek-r1:14b" });
 		const resp = await h.waitFor((m) => m.type === "response" && m.id === "m");
-		expect(resp.success).toBe(false);
-		expect(resp.error).toMatch(/not yet supported/i);
+		expect(resp.success).toBe(true);
+		expect((resp.data as { id: string; provider: string }).id).toBe("deepseek-r1:14b");
+		expect((resp.data as { id: string; provider: string }).provider).toBe("codebase");
+		h.send({ id: "s2", type: "get_state" });
+		const state = await h.waitFor((m) => m.type === "response" && m.id === "s2");
+		expect((state.data as { model: { id: string } }).model.id).toBe("deepseek-r1:14b");
+		expect(new ConfigStore({ home, cwd }).preferredModel()).toEqual({
+			provider: "codebase",
+			modelId: "deepseek-r1:14b",
+		});
 		await h.close();
 	});
 });
