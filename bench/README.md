@@ -75,7 +75,7 @@ that temp home when present, so OAuth/BYOK runs still work. To deliberately use
 your real home directory:
 
 ```sh
-node bench/run.mjs --scenario all --isolate-home false
+codebase bench run --scenario all --isolate-home false
 ```
 
 ## Run
@@ -83,74 +83,79 @@ node bench/run.mjs --scenario all --isolate-home false
 Single scenario, single run:
 
 ```sh
-node bench/run.mjs --scenario fix-typo
+codebase bench run --scenario fix-typo
 ```
 
 All scenarios, N=3 each:
 
 ```sh
-node bench/run.mjs --scenario all --runs 3
+codebase bench run --scenario all --runs 3
 ```
 
 Public receipt sweep (requires task lifecycle + passing verification evidence):
 
 ```sh
-node bench/run.mjs --scenario all --runs 3 --reliable true
+codebase bench run --scenario all --runs 3 --reliable true
 ```
 
 Pin a model (overrides auto-detect):
 
 ```sh
-node bench/run.mjs --scenario fix-typo --model claude-sonnet-4-6
+codebase bench run --scenario fix-typo --model claude-sonnet-4-6
 # or via env:
 CODEBASE_PROVIDER=anthropic CODEBASE_MODEL=claude-sonnet-4-6 \
-  node bench/run.mjs --scenario all
+  codebase bench run --scenario all
 ```
 
 Run with a custom CLI binary (e.g. an installed npm version vs. the
 local `dist/`):
 
 ```sh
-node bench/run.mjs --cli "$(which codebase)" --scenario all
+codebase bench run --cli "$(which codebase)" --scenario all
 ```
 
 Keep the tmp project directories for inspection:
 
 ```sh
-node bench/run.mjs --scenario fix-typo --keep-tmp true
+codebase bench run --scenario fix-typo --keep-tmp true
 ```
 
 Pin a stable sweep id (so subsequent runs append to the same JSONL):
 
 ```sh
-node bench/run.mjs --scenario all --sweep-id 2026-05-09-baseline
+codebase bench run --scenario all --sweep-id 2026-05-09-baseline
 ```
+
+When invoked as `codebase bench`, results are written under
+`./bench/results/<sweep-id>` in the directory where you run the command. Direct
+`node bench/run.mjs` usage keeps the source-checkout default of
+`bench/results/<sweep-id>`. Set `CODEBASE_BENCH_RESULTS_DIR` to override both.
 
 ## Aggregate
 
 After a sweep finishes:
 
 ```sh
-node bench/aggregate.mjs <sweep-id>
+codebase bench report <sweep-id>
 ```
 
 Compare two sweeps (A/B):
 
 ```sh
-node bench/aggregate.mjs sweep-control sweep-treatment
+codebase bench report sweep-control sweep-treatment
 ```
 
 Write the report into the project-wide benchmarks directory:
 
 ```sh
-node bench/aggregate.mjs sweep-foo \
+codebase bench report sweep-foo \
   --out ../docs/benchmarks/2026-05-09-foo.md
 ```
 
 Also write machine-readable launch metrics for the web app or docs pipeline:
 
 ```sh
-node bench/aggregate.mjs sweep-foo \
+codebase bench report sweep-foo \
   --out ../docs/benchmarks/2026-05-09-foo.md \
   --json-out ../docs/benchmarks/2026-05-09-foo.json
 ```
@@ -188,8 +193,8 @@ For launch-facing claims, prefer:
 ```sh
 npm run build
 sweep_id=launch-$(date +%Y-%m-%d)
-node bench/run.mjs --scenario all --runs 3 --reliable true --sweep-id "$sweep_id"
-node bench/aggregate.mjs "$sweep_id" \
+codebase bench run --scenario all --runs 3 --reliable true --sweep-id "$sweep_id"
+codebase bench report "$sweep_id" \
   --out "docs/benchmarks/$sweep_id.md" \
   --json-out "docs/benchmarks/$sweep_id.json"
 ```

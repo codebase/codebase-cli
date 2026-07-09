@@ -31,6 +31,7 @@
 	"main": "./dist/cli.js",
 	"files": [
 		"bin/",
+		"bench/",
 		"dist/",
 		"LICENSE",
 		"README.md"

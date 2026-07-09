@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render } from "ink";
 import { runAppServer } from "./app-server/server.js";
 import { runAuthSubcommand } from "./auth/cli.js";
@@ -18,6 +22,9 @@ import { VERSION } from "./version.js";
 
 // Auto-load .env files before any subsystem reads process.env.
 loadDotEnv();
+
+const CLI_MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = dirname(CLI_MODULE_DIR);
 
 // Module-level consts referenced by `parseRunArgs`. Declared BEFORE
 // the dispatch block below — `const` lives in the temporal dead zone
@@ -118,6 +125,8 @@ if (argv[0] === "--version" || argv[0] === "-v") {
 	runDirectorSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "receipt" || argv[0] === "receipts") {
 	runReceiptSubcommand(argv).then((code) => process.exit(code));
+} else if (argv[0] === "bench") {
+	runBenchSubcommand(argv).then((code) => process.exit(code));
 } else if (argv[0] === "app-server") {
 	if (argv.slice(1).some((a) => a === "--help" || a === "-h")) {
 		printAppServerHelp();
@@ -287,6 +296,10 @@ function printHelp(): void {
 			"                               one-shot build/change in a trusted workspace",
 			"  codebase receipt             inspect the latest reliable-mode receipt",
 			"  codebase receipt list        list saved reliable-mode receipts",
+			"  codebase bench run --scenario all --reliable true",
+			"                               run reproducible agent benchmarks",
+			"  codebase bench report <sweep-id>",
+			"                               render benchmark scorecards",
 			"  codebase help <topic>        show CLI or TUI feature help",
 			"  codebase auth login          sign in via codebase.design browser OAuth",
 			"  codebase auth logout         revoke the current session",
@@ -352,7 +365,7 @@ function printHelpTopics(): void {
 	process.stdout.write(
 		[
 			"Help topics:",
-			"  auth, run, auto, project, web-build, ssh, usage, doctor, mcp, receipt, director, app-server",
+			"  auth, run, auto, project, web-build, ssh, usage, doctor, mcp, receipt, bench, director, app-server",
 			"  memory, permissions, agents, skills, tournament, context, model, effort, rewind",
 			"",
 			"Examples:",
@@ -401,6 +414,9 @@ function printTopicHelp(rawTopic: string): boolean {
 		case "receipt":
 		case "receipts":
 			printReceiptHelpSummary();
+			return true;
+		case "bench":
+			printBenchHelp();
 			return true;
 		case "director":
 		case "directors":
@@ -576,6 +592,89 @@ function printReceiptHelpSummary(): void {
 			"",
 		].join("\n"),
 	);
+}
+
+function printBenchHelp(): void {
+	process.stdout.write(
+		[
+			"usage: codebase bench <run|report> [options]",
+			"",
+			"Run reproducible end-to-end CLI agent benchmarks and generate public scorecards.",
+			"",
+			"Common commands:",
+			"  codebase bench run --scenario fix-typo",
+			"  codebase bench run --scenario all --runs 3 --reliable true",
+			"  codebase bench report <sweep-id>",
+			"  codebase bench report <sweep-id> --out docs/benchmarks/<id>.md --json-out docs/benchmarks/<id>.json",
+			"",
+			"Run options:",
+			"  --scenario NAME|all     scenario to run (default: all)",
+			"  --runs N                runs per scenario (default: 1)",
+			"  --reliable true         require reliable-mode receipts",
+			"  --cli PATH              benchmark a specific codebase binary",
+			"  --model MODEL           request a specific model id",
+			"  --sweep-id ID           stable results id under ./bench/results/",
+			"  --isolate-home false    use your real HOME instead of a copied temp HOME",
+			"  --keep-tmp true         keep temporary projects for inspection",
+			"",
+			"Before running real sweeps, build once and sign in or provide an API key:",
+			"  npm run build",
+			"  codebase auth login",
+			"",
+			"More:",
+			"  codebase bench run --help",
+			"  codebase bench report --help",
+			"",
+		].join("\n"),
+	);
+}
+
+async function runBenchSubcommand(args: string[]): Promise<number> {
+	const subcommand = args[1];
+	if (!subcommand || subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
+		printBenchHelp();
+		return 0;
+	}
+	if (subcommand === "run") {
+		return spawnBenchScript("run.mjs", args.slice(2));
+	}
+	if (subcommand === "report" || subcommand === "aggregate") {
+		return spawnBenchScript("aggregate.mjs", args.slice(2));
+	}
+	process.stderr.write(`unknown bench command: ${subcommand}\nRun \`codebase bench --help\`.\n`);
+	return 2;
+}
+
+function spawnBenchScript(scriptName: string, args: string[]): Promise<number> {
+	const scriptPath = join(PACKAGE_ROOT, "bench", scriptName);
+	if (!existsSync(scriptPath)) {
+		process.stderr.write(
+			[
+				`benchmark harness is not present at ${scriptPath}`,
+				"Reinstall codebase-cli or run benchmarks from a source checkout.",
+				"",
+			].join("\n"),
+		);
+		return Promise.resolve(1);
+	}
+	return new Promise((resolveRun) => {
+		const env = {
+			...process.env,
+			CODEBASE_BENCH_RESULTS_DIR: process.env.CODEBASE_BENCH_RESULTS_DIR ?? join(process.cwd(), "bench", "results"),
+		};
+		const child = spawn(process.execPath, [scriptPath, ...args], {
+			cwd: process.cwd(),
+			env,
+			stdio: "inherit",
+		});
+		child.on("error", (err) => {
+			process.stderr.write(`error: failed to launch benchmark harness: ${err.message}\n`);
+			resolveRun(1);
+		});
+		child.on("close", (code) => {
+			resolveRun(code ?? 1);
+		});
+	});
 }
 
 function printDirectorHelpSummary(): void {

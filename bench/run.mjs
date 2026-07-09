@@ -16,19 +16,19 @@
  *
  * Usage:
  *   # Single run, default scenario, current model from env
- *   node bench/run.mjs --scenario fix-typo
+ *   codebase bench run --scenario fix-typo
  *
  *   # All scenarios × N=3
- *   node bench/run.mjs --scenario all --runs 3
+ *   codebase bench run --scenario all --runs 3
  *
  *   # Specific model
- *   node bench/run.mjs --scenario fix-typo --model claude-sonnet-4-6
+ *   codebase bench run --scenario fix-typo --model claude-sonnet-4-6
  *
  *   # Custom CLI path (default: dist/cli.js, falls back to bin/codebase)
- *   node bench/run.mjs --cli /usr/local/bin/codebase --scenario all
+ *   codebase bench run --cli /usr/local/bin/codebase --scenario all
  *
  *   # Public receipt sweep: requires reliable-mode task + verification evidence
- *   node bench/run.mjs --scenario all --reliable true
+ *   codebase bench run --scenario all --reliable true
  *
  * Requires an LLM API key in env (ANTHROPIC_API_KEY, OPENAI_API_KEY,
  * etc.) OR a saved credential at ~/.codebase/credentials.json. The
@@ -55,11 +55,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, "..");
 const SCENARIOS_DIR = join(__dirname, "scenarios");
-const RESULTS_DIR = join(__dirname, "results");
+const RESULTS_DIR = process.env.CODEBASE_BENCH_RESULTS_DIR
+	? resolve(process.env.CODEBASE_BENCH_RESULTS_DIR)
+	: join(__dirname, "results");
 
 // ─── argv ─────────────────────────────────────────────────────────────
 
-const args = parseArgs(process.argv.slice(2));
+const rawArgv = process.argv.slice(2);
+if (rawArgv.includes("--help") || rawArgv.includes("-h")) {
+	printHelp();
+	process.exit(0);
+}
+
+const args = parseArgs(rawArgv);
 const cliPath = resolveCliPath(args.cli);
 const scenarioName = args.scenario ?? "all";
 const runs = positiveInt(args.runs, 1);
@@ -108,7 +116,7 @@ for (const name of scenarios) {
 
 console.log("");
 console.log(`done. JSONL → ${jsonlPath}`);
-console.log(`generate report: node bench/aggregate.mjs ${sweepId}`);
+console.log(`generate report: codebase bench report ${sweepId}`);
 process.exit(allOk ? 0 : 1);
 
 // ─── one run ──────────────────────────────────────────────────────────
@@ -523,4 +531,33 @@ function parseArgs(argv) {
 function positiveInt(value, fallback) {
 	const n = Number.parseInt(value, 10);
 	return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function printHelp() {
+	process.stdout.write(
+		[
+			"usage: codebase bench run [options]",
+			"       node bench/run.mjs [options]",
+			"",
+			"Run fixed end-to-end coding scenarios through the Codebase CLI and write JSONL results.",
+			"",
+			"Options:",
+			"  --scenario NAME|all     scenario to run (default: all)",
+			"  --runs N                runs per scenario (default: 1)",
+			"  --reliable true         require reliable-mode task and verification receipts",
+			"  --cli PATH              benchmark a specific codebase CLI binary",
+			"  --model MODEL           request a specific model id",
+			"  --sweep-id ID           stable results id under ./bench/results/",
+			"  --timeout MS            per-agent-run timeout (default: 300000)",
+			"  --isolate-home false    use your real HOME instead of a copied temp HOME",
+			"  --keep-tmp true         keep temporary projects for inspection",
+			"  --help, -h              show this help",
+			"",
+			"Examples:",
+			"  codebase bench run --scenario fix-typo",
+			"  codebase bench run --scenario all --runs 3 --reliable true",
+			"  codebase bench run --cli \"$(which codebase)\" --scenario all",
+			"",
+		].join("\n"),
+	);
 }

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -115,6 +116,41 @@ describe("bench run", () => {
 		});
 		expect(run.toolNames).not.toContain("read_memory");
 		expect(run.verifyStdout).toContain("memory retrieval ok");
+	});
+
+	it("honors CODEBASE_BENCH_RESULTS_DIR for packaged CLI wrappers", () => {
+		sweepId = `run-results-dir-test-${process.pid}-${Date.now()}`;
+		const root = mkdtempSync(join(tmpdir(), "codebase-bench-results-dir-"));
+		const externalResultsDir = join(root, "bench", "results");
+
+		try {
+			const stdout = execFileSync(
+				process.execPath,
+				[
+					runPath,
+					"--scenario",
+					"fix-typo",
+					"--runs",
+					"1",
+					"--cli",
+					fakeCliPath,
+					"--sweep-id",
+					sweepId,
+				],
+				{
+					cwd: repoRoot,
+					encoding: "utf8",
+					env: { ...process.env, CODEBASE_BENCH_RESULTS_DIR: externalResultsDir },
+				},
+			);
+
+			expect(stdout).toContain(`results:   ${join(externalResultsDir, sweepId, "runs.jsonl")}`);
+			const jsonl = readFileSync(join(externalResultsDir, sweepId, "runs.jsonl"), "utf8").trim();
+			const run = JSON.parse(jsonl);
+			expect(run).toMatchObject({ scenario: "fix-typo", ok: true, verifyPassed: true });
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("runs the context-continuity scenario through setup memory and verifier checks", () => {

@@ -57,6 +57,18 @@ Inspect the latest one with `codebase receipt`, list saved runs with
 `codebase receipt list`, or export markdown with
 `codebase receipt export --out receipt.md`.
 
+For launch-proof benchmark sweeps:
+
+```sh
+codebase bench run --scenario all --runs 3 --reliable true
+codebase bench report <sweep-id> --out docs/benchmarks/<sweep-id>.md --json-out docs/benchmarks/<sweep-id>.json
+```
+
+Benchmark rows include CLI version, repo commit/dirty state, Node version,
+isolated-HOME status, receipt health, task evidence, verification evidence, tool
+calls, cost, and redacted public artifacts. The packaged command writes sweep
+results under `./bench/results/<sweep-id>` in the directory where you run it.
+
 ## Pick your LLM
 
 **Bring your own key** — Anthropic, OpenAI, Groq, OpenRouter, Mistral, Ollama, or any OpenAI-compatible endpoint:

@@ -6,16 +6,16 @@
  *
  * Usage:
  *   # Single sweep
- *   node bench/aggregate.mjs sweep-2026-05-09T01-23-45
+ *   codebase bench report sweep-2026-05-09T01-23-45
  *
  *   # Multiple sweeps to compare arms (control / treatment)
- *   node bench/aggregate.mjs sweep-control sweep-treatment
+ *   codebase bench report sweep-control sweep-treatment
  *
  *   # Write to a file
- *   node bench/aggregate.mjs sweep-foo --out docs/benchmarks/2026-05-09-foo.md
+ *   codebase bench report sweep-foo --out docs/benchmarks/2026-05-09-foo.md
  *
  *   # Also write machine-readable launch metrics
- *   node bench/aggregate.mjs sweep-foo --out docs/benchmarks/foo.md --json-out docs/benchmarks/foo.json
+ *   codebase bench report sweep-foo --out docs/benchmarks/foo.md --json-out docs/benchmarks/foo.json
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -24,7 +24,9 @@ import { redactBenchmarkRecord, SECRET_REDACTION_RULESET_VERSION } from "./redac
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const RESULTS_DIR = join(__dirname, "results");
+const RESULTS_DIR = process.env.CODEBASE_BENCH_RESULTS_DIR
+	? resolve(process.env.CODEBASE_BENCH_RESULTS_DIR)
+	: join(__dirname, "results");
 const CAPABILITY_DIMENSIONS = [
 	{
 		label: "core edits",
@@ -56,7 +58,13 @@ const CAPABILITY_DIMENSIONS = [
 	},
 ];
 
-const args = parseArgs(process.argv.slice(2));
+const rawArgv = process.argv.slice(2);
+if (rawArgv.includes("--help") || rawArgv.includes("-h")) {
+	printHelp();
+	process.exit(0);
+}
+
+const args = parseArgs(rawArgv);
 const positional = args._;
 const outPath = args.out ? resolve(args.out) : null;
 const jsonOutPath = args["json-out"] ? resolve(args["json-out"]) : null;
@@ -377,7 +385,7 @@ function renderReceiptScorecard(runs) {
 		return [
 			"### Reliability receipts",
 			"",
-			"No reliable-mode receipts in this sweep. Run `node bench/run.mjs --scenario all --reliable true` to collect them.",
+			"No reliable-mode receipts in this sweep. Run `codebase bench run --scenario all --reliable true` to collect them.",
 		];
 	}
 	const grouped = groupBy(runs, (r) => r.scenario);
@@ -688,4 +696,25 @@ function parseArgs(argv) {
 		}
 	}
 	return out;
+}
+
+function printHelp() {
+	process.stdout.write(
+		[
+			"usage: codebase bench report <sweep-id> [<sweep-id> ...] [--out path.md] [--json-out path.json]",
+			"       node bench/aggregate.mjs <sweep-id> [<sweep-id> ...] [--out path.md] [--json-out path.json]",
+			"",
+			"Render benchmark JSONL sweeps into markdown reports and machine-readable scorecards.",
+			"",
+			"Options:",
+			"  --out PATH        write markdown report instead of printing to stdout",
+			"  --json-out PATH   also write a JSON launch scorecard",
+			"  --help, -h        show this help",
+			"",
+			"Examples:",
+			"  codebase bench report sweep-2026-05-09T01-23-45",
+			"  codebase bench report control treatment --out docs/benchmarks/compare.md",
+			"",
+		].join("\n"),
+	);
 }
