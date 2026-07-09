@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PermissionStore } from "../../permissions/store.js";
 import type { CommandContext } from "../types.js";
 import { permissions } from "./permissions.js";
 
@@ -17,10 +18,7 @@ describe("/permissions", () => {
 			emit: (text: string) => emits.push(text),
 			bundle: {
 				toolContext: { cwd },
-				permissions: {
-					listTrusted: () => ({ tools: [], shellPrefixes: [] }),
-					setRules: vi.fn(),
-				},
+				permissions: new PermissionStore(),
 			},
 		} as unknown as CommandContext;
 	});
@@ -75,9 +73,37 @@ describe("/permissions", () => {
 		expect(emits[0]).not.toContain("/permissions allow");
 	});
 
+	it("simulates a multi-command shell plan", () => {
+		permissions.handler("simulate git status --short && sudo apt update; rm -rf /", ctx);
+
+		expect(emits).toHaveLength(1);
+		expect(emits[0]).toContain("Permission simulation:");
+		expect(emits[0]).toContain("1. ALLOW low [built-in-read-only] git status --short");
+		expect(emits[0]).toContain("2. PROMPT high [prompt] sudo apt update");
+		expect(emits[0]).toContain("trust scope: shell:apt update*");
+		expect(emits[0]).toContain("safer path:");
+		expect(emits[0]).toContain("3. BLOCK high [shell-validator] rm -rf /");
+		expect(emits[0]).toContain("no allow rule is offered");
+		expect(emits[0]).toContain("Summary: allow 1, prompt 1, block 1.");
+	});
+
+	it("does not split simulator commands inside quotes", () => {
+		permissions.handler('simulate echo "a && b"; npm install', ctx);
+
+		expect(emits[0]).toContain('1. ALLOW low [built-in-read-only] echo "a && b"');
+		expect(emits[0]).toContain("2. PROMPT medium [prompt] npm install");
+		expect(emits[0]).toContain("Summary: allow 1, prompt 1, block 0.");
+	});
+
 	it("shows usage for missing shell suggestions", () => {
 		permissions.handler("suggest", ctx);
 
 		expect(emits).toEqual(["Usage: /permissions suggest <shell command>"]);
+	});
+
+	it("shows usage for missing shell simulations", () => {
+		permissions.handler("simulate", ctx);
+
+		expect(emits).toEqual(["Usage: /permissions simulate <shell command plan>"]);
 	});
 });

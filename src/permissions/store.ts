@@ -97,6 +97,25 @@ export interface PermissionRequest {
 	risk: "low" | "medium" | "high";
 }
 
+export interface PermissionPreview {
+	tool: string;
+	summary: string;
+	decision: "allow" | "prompt" | "block";
+	source:
+		| "deny-rule"
+		| "shell-validator"
+		| "session-trust"
+		| "built-in-read-only"
+		| "allow-rule"
+		| "auto-approve"
+		| "prompt";
+	reason?: string;
+	detail?: string;
+	trustScope?: string;
+	guidance?: readonly string[];
+	risk: "low" | "medium" | "high";
+}
+
 /**
  * Tools that never need a permission prompt. The full read-only set
  * (audit-flagged "read-only allowlist" from permission.go) plus the task
@@ -248,6 +267,70 @@ export class PermissionStore {
 		});
 	}
 
+	/** Read-only preview of the same policy path evaluate() uses, without queuing a prompt. */
+	preview(toolName: string, args: unknown): PermissionPreview {
+		let shellPrefix: string | undefined;
+		if (toolName === "shell") {
+			const cmd = (args as { command?: string } | undefined)?.command;
+			if (typeof cmd === "string") shellPrefix = commandPrefix(cmd) ?? undefined;
+			const verdict = validateShellCommand(typeof cmd === "string" ? cmd : "");
+			if (verdict.verdict === "block") {
+				return previewFor(toolName, args, shellPrefix, {
+					decision: "block",
+					source: "shell-validator",
+					risk: "high",
+					reason: reasonFor(toolName, args),
+					guidance: guidanceFor(toolName, args, shellPrefix),
+				});
+			}
+		}
+
+		if (this.matchDeny(toolName, args)) {
+			return previewFor(toolName, args, shellPrefix, {
+				decision: "block",
+				source: "deny-rule",
+				risk: riskFor(toolName, args),
+				reason: "Blocked by a persisted deny rule.",
+			});
+		}
+
+		const autoSource = this.autoAllowSource(toolName, args);
+		if (autoSource) {
+			return previewFor(toolName, args, shellPrefix, {
+				decision: "allow",
+				source: autoSource,
+				risk: autoSource === "built-in-read-only" ? "low" : riskFor(toolName, args),
+				reason: autoSourceReason(autoSource),
+			});
+		}
+
+		if (this.matchAllow(toolName, args)) {
+			return previewFor(toolName, args, shellPrefix, {
+				decision: "allow",
+				source: "allow-rule",
+				risk: riskFor(toolName, args),
+				reason: "Allowed by a persisted allow rule.",
+			});
+		}
+
+		if (this.autoApprove) {
+			return previewFor(toolName, args, shellPrefix, {
+				decision: "allow",
+				source: "auto-approve",
+				risk: riskFor(toolName, args),
+				reason: "Allowed because auto-approve is enabled; deny rules and shell hard-blocks still win.",
+			});
+		}
+
+		return previewFor(toolName, args, shellPrefix, {
+			decision: "prompt",
+			source: "prompt",
+			risk: riskFor(toolName, args),
+			reason: reasonFor(toolName, args),
+			guidance: guidanceFor(toolName, args, shellPrefix),
+		});
+	}
+
 	current(): PermissionRequest | undefined {
 		return this.queue[0]?.request;
 	}
@@ -291,30 +374,55 @@ export class PermissionStore {
 	}
 
 	private shouldAutoAllow(toolName: string, args: unknown): boolean {
-		if (ALWAYS_ALLOWED.has(toolName)) return true;
-		if (this.trustAll) return true;
-		if (this.trustedTools.has(toolName)) return true;
+		return this.autoAllowSource(toolName, args) !== null;
+	}
+
+	private autoAllowSource(toolName: string, args: unknown): PermissionPreview["source"] | null {
+		if (ALWAYS_ALLOWED.has(toolName)) return "built-in-read-only";
+		if (this.trustAll) return "session-trust";
+		if (this.trustedTools.has(toolName)) return "session-trust";
 		if (toolName === "shell") {
 			const cmd = (args as { command?: string } | undefined)?.command;
 			if (typeof cmd === "string") {
-				if (!shellNeedsPermission(cmd)) return true;
+				if (!shellNeedsPermission(cmd)) return "built-in-read-only";
 				// Auto-allow if the command's prefix was trusted earlier.
 				const prefix = commandPrefix(cmd);
-				if (prefix && this.trustedShellPrefixes.has(prefix)) return true;
+				if (prefix && this.trustedShellPrefixes.has(prefix)) return "session-trust";
 			}
 		}
 		// git_branch with no name (or just listing) is read-only.
 		if (toolName === "git_branch") {
 			const a = args as { name?: string } | undefined;
-			if (!a?.name) return true;
+			if (!a?.name) return "built-in-read-only";
 		}
-		return false;
+		return null;
 	}
 
 	private notify(): void {
 		const cur = this.current();
 		for (const listener of this.listeners) listener(cur);
 	}
+}
+
+function previewFor(
+	tool: string,
+	args: unknown,
+	shellPrefix: string | undefined,
+	decision: Pick<PermissionPreview, "decision" | "source" | "risk" | "reason" | "guidance">,
+): PermissionPreview {
+	return {
+		tool,
+		summary: summarize(tool, args),
+		detail: detailFor(tool, args),
+		trustScope: trustScopeFor(tool, shellPrefix),
+		...decision,
+	};
+}
+
+function autoSourceReason(source: PermissionPreview["source"]): string | undefined {
+	if (source === "built-in-read-only") return "Allowed by the built-in read-only policy.";
+	if (source === "session-trust") return "Allowed by session trust.";
+	return undefined;
 }
 
 /** Tool-specific human-readable summary line. */

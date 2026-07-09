@@ -101,13 +101,13 @@ Recommended next work:
 
 Claude has a deeper shell permission classifier. It extracts stable command prefixes, suggests scoped allow rules, blocks overly broad shell wrappers, has mode-specific validation, and maintains a detailed read-only command validation layer (`src/tools/BashTool/bashPermissions.ts`, `modeValidation.ts`, `readOnlyValidation.ts`). It also has richer permission request UI components.
 
-Codebase has the right philosophy: explicit permissions, always-allowed read tools, reversible/irreversible classification, shell warnings, scoped shell trust, and live permission prompts that now show safer-path guidance plus exact scoped allow/deny commands (`src/permissions/store.ts`, `src/permissions/reversibility.ts`, `src/tools/shell-validator.ts`, `src/tools/permission.ts`). The remaining gap is deeper classification and preview tooling, especially before long autonomous tasks.
+Codebase has the right philosophy: explicit permissions, always-allowed read tools, reversible/irreversible classification, shell warnings, scoped shell trust, live permission prompts that show safer-path guidance plus exact scoped allow/deny commands, and a shell-plan simulator for ahead-of-time allow/prompt/block previews (`src/commands/builtins/permissions.ts`, `src/permissions/store.ts`, `src/permissions/reversibility.ts`, `src/tools/shell-validator.ts`, `src/tools/permission.ts`). The remaining gap is deeper classification and task-to-command previewing before long autonomous tasks.
 
 Recommended next work:
 
 - Keep expanding command-prefix extraction for more CLIs and framework-specific subcommands.
 - Separate "read-only shell" from "mutating but reversible" more visibly in the prompt UI.
-- Add a permissions simulator: given a task or command, explain what would be auto-allowed, prompted, or denied.
+- Expand `/permissions simulate` from explicit shell plans toward task-aware previews that can explain likely commands before the agent starts.
 - Keep `permission-denial-recovery` in the public sweep and add a scoped-trust case next.
 
 ### 6. File Editing And IDE/LSP Awareness

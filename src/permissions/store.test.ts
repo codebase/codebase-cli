@@ -274,3 +274,90 @@ describe("PermissionStore config patterns", () => {
 		);
 	});
 });
+
+describe("PermissionStore preview", () => {
+	it("explains built-in read-only auto-allows", () => {
+		const store = new PermissionStore();
+
+		expect(store.preview("shell", { command: "git status --short" })).toMatchObject({
+			decision: "allow",
+			source: "built-in-read-only",
+			risk: "low",
+			reason: "Allowed by the built-in read-only policy.",
+		});
+	});
+
+	it("shows shell validator hard-blocks before persisted allows", () => {
+		const store = new PermissionStore({ allowPatterns: ["shell:*"] });
+
+		expect(store.preview("shell", { command: "rm -rf /" })).toMatchObject({
+			decision: "block",
+			source: "shell-validator",
+			risk: "high",
+			reason: expect.stringContaining("hard-block"),
+			guidance: ["No allow rule is offered for hard-blocked commands; rewrite it to target a safe path."],
+		});
+	});
+
+	it("shows persisted deny and allow rules", () => {
+		const store = new PermissionStore({
+			allowPatterns: ["write_file:src/**"],
+			denyPatterns: ["read_file:.env*"],
+		});
+
+		expect(store.preview("read_file", { path: ".env.local" })).toMatchObject({
+			decision: "block",
+			source: "deny-rule",
+			reason: "Blocked by a persisted deny rule.",
+		});
+		expect(store.preview("write_file", { path: "src/index.ts" })).toMatchObject({
+			decision: "allow",
+			source: "allow-rule",
+			reason: "Allowed by a persisted allow rule.",
+		});
+	});
+
+	it("shows prompt guidance for shell commands that need approval", () => {
+		const store = new PermissionStore();
+
+		expect(store.preview("shell", { command: "npm install" })).toMatchObject({
+			decision: "prompt",
+			source: "prompt",
+			risk: "medium",
+			trustScope: "shell:npm install*",
+			guidance: expect.arrayContaining([
+				"Trust tool grants shell:npm install* for this session only.",
+				"Persist allow: /permissions allow shell:npm install*",
+				"Persist deny: /permissions deny shell:npm install*",
+			]),
+		});
+	});
+
+	it("reflects session trust in previews", async () => {
+		const store = new PermissionStore();
+		const first = store.evaluate("shell", { command: 'git commit -m "wip"' });
+		store.respond(store.current()!.id, "trust-tool");
+		await first;
+
+		expect(store.preview("shell", { command: 'git commit -m "more"' })).toMatchObject({
+			decision: "allow",
+			source: "session-trust",
+			reason: "Allowed by session trust.",
+			trustScope: "shell:git commit*",
+		});
+	});
+
+	it("shows auto-approve without hiding shell hard-blocks", () => {
+		const store = new PermissionStore({ autoApprove: true });
+
+		expect(store.preview("write_file", { path: "x.ts", content: "" })).toMatchObject({
+			decision: "allow",
+			source: "auto-approve",
+			reason: expect.stringContaining("auto-approve is enabled"),
+		});
+		expect(store.preview("shell", { command: "rm -rf /" })).toMatchObject({
+			decision: "block",
+			source: "shell-validator",
+		});
+	});
+});

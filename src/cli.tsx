@@ -622,6 +622,7 @@ function printPermissionsHelp(): void {
 			"  /permissions                         list effective allow/deny rules",
 			"  /permissions shell                   explain shell auto-allow policy",
 			"  /permissions suggest <command>       preview shell risk and trust scope",
+			"  /permissions simulate <plan>         preview allow/prompt/block for shell commands",
 			"  /permissions allow <pattern>         persist an allow rule",
 			"  /permissions deny <pattern>          persist a deny rule",
 			"  /permissions remove <pattern>        remove a user-layer rule",
