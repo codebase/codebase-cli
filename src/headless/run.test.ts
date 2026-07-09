@@ -858,6 +858,9 @@ describe("runHeadless", () => {
 		expect(isVerificationCommand("node test.mjs")).toBe(true);
 		expect(isVerificationCommand("node --test")).toBe(true);
 		expect(isVerificationCommand("node --experimental-strip-types _verify_rename.ts")).toBe(true);
+		expect(
+			isVerificationCommand("node --experimental-strip-types -e \"import { parseTimestamp } from './parse.ts';\""),
+		).toBe(true);
 		expect(isVerificationCommand("npx tsx src/index.ts")).toBe(true);
 		expect(
 			isVerificationCommand("npx tsx -e \"import {greet} from './src/index.ts'; console.log(greet('test'))\""),
@@ -872,6 +875,7 @@ describe("runHeadless", () => {
 		expect(isVerificationCommand("npx tsc --noEmit 2>&1 || true")).toBe(false);
 		expect(isVerificationCommand("which node && node --version && which tsc")).toBe(false);
 		expect(isVerificationCommand("npx tsx -e \"console.log('hello')\"")).toBe(false);
+		expect(isVerificationCommand("node -e \"console.log('hello')\"")).toBe(false);
 		expect(isVerificationCommand("node scripts/generate-fixture.mjs")).toBe(false);
 	});
 
@@ -919,7 +923,7 @@ describe("runHeadless", () => {
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
-	it("reliable json mode fails when active tasks overlap", async () => {
+	it("reliable json mode warns when active tasks overlap", async () => {
 		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-overlap-"));
 		writeFileSync(
 			join(tmpProject, "package.json"),
@@ -958,15 +962,14 @@ describe("runHeadless", () => {
 			configOverride: { model, apiKey: "faux-key", source: "byok" },
 			...write,
 		});
-		expect(exitCode).toBe(1);
+		expect(exitCode).toBe(0);
 		const parsed = JSON.parse(capture.stdout.trim()) as {
 			ok: boolean;
-			code: string;
-			receipt: { failures: string[] };
+			receipt: { failures: string[]; warnings: string[] };
 		};
-		expect(parsed.ok).toBe(false);
-		expect(parsed.code).toBe("reliable_gate_failed");
-		expect(parsed.receipt.failures).toContain("multiple tasks were in_progress at once: task-1, task-2");
+		expect(parsed.ok).toBe(true);
+		expect(parsed.receipt.failures).toEqual([]);
+		expect(parsed.receipt.warnings).toContain("multiple tasks were in_progress at once: task-1, task-2");
 		rmSync(tmpProject, { recursive: true, force: true });
 	});
 

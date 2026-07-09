@@ -212,7 +212,7 @@ export class ReliabilityRecorder {
 			);
 		}
 		if (lifecycle.activeOverlaps.length > 0) {
-			failures.push(`multiple tasks were in_progress at once: ${lifecycle.activeOverlaps[0]?.join(", ")}`);
+			warnings.push(`multiple tasks were in_progress at once: ${lifecycle.activeOverlaps[0]?.join(", ")}`);
 		}
 		if (failedToolCalls > 0)
 			warnings.push(`${failedToolCalls} tool call${failedToolCalls === 1 ? "" : "s"} failed before the run ended`);
@@ -611,6 +611,7 @@ export function isVerificationCommand(command: string): boolean {
 		/\b(vitest|jest|pytest|ruff|eslint|tsc)\b/,
 		/\bdeno\s+(test|check|lint)\b/,
 		/\bnode\s+--test\b/,
+		/\bnode(?:\s+--[\w=-]+)*\s+-e\b.*(?:from\s+['"]\.\/|import\(['"]\.\/|require\(['"]\.\/|src\/)/,
 		/\bnode(?:\s+--[\w=-]+)*\s+(?:[\w./-]*\/)?[\w.-]*(?:test|spec|verify|check)[\w.-]*\.[cm]?[jt]s\b/,
 		/\bnpx(?:\s+-[\w-]+(?:=\S+)?)*\s+typescript(?:@[\w.-]+)?\b(?=.*\s--noemit\b)(?=.*\.[cm]?tsx?\b)/,
 		/\b(?:npx(?:\s+-[\w-]+(?:=\S+)?)*\s+)?(?:tsx|ts-node)\s+-e\b.*(?:from\s+['"]\.\/|import\(['"]\.\/|require\(['"]\.\/|src\/)/,
