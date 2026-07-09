@@ -150,7 +150,7 @@ describe("runHeadless", () => {
 			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
 				stopReason: "toolUse",
 			}),
-			fauxAssistantMessage([fauxToolCall("shell", { command: "cd . && npm test", timeout_ms: 10_000 })], {
+			fauxAssistantMessage([fauxToolCall("shell", { command: "cd . && npm test 2>&1", timeout_ms: 10_000 })], {
 				stopReason: "toolUse",
 			}),
 			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
@@ -197,14 +197,14 @@ describe("runHeadless", () => {
 		expect(parsed.receipt.summary.verificationCount).toBe(1);
 		expect(parsed.receipt.finalAnswer).toEqual({
 			mentionsFreshVerification: true,
-			matchedVerificationCommands: ["cd . && npm test"],
+			matchedVerificationCommands: ["cd . && npm test 2>&1"],
 		});
 		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
 			id: "task-1",
 			toolCalls: [{ name: "shell" }],
-			verification: [{ command: "cd . && npm test" }],
+			verification: [{ command: "cd . && npm test 2>&1" }],
 		});
-		expect(parsed.receipt.verification[0]?.command).toBe("cd . && npm test");
+		expect(parsed.receipt.verification[0]?.command).toBe("cd . && npm test 2>&1");
 		expect(parsed.receiptId).toMatch(/\d{4}/);
 		expect(parsed.receiptPath).toContain(".codebase/receipts");
 		expect(existsSync(parsed.receiptPath)).toBe(true);

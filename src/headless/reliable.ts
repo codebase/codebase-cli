@@ -549,15 +549,27 @@ function mentionsCommand(text: string, command: string): boolean {
 function commandMentionCandidates(command: string): string[] {
 	const full = normalizeCommandText(command);
 	const candidates = new Set<string>([full]);
+	const withoutRedirection = stripHarmlessShellRedirection(full);
+	if (withoutRedirection !== full) candidates.add(withoutRedirection);
 	for (const part of full.split(/\s+(?:&&|\|\||;)\s+/)) {
 		const candidate = part.trim();
 		if (candidate && candidate !== full && isVerificationCommand(candidate)) candidates.add(candidate);
+		const stripped = stripHarmlessShellRedirection(candidate);
+		if (stripped && stripped !== candidate && isVerificationCommand(stripped)) candidates.add(stripped);
 	}
 	return [...candidates].sort((a, b) => b.length - a.length);
 }
 
 function normalizeCommandText(text: string): string {
 	return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function stripHarmlessShellRedirection(command: string): string {
+	return command
+		.replace(/\s+\d?>&\d+\b/g, "")
+		.replace(/\s+\d?>(?:\/dev\/null|nul)\b/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
 }
 
 function isNegatedCommandMention(before: string, after: string): boolean {
