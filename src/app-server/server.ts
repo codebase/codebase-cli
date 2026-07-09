@@ -6,8 +6,10 @@ import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent
 import { ConfigError } from "../agent/config.js";
 import { ConfigStore } from "../config/store.js";
 import type { PermissionRequest } from "../permissions/store.js";
+import { type CodeNavigationParams, createCodeNavigation } from "../tools/code-navigation.js";
 import {
 	buildErrorResponse,
+	type CodeNavigationResponse,
 	isCommand,
 	type ModelInfo,
 	type OutboundMessage,
@@ -279,6 +281,22 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 				};
 			}
 
+			case "code_navigation": {
+				const params = codeNavigationParams(c);
+				if (typeof params === "string") return buildErrorResponse(c.id, c.type, params);
+				const result = await createCodeNavigation(bundle.toolContext).execute("app-server-code-navigation", params);
+				return {
+					id: c.id,
+					type: "response",
+					command: "code_navigation",
+					success: true,
+					data: {
+						text: result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
+						details: result.details,
+					} satisfies CodeNavigationResponse,
+				};
+			}
+
 			case "set_model": {
 				if (inFlightPrompt) {
 					return buildErrorResponse(c.id, c.type, "a prompt is already in flight — abort first");
@@ -358,6 +376,48 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 		target.checkpoints.dispose();
 		target.toolContext.tasks.dispose();
 	}
+}
+
+const CODE_NAVIGATION_OPERATIONS = new Set<CodeNavigationParams["operation"]>([
+	"definition",
+	"type_definition",
+	"references",
+	"implementation",
+	"hover",
+	"symbols",
+	"diagnostics",
+]);
+
+function codeNavigationParams(
+	command: Extract<RpcCommand, { type: "code_navigation" }>,
+): CodeNavigationParams | string {
+	if (!CODE_NAVIGATION_OPERATIONS.has(command.operation)) return "operation must be a valid code_navigation operation";
+	if (typeof command.path !== "string" || !command.path.trim()) return "path is required";
+	if (command.line !== undefined && (!Number.isInteger(command.line) || command.line < 1)) {
+		return "line must be a positive integer";
+	}
+	if (command.column !== undefined && (!Number.isInteger(command.column) || command.column < 1)) {
+		return "column must be a positive integer";
+	}
+	if (command.query !== undefined && typeof command.query !== "string") return "query must be a string";
+	if (command.include_external !== undefined && typeof command.include_external !== "boolean") {
+		return "include_external must be a boolean";
+	}
+	if (
+		command.max_results !== undefined &&
+		(!Number.isInteger(command.max_results) || command.max_results < 1 || command.max_results > 1000)
+	) {
+		return "max_results must be an integer from 1 to 1000";
+	}
+	return {
+		operation: command.operation,
+		path: command.path,
+		line: command.line,
+		column: command.column,
+		query: command.query,
+		include_external: command.include_external,
+		max_results: command.max_results,
+	};
 }
 
 function mergeUsage(a: Usage, b: Usage): Usage {

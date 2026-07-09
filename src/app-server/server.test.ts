@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -196,6 +196,56 @@ describe("runAppServer", () => {
 		await h.close();
 	});
 
+	it("serves code navigation results directly to app clients", async () => {
+		writeCodeNavFixture(cwd);
+		const h = makeHarness({ model, cwd });
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
+		h.send({ id: "init", type: "initialize" });
+		await h.waitFor((m) => m.type === "response" && m.id === "init");
+
+		h.send({ id: "nav", type: "code_navigation", operation: "symbols", path: "src/util.ts", query: "make" });
+		const resp = await h.waitFor((m) => m.type === "response" && m.id === "nav");
+
+		expect(resp.success).toBe(true);
+		const data = resp.data as { text: string; details: { operation: string; results: Array<{ file: string }> } };
+		expect(data.text).toContain("src/util.ts:1:1 function makeGreeting");
+		expect(data.details.operation).toBe("symbols");
+		expect(data.details.results[0].file).toBe("src/util.ts");
+		await h.close();
+	});
+
+	it("serves TypeScript diagnostics directly to app clients", async () => {
+		writeCodeNavFixture(cwd);
+		const h = makeHarness({ model, cwd });
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
+		h.send({ id: "init", type: "initialize" });
+		await h.waitFor((m) => m.type === "response" && m.id === "init");
+
+		h.send({ id: "diag", type: "code_navigation", operation: "diagnostics", path: "src/main.ts" });
+		const resp = await h.waitFor((m) => m.type === "response" && m.id === "diag");
+
+		expect(resp.success).toBe(true);
+		const data = resp.data as { text: string; details: { operation: string } };
+		expect(data.details.operation).toBe("diagnostics");
+		expect(data.text).toContain("TS2322");
+		expect(data.text).toContain("Type 'string' is not assignable to type 'number'");
+		await h.close();
+	});
+
+	it("validates app-server code navigation requests", async () => {
+		const h = makeHarness({ model, cwd });
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
+		h.send({ id: "init", type: "initialize" });
+		await h.waitFor((m) => m.type === "response" && m.id === "init");
+
+		h.send({ id: "bad-nav", type: "code_navigation", operation: "symbols", path: "src/nope.ts", max_results: 0 });
+		const resp = await h.waitFor((m) => m.type === "response" && m.id === "bad-nav");
+
+		expect(resp.success).toBe(false);
+		expect(resp.error).toContain("max_results");
+		await h.close();
+	});
+
 	it("rejects a second prompt while one is in flight", async () => {
 		faux.setResponses([fauxAssistantMessage("first response")]);
 		const h = makeHarness({ model, cwd });
@@ -280,3 +330,33 @@ describe("runAppServer", () => {
 		await h.close();
 	});
 });
+
+function writeCodeNavFixture(cwd: string): void {
+	mkdirSync(join(cwd, "src"), { recursive: true });
+	writeFileSync(
+		join(cwd, "tsconfig.json"),
+		JSON.stringify({
+			compilerOptions: {
+				target: "ES2022",
+				module: "Node16",
+				moduleResolution: "Node16",
+				strict: true,
+			},
+			include: ["src/**/*.ts"],
+		}),
+	);
+	writeFileSync(
+		join(cwd, "src", "util.ts"),
+		["export function makeGreeting(name: string): string {", '  return "hello " + name;', "}", ""].join("\n"),
+	);
+	writeFileSync(
+		join(cwd, "src", "main.ts"),
+		[
+			'import { makeGreeting } from "./util";',
+			"",
+			"const count: number = makeGreeting(123);",
+			"console.log(count);",
+			"",
+		].join("\n"),
+	);
+}

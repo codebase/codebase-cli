@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Usage } from "@earendil-works/pi-ai";
+import type { CodeNavigationDetails, CodeNavigationParams } from "../tools/code-navigation.js";
 
 /**
  * Wire shape for `codebase app-server`. Newline-delimited JSON on
@@ -27,6 +28,7 @@ export type RpcCommand =
 	| { id?: string; type: "abort" }
 	| { id?: string; type: "get_state" }
 	| { id?: string; type: "get_messages" }
+	| ({ id?: string; type: "code_navigation" } & CodeNavigationParams)
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
 	| {
 			id?: string;
@@ -70,6 +72,13 @@ export type RpcResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "code_navigation";
+			success: true;
+			data: CodeNavigationResponse;
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "set_model";
 			success: true;
 			data: ModelInfo;
@@ -102,6 +111,11 @@ export interface PendingPermission {
 	trustScope?: string;
 	guidance?: readonly string[];
 	risk: "low" | "medium" | "high";
+}
+
+export interface CodeNavigationResponse {
+	text: string;
+	details: CodeNavigationDetails;
 }
 
 // ─── outbound: events (server → client, unsolicited) ──────────────────
