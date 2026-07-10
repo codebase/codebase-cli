@@ -24,7 +24,7 @@ interface Balance {
  */
 export const usage: Command = {
 	name: "usage",
-	description: "Show your Codebase plan usage — credits used, remaining, and reset date.",
+	description: "Show metered credits and included Codebase turn allowances.",
 	handler: async (_args, ctx) => {
 		ctx.emit(await fetchUsageReport());
 		return { handled: true };
@@ -68,10 +68,10 @@ export async function fetchUsageReport(): Promise<string> {
 			lines.push("Monthly allowance was not returned yet; showing remaining credits only.");
 		}
 		if (typeof b.anyBuildsRemaining === "number" && b.anyBuildsRemaining >= 0) {
-			lines.push(`Build turns remaining: ${b.anyBuildsRemaining.toLocaleString()}`);
+			lines.push(`Included web-build turns remaining: ${b.anyBuildsRemaining.toLocaleString()}`);
 		}
 		if (typeof b.cheapBuildsRemaining === "number" && b.cheapBuildsRemaining >= 0) {
-			lines.push(`Fast turns remaining: ${b.cheapBuildsRemaining.toLocaleString()}`);
+			lines.push(`Included fast coding turns remaining: ${b.cheapBuildsRemaining.toLocaleString()}`);
 		}
 		return lines.join("\n");
 	} catch (err) {
@@ -99,7 +99,7 @@ export function formatUsageBalance(b: Balance): {
 		b.planName ?? plan?.name ?? (typeof b.plan === "string" ? b.plan : undefined) ?? b.planId ?? "Codebase";
 	if (!allowance || allowance <= 0) {
 		return {
-			creditLine: `Credits left: ${remaining.toLocaleString()}`,
+			creditLine: `Metered credits left: ${remaining.toLocaleString()}`,
 			days,
 			pct: null,
 			planName,
@@ -108,7 +108,7 @@ export function formatUsageBalance(b: Balance): {
 	const used = Math.max(0, allowance - remaining);
 	const pct = Math.max(0, Math.min(100, Math.round((used / allowance) * 100)));
 	return {
-		creditLine: `Credits: ${used.toLocaleString()} / ${allowance.toLocaleString()} used  ·  ${remaining.toLocaleString()} left`,
+		creditLine: `Metered credits: ${used.toLocaleString()} / ${allowance.toLocaleString()} used  ·  ${remaining.toLocaleString()} left`,
 		days,
 		pct,
 		planName,

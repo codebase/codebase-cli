@@ -44,6 +44,10 @@ export async function runProjectSubcommand(argv: string[], options: ProjectCliOp
 			printProjectHelp(out);
 			return 0;
 		}
+		if (subcommand === "pull" && isHelpArg(argv[2])) {
+			printPullHelp(out);
+			return 0;
+		}
 		if (subcommand === "pull") return await pullCmd(client, argv[2], argv[3], out, err);
 		if (subcommand === "build") return await buildCmd(client, argv.slice(2), out, err, sleep, handoffStore);
 		if (subcommand === "status") return await statusCmd(client, argv[2], out, err, handoffStore);
@@ -125,6 +129,10 @@ function parseLimit(value: string): number | undefined {
 
 function isListFlag(arg: string): boolean {
 	return arg === "--all" || arg === "--limit" || arg.startsWith("--limit=");
+}
+
+function isHelpArg(arg: string | undefined): boolean {
+	return arg === "--help" || arg === "-h" || arg === "help";
 }
 
 async function listCmd(client: ProjectClient, opts: ListOptions, out: (msg: string) => void): Promise<number> {
@@ -626,6 +634,13 @@ function printProjectHelp(out: (msg: string) => void): void {
 	out("  status [id]   show a web build status; defaults to latest for this directory");
 	out("  preview [id]  start/fetch the web preview; defaults to latest for this directory");
 	out("  cancel <id>   cancel a running web build (`latest` is accepted)");
+}
+
+function printPullHelp(out: (msg: string) => void): void {
+	out("usage: codebase project pull <id> [dest]");
+	out("");
+	out("Download a codebase.design project as a ZIP archive.");
+	out("When dest is omitted, the ZIP is saved under ~/.codebase/pulls/.");
 }
 
 function printBuildHelp(out: (msg: string) => void): void {
