@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchUsageReport, formatUsageBalance } from "./usage.js";
+import { fetchUsageReport, formatTurnQuotas, formatUsageBalance } from "./usage.js";
 
 let homeDir: string | undefined;
 
@@ -76,6 +76,20 @@ describe("formatUsageBalance", () => {
 			pct: 10,
 			planName: "pro",
 		});
+	});
+});
+
+describe("formatTurnQuotas", () => {
+	it("distinguishes turn quotas from metered credits", () => {
+		expect(formatTurnQuotas({ anyBuildsRemaining: 5, cheapBuildsRemaining: 3 })).toEqual([
+			"Any-model turn quota remaining: 5",
+			"Low-cost model turn quota remaining: 3",
+			"Metered runs require both an eligible turn and credits; builds that fail final QA are not charged.",
+		]);
+	});
+
+	it("omits quota guidance when the endpoint returns no turn pools", () => {
+		expect(formatTurnQuotas({ creditsRemaining: 12 })).toEqual([]);
 	});
 });
 
