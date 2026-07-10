@@ -375,7 +375,7 @@ function printHelp(): void {
 			"  --debug-input                log every keystroke to ~/.codebase/logs/input.log",
 			"                               (use when reporting a keyboard/terminal issue)",
 			"",
-			"More: https://github.com/codebase-foundation/codebase-cli",
+			"More: https://github.com/codebase/codebase-cli",
 			"",
 		].join("\n"),
 	);

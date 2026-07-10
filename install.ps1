@@ -2,7 +2,7 @@
 #
 # Usage:
 #   irm https://codebase.design/install.ps1 | iex
-#   irm https://raw.githubusercontent.com/codebase-foundation/codebase-cli/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/codebase/codebase-cli/main/install.ps1 | iex
 #
 # What this does:
 #   1. Detects an existing v1 (Go) binary at ~\.codebase\bin\codebase.exe

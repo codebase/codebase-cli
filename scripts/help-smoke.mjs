@@ -77,6 +77,11 @@ try {
 			console.error(`FAIL ${label}: references retired codebase.foundation domain\n${output.trim()}`);
 			continue;
 		}
+		if (output.includes("github.com/codebase-foundation/codebase-cli")) {
+			failures++;
+			console.error(`FAIL ${label}: references retired GitHub repository\n${output.trim()}`);
+			continue;
+		}
 		console.log(`ok ${label}`);
 	}
 } finally {

@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/codebase-cli"><img alt="npm" src="https://img.shields.io/npm/v/codebase-cli?style=flat-square" /></a>
-  <a href="https://github.com/codebase-foundation/codebase-cli/blob/master/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" /></a>
+  <a href="https://github.com/codebase/codebase-cli/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" /></a>
 </p>
 
 ## Install

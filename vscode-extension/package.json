@@ -6,7 +6,7 @@
 	"publisher": "codebase-foundation",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/codebase-foundation/codebase-cli"
+		"url": "https://github.com/codebase/codebase-cli"
 	},
 	"engines": {
 		"vscode": "^1.85.0"
