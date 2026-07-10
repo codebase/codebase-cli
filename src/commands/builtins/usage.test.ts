@@ -29,7 +29,7 @@ describe("formatUsageBalance", () => {
 				plan: "pro",
 			}),
 		).toMatchObject({
-			creditLine: "Credits: 250 / 1,000 used  ·  750 left",
+			creditLine: "Metered credits: 250 / 1,000 used  ·  750 left",
 			pct: 25,
 			planName: "pro",
 		});
@@ -42,7 +42,7 @@ describe("formatUsageBalance", () => {
 				plan: { name: "team", monthlyCredits: 40 },
 			}),
 		).toMatchObject({
-			creditLine: "Credits: 30 / 40 used  ·  10 left",
+			creditLine: "Metered credits: 30 / 40 used  ·  10 left",
 			pct: 75,
 			planName: "team",
 		});
@@ -50,7 +50,7 @@ describe("formatUsageBalance", () => {
 
 	it("uses the known free allowance when the live endpoint omits it", () => {
 		expect(formatUsageBalance({ creditsRemaining: 25, planId: "free" })).toMatchObject({
-			creditLine: "Credits: 25 / 50 used  ·  25 left",
+			creditLine: "Metered credits: 25 / 50 used  ·  25 left",
 			pct: 50,
 			planName: "free",
 		});
@@ -58,7 +58,7 @@ describe("formatUsageBalance", () => {
 
 	it("accepts snake-case allowance fields", () => {
 		expect(formatUsageBalance({ creditsRemaining: 30, monthly_credits: 50, planId: "free" })).toMatchObject({
-			creditLine: "Credits: 20 / 50 used  ·  30 left",
+			creditLine: "Metered credits: 20 / 50 used  ·  30 left",
 			pct: 40,
 		});
 	});
@@ -72,7 +72,7 @@ describe("formatUsageBalance", () => {
 				planName: "pro",
 			}),
 		).toMatchObject({
-			creditLine: "Credits: 100 / 1,000 used  ·  900 left",
+			creditLine: "Metered credits: 100 / 1,000 used  ·  900 left",
 			pct: 10,
 			planName: "pro",
 		});

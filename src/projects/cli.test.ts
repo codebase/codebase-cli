@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runProjectSubcommand } from "./cli.js";
 import { type ProjectClient, ProjectClientError } from "./client.js";
 import { BuildHandoffStore } from "./handoff.js";
@@ -100,6 +100,19 @@ describe("runProjectSubcommand", () => {
 
 		expect(result.code).toBe(0);
 		expect(result.stdout.join("\n")).toContain("alias: codebase web-build");
+	});
+
+	it("prints pull help without treating the flag as a project id", async () => {
+		const client = fakeClient();
+		client.pull = vi.fn(() => {
+			throw new Error("pull should not run for help");
+		});
+
+		const result = await runProject(["project", "pull", "--help"], client);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout.join("\n")).toContain("usage: codebase project pull <id> [dest]");
+		expect(client.pull).not.toHaveBeenCalled();
 	});
 
 	it("defaults project list to 25 entries and puts titled indexed projects first", async () => {
