@@ -12,7 +12,7 @@ export type Intent = "agent" | "plan" | "clarify";
 const INTENT_SYSTEM_PROMPT = `Classify the user's message into ONE of these intents. Output exactly one word, no prose.
 
 - agent: a coding, automation, build, fix, or run-the-tools request. Default for anything actionable, including small talk, greetings, gratitude, and meta-questions about the agent itself — the main agent handles those directly now.
-- plan: a complex multi-step ask that benefits from upfront planning before any code is written (e.g. "add auth to my Next app", "rewrite the worker as a state machine"). Reserve this for genuinely multi-file architectural work.
+- plan: the user explicitly asked for a plan, planning mode, or for planning before code is written.
 - clarify: ambiguous or contradictory request where acting without more information would be a mistake.
 
 Reply with exactly one of: agent | plan | clarify.`;
@@ -36,6 +36,10 @@ export interface ClassifyOptions {
 export async function classifyIntent(glue: GlueClient, message: string, opts: ClassifyOptions): Promise<Intent> {
 	const trimmed = message.trim();
 	if (!trimmed) return "clarify";
+	// The planning flow cannot inspect the repository. Sending a complex but
+	// actionable request there encourages guessed paths and redundant questions.
+	// The main agent can inspect first and enter tool-aware plan mode itself.
+	if (!isExplicitPlanRequest(trimmed)) return "agent";
 
 	let raw: string;
 	try {
@@ -45,6 +49,24 @@ export async function classifyIntent(glue: GlueClient, message: string, opts: Cl
 	}
 
 	return parseIntent(raw) ?? "agent";
+}
+
+export function isExplicitPlanRequest(message: string): boolean {
+	const normalized = message.toLowerCase().replace(/[’]/g, "'");
+	if (
+		/\b(?:do not|don't|dont|without)\s+(?:make|create|write|draft|give|show)?\s*(?:me\s+)?(?:an?\s+)?(?:implementation\s+)?plan\b/.test(
+			normalized,
+		)
+	) {
+		return false;
+	}
+	return [
+		/\bplan\s+(?:this|it|the|my|our|a|an)\b/,
+		/\b(?:make|create|write|draft|give|show)\s+(?:me\s+)?(?:an?\s+)?(?:implementation\s+)?plan\b/,
+		/\b(?:want|need|would like)\s+(?:you\s+to\s+)?(?:an?\s+)?(?:implementation\s+)?plan\b/,
+		/\b(?:enter|use|start)\s+plan(?:ning)?\s+mode\b/,
+		/\b(?:plan|planning)\s+(?:first|before\s+(?:coding|editing|implementing|changes))\b/,
+	].some((pattern) => pattern.test(normalized));
 }
 
 export function parseIntent(raw: string): Intent | null {

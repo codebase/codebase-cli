@@ -46,6 +46,8 @@ describe("buildSystemPrompt", () => {
 		const out = buildSystemPrompt();
 		expect(out).toContain("# Verifying your work");
 		expect(out).toMatch(/never characterize unverified work as complete/i);
+		expect(out).toMatch(/execute the production code/i);
+		expect(out).toMatch(/audit the changed implementation against every requested behavior/i);
 	});
 
 	it("explains system-reminder semantics so the model knows they're from the runtime", () => {

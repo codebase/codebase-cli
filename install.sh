@@ -158,6 +158,6 @@ if [ ! -f "${HOME}/.codebase/credentials.json" ] \
 	&& [ -z "$ANTHROPIC_API_KEY" ] \
 	&& [ -z "$OPENAI_API_KEY" ]; then
 	echo ""
-	echo "First time? Sign in for free Claude usage:"
+	echo "First time? Sign in for free Codebase credits:"
 	echo "  ${BIN_NAME} auth login"
 fi

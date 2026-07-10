@@ -1,4 +1,5 @@
 import { shellNeedsPermission } from "../tools/permission.js";
+import { validateShellCommand } from "../tools/shell-validator.js";
 import { commandPrefix } from "./command-prefix.js";
 
 export type Decision = "allow" | "block";
@@ -84,9 +85,34 @@ export interface PermissionRequest {
 	tool: string;
 	/** One-line summary fit for a status line. */
 	summary: string;
+	/** Why this request needs a decision. */
+	reason?: string;
 	/** Optional multi-line detail (e.g. shell command, full diff). */
 	detail?: string;
+	/** Scope granted by a "trust tool" response. */
+	trustScope?: string;
+	/** Actionable approval guidance for UI/app clients to show below the request. */
+	guidance?: readonly string[];
 	/** Hint about how risky this is. UI may color accordingly. */
+	risk: "low" | "medium" | "high";
+}
+
+export interface PermissionPreview {
+	tool: string;
+	summary: string;
+	decision: "allow" | "prompt" | "block";
+	source:
+		| "deny-rule"
+		| "shell-validator"
+		| "session-trust"
+		| "built-in-read-only"
+		| "allow-rule"
+		| "auto-approve"
+		| "prompt";
+	reason?: string;
+	detail?: string;
+	trustScope?: string;
+	guidance?: readonly string[];
 	risk: "low" | "medium" | "high";
 }
 
@@ -101,6 +127,7 @@ const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
 	"list_files",
 	"glob",
 	"grep",
+	"code_navigation",
 	"web_fetch",
 	"web_search",
 	"git_status",
@@ -217,23 +244,90 @@ export class PermissionStore {
 		if (this.autoApprove) return "allow";
 
 		return new Promise((resolve) => {
-			const request: PermissionRequest = {
-				id: `perm-${++this.counter}`,
-				tool: toolName,
-				summary: summarize(toolName, args),
-				detail: detailFor(toolName, args),
-				risk: riskFor(toolName, args),
-			};
-			// For shell, capture the command prefix so a trust-tool response
-			// trusts the command family (e.g. "git commit") rather than all
-			// of shell.
 			let shellPrefix: string | undefined;
 			if (toolName === "shell") {
 				const cmd = (args as { command?: string } | undefined)?.command;
 				if (typeof cmd === "string") shellPrefix = commandPrefix(cmd) ?? undefined;
 			}
+			const request: PermissionRequest = {
+				id: `perm-${++this.counter}`,
+				tool: toolName,
+				summary: summarize(toolName, args),
+				reason: reasonFor(toolName, args),
+				detail: detailFor(toolName, args),
+				trustScope: trustScopeFor(toolName, shellPrefix),
+				guidance: guidanceFor(toolName, args, shellPrefix),
+				risk: riskFor(toolName, args),
+			};
+			// For shell, capture the command prefix so a trust-tool response
+			// trusts the command family (e.g. "git commit") rather than all
+			// of shell.
 			this.queue.push({ request, resolve, shellPrefix });
 			this.notify();
+		});
+	}
+
+	/** Read-only preview of the same policy path evaluate() uses, without queuing a prompt. */
+	preview(toolName: string, args: unknown): PermissionPreview {
+		let shellPrefix: string | undefined;
+		if (toolName === "shell") {
+			const cmd = (args as { command?: string } | undefined)?.command;
+			if (typeof cmd === "string") shellPrefix = commandPrefix(cmd) ?? undefined;
+			const verdict = validateShellCommand(typeof cmd === "string" ? cmd : "");
+			if (verdict.verdict === "block") {
+				return previewFor(toolName, args, shellPrefix, {
+					decision: "block",
+					source: "shell-validator",
+					risk: "high",
+					reason: reasonFor(toolName, args),
+					guidance: guidanceFor(toolName, args, shellPrefix),
+				});
+			}
+		}
+
+		if (this.matchDeny(toolName, args)) {
+			return previewFor(toolName, args, shellPrefix, {
+				decision: "block",
+				source: "deny-rule",
+				risk: riskFor(toolName, args),
+				reason: "Blocked by a persisted deny rule.",
+			});
+		}
+
+		const autoSource = this.autoAllowSource(toolName, args);
+		if (autoSource) {
+			return previewFor(toolName, args, shellPrefix, {
+				decision: "allow",
+				source: autoSource,
+				risk: autoSource === "built-in-read-only" ? "low" : riskFor(toolName, args),
+				reason: autoSourceReason(autoSource),
+			});
+		}
+
+		if (this.matchAllow(toolName, args)) {
+			return previewFor(toolName, args, shellPrefix, {
+				decision: "allow",
+				source: "allow-rule",
+				risk: riskFor(toolName, args),
+				reason: "Allowed by a persisted allow rule.",
+			});
+		}
+
+		if (this.autoApprove) {
+			return previewFor(toolName, args, shellPrefix, {
+				decision: "allow",
+				source: "auto-approve",
+				risk: riskFor(toolName, args),
+				reason: "Allowed because auto-approve is enabled; deny rules and shell hard-blocks still win.",
+			});
+		}
+
+		return previewFor(toolName, args, shellPrefix, {
+			decision: "prompt",
+			source: "prompt",
+			risk: riskFor(toolName, args),
+			reason: reasonFor(toolName, args),
+			guidance: guidanceFor(toolName, args, shellPrefix),
 		});
 	}
 
@@ -280,30 +374,55 @@ export class PermissionStore {
 	}
 
 	private shouldAutoAllow(toolName: string, args: unknown): boolean {
-		if (ALWAYS_ALLOWED.has(toolName)) return true;
-		if (this.trustAll) return true;
-		if (this.trustedTools.has(toolName)) return true;
+		return this.autoAllowSource(toolName, args) !== null;
+	}
+
+	private autoAllowSource(toolName: string, args: unknown): PermissionPreview["source"] | null {
+		if (ALWAYS_ALLOWED.has(toolName)) return "built-in-read-only";
+		if (this.trustAll) return "session-trust";
+		if (this.trustedTools.has(toolName)) return "session-trust";
 		if (toolName === "shell") {
 			const cmd = (args as { command?: string } | undefined)?.command;
 			if (typeof cmd === "string") {
-				if (!shellNeedsPermission(cmd)) return true;
+				if (!shellNeedsPermission(cmd)) return "built-in-read-only";
 				// Auto-allow if the command's prefix was trusted earlier.
 				const prefix = commandPrefix(cmd);
-				if (prefix && this.trustedShellPrefixes.has(prefix)) return true;
+				if (prefix && this.trustedShellPrefixes.has(prefix)) return "session-trust";
 			}
 		}
 		// git_branch with no name (or just listing) is read-only.
 		if (toolName === "git_branch") {
 			const a = args as { name?: string } | undefined;
-			if (!a?.name) return true;
+			if (!a?.name) return "built-in-read-only";
 		}
-		return false;
+		return null;
 	}
 
 	private notify(): void {
 		const cur = this.current();
 		for (const listener of this.listeners) listener(cur);
 	}
+}
+
+function previewFor(
+	tool: string,
+	args: unknown,
+	shellPrefix: string | undefined,
+	decision: Pick<PermissionPreview, "decision" | "source" | "risk" | "reason" | "guidance">,
+): PermissionPreview {
+	return {
+		tool,
+		summary: summarize(tool, args),
+		detail: detailFor(tool, args),
+		trustScope: trustScopeFor(tool, shellPrefix),
+		...decision,
+	};
+}
+
+function autoSourceReason(source: PermissionPreview["source"]): string | undefined {
+	if (source === "built-in-read-only") return "Allowed by the built-in read-only policy.";
+	if (source === "session-trust") return "Allowed by session trust.";
+	return undefined;
 }
 
 /** Tool-specific human-readable summary line. */
@@ -346,11 +465,112 @@ function detailFor(tool: string, args: unknown): string | undefined {
 	return undefined;
 }
 
+function reasonFor(tool: string, args: unknown): string | undefined {
+	const a = (args ?? {}) as Record<string, unknown>;
+	if (tool === "shell") {
+		const cmd = stringOf(a.command);
+		const verdict = validateShellCommand(cmd);
+		if (verdict.verdict === "block" && verdict.reason) {
+			return `High risk: shell validator will hard-block this command: ${verdict.reason}.`;
+		}
+		if (verdict.verdict === "warn" && verdict.reason) {
+			return `High risk: shell validator warning: ${verdict.reason}.`;
+		}
+		return shellRiskReason(cmd);
+	}
+	if (tool === "write_file") return "This will create or overwrite a file in the workspace.";
+	if (tool === "edit_file" || tool === "multi_edit" || tool === "notebook_edit") {
+		return "This will modify files in the workspace.";
+	}
+	if (tool === "git_commit") return "This will create a git commit.";
+	if (tool === "git_branch") return "This will change git branch state.";
+	if (tool === "enter_worktree" || tool === "exit_worktree") return "This will change the active worktree.";
+	return undefined;
+}
+
+function guidanceFor(tool: string, args: unknown, shellPrefix?: string): string[] | undefined {
+	if (tool !== "shell") return undefined;
+	const cmd = stringOf((args as Record<string, unknown> | undefined)?.command);
+	const verdict = validateShellCommand(cmd);
+	const lines: string[] = [];
+
+	if (verdict.verdict === "block") {
+		lines.push("No allow rule is offered for hard-blocked commands; rewrite it to target a safe path.");
+		return lines;
+	}
+
+	if (verdict.verdict === "warn" && verdict.reason) {
+		const advice = warningAdvice(verdict.reason);
+		if (advice) lines.push(`Safer path: ${advice}`);
+	}
+
+	if (shellPrefix && shellNeedsPermission(cmd)) {
+		const scope = `shell:${shellPrefix}*`;
+		lines.push(`Trust tool grants ${scope} for this session only.`);
+		const exact = exactShellPattern(cmd);
+		if (exact) lines.push(`Persist exact allow: /permissions allow ${exact}`);
+		lines.push(`Persist family allow: /permissions allow ${scope}`);
+		lines.push(`Persist family deny: /permissions deny ${scope}`);
+	} else if (shellNeedsPermission(cmd)) {
+		lines.push("Use allow-once; no stable command prefix was detected.");
+	}
+	return lines.length > 0 ? lines : undefined;
+}
+
+function shellRiskReason(cmd: string): string {
+	if (/\bnpm\s+(install|i|add|ci)\b/.test(cmd) || /\b(pnpm|yarn|bun)\s+(install|add)\b/.test(cmd)) {
+		return "Medium risk: package installs can change dependencies, lockfiles, and run lifecycle scripts.";
+	}
+	if (/\bpip\s+install\b/.test(cmd) || /\buv\s+(pip\s+)?install\b/.test(cmd)) {
+		return "Medium risk: package installs can change the active Python environment.";
+	}
+	if (/\bgit\s+commit\b/.test(cmd)) {
+		return "Medium risk: this creates local git history and should match the intended diff.";
+	}
+	if (/\bgit\s+push\b/.test(cmd)) {
+		return "High risk: this sends commits to a remote repository.";
+	}
+	if (/\brm\b/.test(cmd)) {
+		return "High risk: delete commands can permanently remove workspace files.";
+	}
+	if (/\bchmod\b/.test(cmd) || /\bchown\b/.test(cmd)) {
+		return "Medium risk: permission or ownership changes can make files executable, unreadable, or broadly writable.";
+	}
+	return "Medium risk: this shell command is not in the read-only allowlist, so it needs approval before running.";
+}
+
+function exactShellPattern(cmd: string): string | null {
+	const trimmed = cmd.trim().replace(/\s+/g, " ");
+	if (!trimmed || trimmed.length > 160) return null;
+	// Permission globs do not have an escape syntax. If the command already
+	// contains glob metacharacters, an "exact" rule would silently broaden.
+	if (/[*?]/.test(trimmed)) return null;
+	return `shell:${trimmed}`;
+}
+
+function warningAdvice(reason: string): string | null {
+	if (reason.includes("downloaded script"))
+		return "download to a file, inspect it, then run the local script explicitly.";
+	if (reason.includes("sudo"))
+		return "prefer a non-sudo command, or keep this as allow-once unless elevation is truly needed.";
+	if (reason.includes("force-pushes")) return "push without force, or confirm branch/protection before allowing once.";
+	if (reason.includes("world-writable")) return "prefer narrower permissions like 755, 644, or targeted +x.";
+	if (reason.includes("parent directories")) return "target a project-relative directory explicitly.";
+	return null;
+}
+
+function trustScopeFor(tool: string, shellPrefix?: string): string {
+	if (tool === "shell" && shellPrefix) return `shell:${shellPrefix}*`;
+	return tool;
+}
+
 function riskFor(tool: string, args: unknown): "low" | "medium" | "high" {
 	const a = (args ?? {}) as Record<string, unknown>;
 	if (tool === "shell") {
 		const cmd = stringOf(a.command);
-		if (/\brm\s+-r/.test(cmd) || /\bgit\s+push/.test(cmd) || />\s*\/dev\//.test(cmd)) return "high";
+		const verdict = validateShellCommand(cmd);
+		if (verdict.verdict === "warn" || verdict.verdict === "block") return "high";
+		if (/\brm\b/.test(cmd) || /\bgit\s+push/.test(cmd) || />\s*\/dev\//.test(cmd)) return "high";
 		return "medium";
 	}
 	if (tool === "git_commit" || tool === "git_branch") return "medium";

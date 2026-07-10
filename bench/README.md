@@ -5,8 +5,8 @@ and the reports in `polyvibe-poc/docs/benchmarks/` — run real LLM calls
 against fixed scenarios, capture metrics, write markdown reports.
 
 This is the **only** thing that proves the CLI actually works as a
-coding agent. Vitest covers the wiring (487 tests pass), but a unit
-test never sees the LLM round-trip, the tool-call dispatch, the file
+coding agent. Vitest covers the wiring, but a unit test never sees the
+LLM round-trip, the tool-call dispatch, the file
 mutations end-to-end. This harness does.
 
 ## What it measures
@@ -20,8 +20,30 @@ Per-run metrics captured into `bench/results/<sweep>/runs.jsonl`:
 - **Cost**: `$total` from pi-ai's per-message Usage envelope
 - **Tool calls**: count + the list of tool names used
 - **Model + source** (proxy / explicit env / auto / byok)
+- **Run provenance**: CLI path/version, repo commit and dirty state,
+  Node.js version, reliable-mode flag, isolated-HOME flag, and timeout
+- **Reliability receipt** when run with `--reliable true`: task completion,
+  per-task evidence, file-mutation evidence, post-mutation verification
+  evidence, completed-task verification evidence, final-answer proof, failed
+  tool count, checkpoints, and failure reasons. Obvious secret-looking values
+  are redacted before durable receipt storage.
 - **Final assistant text** (truncated to 1KB for readability)
 - **Verify exit code + last 500 bytes of stderr** when it failed
+- **Verify stdout** tail when scenario verifiers emit extra diagnostics
+
+Durable/public benchmark artifacts (`runs.jsonl`, generated markdown, and JSON
+scorecards) run through a high-confidence secret redactor for obvious API keys,
+PATs, and private keys. The per-run `bench.publicArtifact.secretRedaction`
+metadata records the ruleset version and replacement count. Aggregation applies
+the same scan again so older sweeps are redacted before report generation.
+Temporary `.codebase-bench/agent.json` files stay raw while the verifier runs so
+secret-hygiene scenarios can still catch leaks in agent behavior.
+
+The runner also writes the raw agent JSON envelope into each temporary project
+at `.codebase-bench/agent.json` and exposes its path as
+`CODEBASE_BENCH_AGENT_JSON` to `verify.sh`. Scenarios can grade transcript-level
+behavior, such as whether the agent used `create_task`, `update_task`, or
+`save_memory`, without relying on brittle final prose.
 
 ## Prerequisites
 
@@ -46,81 +68,154 @@ You also need `dist/cli.js` built:
 npm run build
 ```
 
+By default every run gets an isolated temporary `HOME` so memory, sessions,
+checkpoints, and config writes do not pollute your real `~/.codebase`. The
+runner copies `credentials.json`, `config.json`, and `config.local.json` into
+that temp home when present, so OAuth/BYOK runs still work. To deliberately use
+your real home directory:
+
+```sh
+codebase bench run --scenario all --isolate-home false
+```
+
 ## Run
 
 Single scenario, single run:
 
 ```sh
-node bench/run.mjs --scenario fix-typo
+codebase bench run --scenario fix-typo
 ```
 
 All scenarios, N=3 each:
 
 ```sh
-node bench/run.mjs --scenario all --runs 3
+codebase bench run --scenario all --runs 3
+```
+
+Public receipt sweep (requires task lifecycle + passing verification evidence):
+
+```sh
+codebase bench run --scenario all --runs 3 --reliable true
 ```
 
 Pin a model (overrides auto-detect):
 
 ```sh
-node bench/run.mjs --scenario fix-typo --model claude-sonnet-4-6
+codebase bench run --scenario fix-typo --model claude-sonnet-4-6
 # or via env:
 CODEBASE_PROVIDER=anthropic CODEBASE_MODEL=claude-sonnet-4-6 \
-  node bench/run.mjs --scenario all
+  codebase bench run --scenario all
 ```
 
 Run with a custom CLI binary (e.g. an installed npm version vs. the
 local `dist/`):
 
 ```sh
-node bench/run.mjs --cli "$(which codebase)" --scenario all
+codebase bench run --cli "$(which codebase)" --scenario all
 ```
 
 Keep the tmp project directories for inspection:
 
 ```sh
-node bench/run.mjs --scenario fix-typo --keep-tmp true
+codebase bench run --scenario fix-typo --keep-tmp true
 ```
 
 Pin a stable sweep id (so subsequent runs append to the same JSONL):
 
 ```sh
-node bench/run.mjs --scenario all --sweep-id 2026-05-09-baseline
+codebase bench run --scenario all --sweep-id 2026-05-09-baseline
 ```
+
+When invoked as `codebase bench`, results are written under
+`./bench/results/<sweep-id>` in the directory where you run the command. Direct
+`node bench/run.mjs` usage keeps the source-checkout default of
+`bench/results/<sweep-id>`. Set `CODEBASE_BENCH_RESULTS_DIR` to override both.
 
 ## Aggregate
 
 After a sweep finishes:
 
 ```sh
-node bench/aggregate.mjs <sweep-id>
+codebase bench report <sweep-id>
 ```
 
 Compare two sweeps (A/B):
 
 ```sh
-node bench/aggregate.mjs sweep-control sweep-treatment
+codebase bench report sweep-control sweep-treatment
 ```
 
 Write the report into the project-wide benchmarks directory:
 
 ```sh
-node bench/aggregate.mjs sweep-foo \
+codebase bench report sweep-foo \
   --out ../docs/benchmarks/2026-05-09-foo.md
+```
+
+Also write machine-readable launch metrics for the web app or docs pipeline:
+
+```sh
+codebase bench report sweep-foo \
+  --out ../docs/benchmarks/2026-05-09-foo.md \
+  --json-out ../docs/benchmarks/2026-05-09-foo.json
 ```
 
 The aggregator computes per-scenario means over the **passing runs
 only** so a single failure doesn't poison the timing data; outcome
 counts are reported separately.
 
+The methodology section is part of the evidence, not filler. New sweeps record
+the CLI build, repo commit, dirty state, Node version, reliable-mode flag, and
+home-isolation flag in each JSONL row; the markdown and JSON scorecard surface
+those values plus public-artifact redaction counts so launch claims can be
+traced back to the exact build tested without publishing obvious secrets.
+
+The first table is the public scorecard. It is meant to be readable by a
+launch reviewer without opening the JSONL:
+
+- **overall**: every scenario in the sweep
+- **core edits**: `add-test`, `fix-typo`, `multi-file-rename`,
+  `read-only-explain`
+- **task fidelity**: `task-list-fidelity`,
+  `durable-task-dependencies`, `complex-issue-recovery`
+- **memory hygiene**: `memory-secret-hygiene`
+- **memory retrieval**: `memory-retrieval`
+- **context continuity**: `context-continuity`
+- **permission safety**: `permission-denial-recovery`
+- **complex recovery**: `complex-issue-recovery`
+
+The public scorecard reports pass rate, reliable receipt health, task evidence,
+whether completed task work includes verification evidence, final-answer proof,
+fresh post-mutation verification, p50 passing time, and average passing cost.
+Receipt columns show `not collected` unless the sweep used `--reliable true`.
+For launch-facing claims, prefer:
+
+```sh
+npm run build
+sweep_id=launch-$(date +%Y-%m-%d)
+codebase bench run --scenario all --runs 3 --reliable true --sweep-id "$sweep_id"
+codebase bench report "$sweep_id" \
+  --out "docs/benchmarks/$sweep_id.md" \
+  --json-out "docs/benchmarks/$sweep_id.json"
+```
+
+When a sweep includes reliable-mode receipts, the report also includes a
+receipt scorecard: receipt pass count, task lifecycle pass count, task evidence
+count, completed-task verification count, final-answer proof count,
+verification count, fresh post-mutation verification count, average mutations,
+average checkpoints, and common failure reasons. Reliable receipts also flag
+stale verification that ran before the final file mutation. This is the
+launch-facing table to publish when comparing agent builds.
+
 ## Add a new scenario
 
-Each scenario lives in `bench/scenarios/<name>/` with three pieces:
+Each scenario lives in `bench/scenarios/<name>/` with these pieces:
 
 ```
 bench/scenarios/<name>/
 ├── prompt.txt        # what to give the agent (one paragraph, plain text)
 ├── verify.sh         # exits 0 = pass, anything else = fail
+├── setup-home.mjs    # optional: seed isolated HOME before the CLI runs
 └── setup/            # files copied into the tmp project before the run
     └── …
 ```
@@ -145,6 +240,29 @@ Design rules for scenarios:
 The `verify.sh` runs in the tmp project's cwd. Use `set -e` and exit
 non-zero with a clear message on failure.
 
+Useful verifier environment:
+
+- `CODEBASE_BENCH_AGENT_JSON`: parsed JSON-mode output from `codebase run`
+- `CODEBASE_BENCH_HOME`: the isolated home used for this run
+- `CODEBASE_BENCH_PROJECT`: the temporary project cwd
+- `CODEBASE_BENCH_SCENARIO_DIR`: source scenario directory
+
+## Capability Scenarios
+
+The launch-readiness set includes behavior-focused scenarios inspired by
+Claude Code's task and memory systems:
+
+- `task-list-fidelity`: multi-step bug fix that must use task tools, keep
+  progress moving through `in_progress`, complete tasks, and include
+  verification as tracked work.
+- `memory-secret-hygiene`: requires a durable `save_memory` call while
+  ensuring a fake token in the prompt is not retained in memory files.
+- `memory-retrieval`: seeds fresh, stale, and unrelated project memories in
+  the isolated benchmark HOME; the agent must use the relevant non-stale memory
+  without leaking stale or unrelated distractors into the output.
+- `complex-issue-recovery`: multi-file config bug with deterministic tests;
+  grades code inspection, task tracking, minimal repair, and verification.
+
 ## Layout
 
 ```
@@ -156,19 +274,19 @@ bench/
 └── README.md            # this file
 ```
 
-## Self-test (no LLM required)
+## Self-tests (no LLM required)
 
-The harness ships with a fake-CLI smoke test that exercises the
-JSON-parsing + verify-running paths without a real LLM call:
+The benchmark surface has no-LLM Vitest smoke tests:
 
 ```sh
-# Implementing as a vitest spec lives next.
+npx vitest --run bench/run.test.mjs bench/aggregate.test.mjs
 ```
 
-Right now the self-test is documented inline only — see the smoke
-run in commit history (`/tmp/fake-codebase-cli.mjs`). When the
-project promotes the harness to `npm run check`, that fake CLI moves
-to `bench/_self-test/fake-cli.mjs` and gets a vitest spec.
+- `bench/run.test.mjs` runs the real `fix-typo` scenario through a fake
+  Codebase CLI and verifies setup copying, JSON parsing, `verify.sh`,
+  receipt capture, JSONL output, and provenance.
+- `bench/aggregate.test.mjs` creates a synthetic JSONL sweep and verifies
+  markdown + JSON scorecard provenance.
 
 ## CI integration (future)
 

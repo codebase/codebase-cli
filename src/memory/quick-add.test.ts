@@ -20,6 +20,7 @@ describe("quickAddMemory", () => {
 	it("saves a user memory from a bare # line", () => {
 		const rec = quickAddMemory(store, "# always run the linter before committing");
 		expect(rec.type).toBe("user");
+		expect(rec.source).toBe("quick-add");
 		expect(rec.body).toBe("always run the linter before committing");
 		expect(store.list()).toHaveLength(1);
 	});

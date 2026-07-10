@@ -1,6 +1,8 @@
 import { type Component, Container, Input, SelectList, Text, type TUI } from "@earendil-works/pi-tui";
+import { validateByokApiKey } from "../auth/byok-key.js";
 import { CredentialsStore } from "../auth/credentials.js";
 import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
+import { DEFAULT_CODEBASE_SCOPES, parseScopeList } from "../auth/scopes.js";
 import { type DiscoveredServer, formatContextWindow, SCAN_PORTS, scanLocalEndpoints } from "../config/local-llm.js";
 import { ansi, selectListTheme } from "./theme.js";
 
@@ -66,12 +68,12 @@ const MENU_ITEMS = [
 	{
 		value: "oauth",
 		label: "Login to Codebase",
-		description: "free credits · Codebase Auto model · curated skills",
+		description: "free credits · Codebase Auto",
 	},
 	{
 		value: "byok",
 		label: "Bring your own LLM key",
-		description: "Anthropic / OpenAI / Groq key, or any OpenAI-compatible endpoint",
+		description: "provider key or local endpoint",
 	},
 	{ value: "quit", label: "Quit", description: "exit the wizard" },
 ];
@@ -193,7 +195,7 @@ export class FirstRunWizard extends Container {
 		this.addChild(new Text(ansi.dim("AI coding agent · CLI"), 1, 0));
 		this.addChild(
 			new Text(
-				ansi.dim("Pick how you want to power the agent. You can change this later via `codebase auth`."),
+				ansi.dim("Pick how you want to power the agent. Change later with /model, auth login, or --new."),
 				1,
 				1,
 			),
@@ -277,7 +279,11 @@ export class FirstRunWizard extends Container {
 		const input = new MaskedInput();
 		input.onSubmit = (value) => {
 			const trimmed = value.trim();
-			if (trimmed.length === 0) return;
+			const validationError = validateByokApiKey(provider.id, trimmed);
+			if (validationError) {
+				this.setMode({ kind: "error", message: validationError });
+				return;
+			}
 			try {
 				this.store.save({
 					accessToken: trimmed,
@@ -294,7 +300,11 @@ export class FirstRunWizard extends Container {
 		this.keyInput = input;
 		this.addChild(input);
 		this.addChild(
-			new Text(ansi.dim("Stored at ~/.codebase/credentials.json (mode 0600). Enter to save, Esc to go back."), 1, 1),
+			new Text(
+				ansi.dim("Will be stored at ~/.codebase/credentials.json (mode 0600). Enter to save, Esc to go back."),
+				1,
+				1,
+			),
 		);
 	}
 
@@ -497,6 +507,6 @@ function oauthConfigForBase(base: string): OAuthConfig {
 		refreshUrl: `${trimmed}/api/oauth/token`,
 		revokeUrl: `${trimmed}/api/oauth/revoke`,
 		clientId: process.env.CODEBASE_CLIENT_ID ?? "codebase-cli",
-		scopes: (process.env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
+		scopes: parseScopeList(process.env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES.join(" ")),
 	};
 }

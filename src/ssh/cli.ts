@@ -93,7 +93,7 @@ function addHost(args: readonly string[], store: SshStore, out: (m: string) => v
 	out(`✓ added ssh host "${name}" → ${formatTarget(host)}`);
 	out(`  config: ${store.filePath}`);
 	out("");
-	out("Try it: codebase ssh test " + name);
+	out(`Try it: codebase ssh test ${name}`);
 	return 0;
 }
 
@@ -305,7 +305,7 @@ function keygen(args: readonly string[], out: (m: string) => void, err: (m: stri
 	if (opts.passphrase) {
 		out("");
 		out("(Note: we generated this key without a passphrase so the agent can use it");
-		out(" non-interactively. To add a passphrase later: `ssh-keygen -p -f " + keyPath + "`)");
+		out(` non-interactively. To add a passphrase later: \`ssh-keygen -p -f ${keyPath}\`)`);
 	}
 	return 0;
 }

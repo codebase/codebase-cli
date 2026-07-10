@@ -1,5 +1,6 @@
 import { CredentialsStore } from "./credentials.js";
 import { type OAuthConfig, refreshAccessToken, revokeToken, runOAuthLogin } from "./flow.js";
+import { DEFAULT_CODEBASE_SCOPES, parseScopeList, webBuildScopeReadiness } from "./scopes.js";
 
 const DEFAULT_AUTH_BASE = "https://codebase.design";
 
@@ -28,7 +29,7 @@ export function defaultOAuthConfig(env: NodeJS.ProcessEnv = process.env): OAuthC
 		refreshUrl: `${base}/api/oauth/token`,
 		revokeUrl: `${base}/api/oauth/revoke`,
 		clientId: env.CODEBASE_CLIENT_ID ?? "codebase-cli",
-		scopes: (env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
+		scopes: parseScopeList(env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES.join(" ")),
 	};
 }
 
@@ -49,7 +50,7 @@ export interface AuthCliOptions {
  *   auth login            → run OAuth browser flow, persist tokens
  *   auth logout           → clear credentials, best-effort server revoke
  *   auth refresh          → force a refresh against the stored refresh token
- *   auth <key>            → save a manual API key (headless / SSH)
+ *   auth <token>          → save a manual Codebase bearer token (headless / SSH)
  */
 export async function runAuthSubcommand(argv: string[], options: AuthCliOptions = {}): Promise<number> {
 	const store = options.store ?? new CredentialsStore();
@@ -61,6 +62,12 @@ export async function runAuthSubcommand(argv: string[], options: AuthCliOptions 
 
 	try {
 		switch (subcommand) {
+			case "--help":
+			case "-h":
+			case "help":
+				printAuthHelp(out);
+				return 0;
+
 			case "status":
 				return statusCmd(store, out);
 
@@ -102,6 +109,9 @@ function statusCmd(store: CredentialsStore, out: (m: string) => void): number {
 	if (creds.email) out(`  email:  ${creds.email}`);
 	if (creds.userId) out(`  userId: ${creds.userId}`);
 	out(`  scopes: ${creds.scopes.join(" ")}`);
+	const webBuild = webBuildScopeReadiness(creds);
+	out(`  web build: ${webBuild.message}`);
+	if (webBuild.status !== "ready") out(`             fix: ${webBuild.fix}`);
 	out(`  ${expiry}`);
 	out(`  file:   ${store.filePath} (mode ${(store.mode() ?? 0).toString(8)})`);
 	return 0;
@@ -250,14 +260,37 @@ async function refreshCmd(
 }
 
 function manualKeyCmd(store: CredentialsStore, key: string, out: (m: string) => void): number {
+	if (looksLikeProviderKey(key)) {
+		throw new Error(
+			"That looks like a provider API key, not a Codebase bearer token. " +
+				"For BYOK, run `codebase --new` and choose Bring your own key, or set ANTHROPIC_API_KEY/OPENAI_API_KEY/etc. in your shell.",
+		);
+	}
 	if (!key || key.length < 16) {
-		throw new Error("API key looks too short — paste the full token from the dashboard.");
+		throw new Error("token looks too short — paste the full Codebase bearer token.");
 	}
 	store.save({
 		accessToken: key,
 		scopes: ["inference"],
 		source: "manual",
 	});
-	out("API key saved.");
+	out("Codebase bearer token saved.");
 	return 0;
+}
+
+function printAuthHelp(out: (m: string) => void): void {
+	out("usage: codebase auth [status | login | logout | refresh | <token>]");
+	out("");
+	out("Commands:");
+	out("  status        show current sign-in");
+	out("  login         sign in via codebase.design browser OAuth");
+	out("  logout        revoke and remove the saved session");
+	out("  refresh       force-refresh the saved OAuth access token");
+	out("  <token>       save a Codebase bearer token for advanced headless/SSH use");
+	out("");
+	out("Provider BYOK: run `codebase --new` and choose Bring your own key, or set an *_API_KEY env var.");
+}
+
+function looksLikeProviderKey(key: string): boolean {
+	return /^(sk-ant-|sk-proj-|sk-|gsk_|xai-|AIza|mistral-|or-|openrouter-|AIzaSy)/.test(key);
 }

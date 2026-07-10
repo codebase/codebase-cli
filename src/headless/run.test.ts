@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isVerificationCommand } from "./reliable.js";
 import { buildJsonResult, runHeadless } from "./run.js";
 
 interface Capture {
@@ -31,12 +32,14 @@ describe("runHeadless", () => {
 	let model: Model<string>;
 	let tmpHome: string;
 	let prevHome: string | undefined;
+	let prevCwd: string;
 
 	beforeEach(() => {
 		// Isolate HOME so CredentialsStore can't pick up the dev's real
 		// ~/.codebase login — otherwise the ConfigError tests are non-hermetic
 		// and pass only when no valid credentials happen to exist on the box.
 		prevHome = process.env.HOME;
+		prevCwd = process.cwd();
 		tmpHome = mkdtempSync(join(tmpdir(), "headless-home-"));
 		process.env.HOME = tmpHome;
 		faux = registerFauxProvider({
@@ -58,6 +61,7 @@ describe("runHeadless", () => {
 
 	afterEach(() => {
 		faux.unregister();
+		process.chdir(prevCwd);
 		if (prevHome !== undefined) process.env.HOME = prevHome;
 		else delete process.env.HOME;
 		rmSync(tmpHome, { recursive: true, force: true });
@@ -77,6 +81,51 @@ describe("runHeadless", () => {
 		expect(capture.stdout).toContain("hello from the faux model");
 		// Tool activity hints go to stderr — none expected for a text-only response.
 		expect(capture.stderr).toBe("");
+		expect(existsSync(join(tmpHome, ".codebase", "sessions"))).toBe(false);
+	});
+
+	it("persists a headless session only when resume continuity is explicit", async () => {
+		faux.setResponses([fauxAssistantMessage("continuity")]);
+		const { write } = makeCapture();
+		await runHeadless({
+			prompt: "continue this later",
+			resume: true,
+			outputFormat: "text",
+			autoApprove: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		const sessionsRoot = join(tmpHome, ".codebase", "sessions");
+		expect(existsSync(sessionsRoot)).toBe(true);
+		const projectDirs = readdirSync(sessionsRoot);
+		expect(projectDirs).toHaveLength(1);
+		expect(readdirSync(join(sessionsRoot, projectDirs[0] as string))).toHaveLength(1);
+	});
+
+	it("stops a runaway headless tool loop at the configured turn limit", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-turn-limit-"));
+		writeFileSync(join(tmpProject, "a.txt"), "a\n");
+		writeFileSync(join(tmpProject, "b.txt"), "b\n");
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("read_file", { path: "a.txt" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("read_file", { path: "b.txt" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("should not complete normally"),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "loop forever",
+			maxTurns: 2,
+			outputFormat: "json",
+			autoApprove: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		const parsed = JSON.parse(capture.stdout.trim()) as { code: string; error: string };
+		expect(exitCode).toBe(1);
+		expect(parsed.code).toBe("turn_limit_reached");
+		expect(parsed.error).toContain("stopped after 2 turns");
+		rmSync(tmpProject, { recursive: true, force: true });
 	});
 
 	it("stream-json mode emits one JSONL line per agent event", async () => {
@@ -130,6 +179,1203 @@ describe("runHeadless", () => {
 		expect(parsed.finalText).toContain("done");
 		expect(parsed.messageCount).toBeGreaterThanOrEqual(2); // user + assistant
 		expect(parsed.model.id).toBe("test-model");
+	});
+
+	it("reliable json mode includes a receipt when tasks and verification pass", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-pass-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: "node -e 'process.exit(0)'" } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Add coverage" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "cd . && npm test 2>&1", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test. No file-change verification was needed."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			receiptId: string;
+			receiptPath: string;
+			receipt: {
+				ok: boolean;
+				summary: {
+					completedTasks: number;
+					completedTasksWithEvidence: number;
+					completedTasksWithVerification: number;
+					verificationCount: number;
+				};
+				finalAnswer: {
+					mentionsFreshVerification: boolean;
+					mentionsNoFileChangeVerification: boolean;
+					matchedVerificationCommands: string[];
+				};
+				taskEvidence: Array<{
+					id: string;
+					toolCalls: Array<{ name: string }>;
+					verification: Array<{ command: string }>;
+				}>;
+				verification: { command: string }[];
+			};
+		};
+		expect(parsed.ok).toBe(true);
+		expect(parsed.receipt.ok).toBe(true);
+		expect(parsed.receipt.summary.completedTasks).toBe(1);
+		expect(parsed.receipt.summary.completedTasksWithEvidence).toBe(1);
+		expect(parsed.receipt.summary.completedTasksWithVerification).toBe(1);
+		expect(parsed.receipt.summary.verificationCount).toBe(1);
+		expect(parsed.receipt.finalAnswer).toEqual({
+			mentionsFreshVerification: true,
+			mentionsNoFileChangeVerification: true,
+			matchedVerificationCommands: ["cd . && npm test 2>&1"],
+		});
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			toolCalls: [{ name: "shell" }],
+			verification: [{ command: "cd . && npm test 2>&1" }],
+		});
+		expect(parsed.receipt.verification[0]?.command).toBe("cd . && npm test 2>&1");
+		expect(parsed.receiptId).toMatch(/\d{4}/);
+		expect(parsed.receiptPath).toContain(".codebase/receipts");
+		expect(existsSync(parsed.receiptPath)).toBe(true);
+		expect(
+			JSON.stringify((parsed as { messages: Array<{ role: string; content: unknown }> }).messages[0]?.content),
+		).not.toContain("Reliable mode is enabled for this run");
+		const saved = JSON.parse(readFileSync(parsed.receiptPath, "utf8")) as { id: string; receipt: { ok: boolean } };
+		expect(saved.id).toBe(parsed.receiptId);
+		expect(saved.receipt.ok).toBe(true);
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode accepts read-only task evidence without shell verification", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-read-only-"));
+		writeFileSync(join(tmpProject, "README.md"), "project notes\n");
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Inspect project notes" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("read_file", { path: "README.md" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Read README.md. No file-change verification was needed."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "explain the project notes",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			receipt: {
+				ok: boolean;
+				summary: {
+					mutationCount: number;
+					verificationCount: number;
+					completedTasksWithEvidence: number;
+					finalAnswerMentionsNoFileChangeVerification: boolean;
+				};
+				finalAnswer: {
+					mentionsFreshVerification: boolean;
+					mentionsNoFileChangeVerification: boolean;
+					matchedVerificationCommands: string[];
+				};
+				failures: string[];
+			};
+		};
+		expect(parsed.ok).toBe(true);
+		expect(parsed.receipt.ok).toBe(true);
+		expect(parsed.receipt.summary).toMatchObject({
+			mutationCount: 0,
+			verificationCount: 0,
+			completedTasksWithEvidence: 1,
+			finalAnswerMentionsNoFileChangeVerification: true,
+		});
+		expect(parsed.receipt.finalAnswer).toMatchObject({
+			mentionsFreshVerification: false,
+			mentionsNoFileChangeVerification: true,
+			matchedVerificationCommands: [],
+		});
+		expect(parsed.receipt.failures).not.toContain("no successful verification command was recorded");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails read-only work that omits the no-verification-needed proof", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-read-only-proof-"));
+		writeFileSync(join(tmpProject, "README.md"), "project notes\n");
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Inspect project notes" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("read_file", { path: "README.md" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Read README.md."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "explain the project notes",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				ok: boolean;
+				failures: string[];
+				summary: {
+					mutationCount: number;
+					verificationCount: number;
+					finalAnswerMentionsNoFileChangeVerification: boolean;
+				};
+				finalAnswer: { mentionsNoFileChangeVerification: boolean };
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.ok).toBe(false);
+		expect(parsed.receipt.summary).toMatchObject({
+			mutationCount: 0,
+			verificationCount: 0,
+			finalAnswerMentionsNoFileChangeVerification: false,
+		});
+		expect(parsed.receipt.finalAnswer.mentionsNoFileChangeVerification).toBe(false);
+		expect(parsed.receipt.failures).toContain("final answer did not state no file-change verification was needed");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("does not let an unrelated verification command bypass read-only final proof", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-read-only-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: "node -e 'process.exit(0)'" } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Inspect project" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Inspected the project. npm test passed."),
+			fauxAssistantMessage("Still omitting the required no-change proof."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "inspect the project",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		const parsed = JSON.parse(capture.stdout.trim()) as { receipt: { failures: string[] } };
+		expect(exitCode).toBe(1);
+		expect(parsed.receipt.failures).toContain("final answer did not state no file-change verification was needed");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when the durable final answer still misses proof after repair", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-repair-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: "node -e 'process.exit(0)'" } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Write result file" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done."),
+			fauxAssistantMessage("Reliable receipt repaired. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "write result",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				ok: boolean;
+				failures: string[];
+				summary: { verificationCount: number; finalAnswerMentionsFreshVerification: boolean };
+				verification: Array<{ command: string }>;
+				taskEvidence: Array<{
+					id: string;
+					mutations: Array<{ tool: string }>;
+					verification: Array<{ command: string }>;
+				}>;
+			};
+			finalText: string;
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.ok).toBe(false);
+		expect(parsed.receipt.summary.verificationCount).toBe(1);
+		expect(parsed.receipt.summary.finalAnswerMentionsFreshVerification).toBe(false);
+		expect(parsed.receipt.failures).toContain(
+			"final answer did not name a fresh passing verification command: npm test",
+		);
+		expect(parsed.receipt.verification[0]?.command).toBe("npm test");
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			mutations: [{ tool: "write_file" }],
+			verification: [{ command: "npm test" }],
+		});
+		expect(parsed.finalText).not.toContain("npm test");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable repair cannot attach an edit that happened before in_progress", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-reopen-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Write result file" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done without proper task evidence."),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage(
+				[
+					fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 }),
+					fauxToolCall("update_task", { id: "task-1", status: "completed" }),
+				],
+				{
+					stopReason: "toolUse",
+				},
+			),
+			fauxAssistantMessage("Repaired the task evidence and verified with npm test."),
+			fauxAssistantMessage("Repaired the task evidence and verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "write result",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				ok: boolean;
+				failures: string[];
+				taskEvidence: Array<{ id: string; mutations: unknown[]; verification: Array<{ command: string }> }>;
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.ok).toBe(false);
+		expect(parsed.receipt.failures).toContain("file mutation lacked completed task evidence: write_file result.txt");
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			mutations: [],
+			verification: [{ command: "npm test" }],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable repair prompts stay internal to user-facing JSON", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-repair-prompt-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Write result file" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done without proper task evidence."),
+			fauxAssistantMessage("Still not repaired."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "write result",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			messages: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
+		};
+		expect(exitCode).toBe(1);
+		const exposedRepairPrompt = parsed.messages.find((message) =>
+			message.content.some(
+				(block) =>
+					block.type === "text" &&
+					block.text?.includes("If failures name existing task ids that lacked evidence or skipped in_progress"),
+			),
+		);
+		expect(exposedRepairPrompt).toBeUndefined();
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when verification is not tied to a completed task", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-detached-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit file" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				summary: {
+					completedTasksWithEvidence: number;
+					completedTasksWithVerification: number;
+					verificationAfterLastMutationCount: number;
+					finalAnswerMentionsFreshVerification: boolean;
+				};
+				taskEvidence: Array<{ id: string; mutations: unknown[]; verification: unknown[] }>;
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("no completed task captured verification evidence");
+		expect(parsed.receipt.summary).toMatchObject({
+			completedTasksWithEvidence: 1,
+			completedTasksWithVerification: 0,
+			verificationAfterLastMutationCount: 1,
+			finalAnswerMentionsFreshVerification: true,
+		});
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			mutations: [{ tool: "write_file" }],
+			verification: [],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when a file mutation is outside completed task work", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-detached-mutation-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit file" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+			fauxAssistantMessage("The edit happened before task activation. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				summary: {
+					mutationCount: number;
+					completedTasksWithEvidence: number;
+					completedTasksWithVerification: number;
+					verificationAfterLastMutationCount: number;
+					finalAnswerMentionsFreshVerification: boolean;
+				};
+				mutations: Array<{ tool: string; path?: string }>;
+				taskEvidence: Array<{ id: string; mutations: unknown[]; verification: Array<{ command: string }> }>;
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("file mutation lacked completed task evidence: write_file result.txt");
+		expect(parsed.receipt.summary).toMatchObject({
+			mutationCount: 1,
+			completedTasksWithEvidence: 1,
+			completedTasksWithVerification: 1,
+			verificationAfterLastMutationCount: 1,
+			finalAnswerMentionsFreshVerification: true,
+		});
+		expect(parsed.receipt.mutations[0]).toMatchObject({ tool: "write_file", path: "result.txt" });
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			mutations: [],
+			verification: [{ command: "npm test" }],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when the final answer omits fresh verification", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-final-proof-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit and verify" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				finalAnswer: {
+					mentionsFreshVerification: boolean;
+					mentionsNoFileChangeVerification: boolean;
+					matchedVerificationCommands: string[];
+				};
+				summary: { finalAnswerMentionsFreshVerification: boolean };
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain(
+			"final answer did not name a fresh passing verification command: npm test",
+		);
+		expect(parsed.receipt.finalAnswer).toEqual({
+			mentionsFreshVerification: false,
+			mentionsNoFileChangeVerification: false,
+			matchedVerificationCommands: [],
+		});
+		expect(parsed.receipt.summary.finalAnswerMentionsFreshVerification).toBe(false);
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode rejects negated final-answer verification mentions", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-negated-proof-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit and verify" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. I did not run npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				finalAnswer: {
+					mentionsFreshVerification: boolean;
+					mentionsNoFileChangeVerification: boolean;
+					matchedVerificationCommands: string[];
+				};
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain(
+			"final answer did not name a fresh passing verification command: npm test",
+		);
+		expect(parsed.receipt.finalAnswer).toEqual({
+			mentionsFreshVerification: false,
+			mentionsNoFileChangeVerification: false,
+			matchedVerificationCommands: [],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when verification ran before the last file mutation", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-stale-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit and verify" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				summary: { mutationCount: number; verificationCount: number; verificationAfterLastMutationCount: number };
+				mutations: Array<{ tool: string; path?: string; checkpoints: unknown[] }>;
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("successful verification ran before the last file mutation");
+		expect(parsed.receipt.summary).toMatchObject({
+			mutationCount: 1,
+			verificationCount: 1,
+			verificationAfterLastMutationCount: 0,
+		});
+		expect(parsed.receipt.mutations[0]).toMatchObject({
+			tool: "write_file",
+			path: "result.txt",
+			checkpoints: [{ display: "result.txt" }],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode accepts verification after the last file mutation", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-fresh-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Edit and verify" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			receipt: {
+				ok: boolean;
+				summary: {
+					mutationCount: number;
+					completedTasksWithEvidence: number;
+					completedTasksWithVerification: number;
+					verificationCount: number;
+					verificationAfterLastMutationCount: number;
+				};
+				mutations: Array<{ tool: string; path?: string; checkpoints: unknown[] }>;
+				taskEvidence: Array<{
+					id: string;
+					toolCalls: Array<{ name: string }>;
+					mutations: Array<{ tool: string }>;
+					verification: Array<{ command: string }>;
+				}>;
+				verification: Array<{ command: string; endedAt: number }>;
+			};
+		};
+		expect(parsed.ok).toBe(true);
+		expect(parsed.receipt.ok).toBe(true);
+		expect(parsed.receipt.summary).toMatchObject({
+			mutationCount: 1,
+			completedTasksWithEvidence: 1,
+			completedTasksWithVerification: 1,
+			verificationCount: 1,
+			verificationAfterLastMutationCount: 1,
+		});
+		expect(parsed.receipt.mutations[0]).toMatchObject({
+			tool: "write_file",
+			path: "result.txt",
+			checkpoints: [{ display: "result.txt" }],
+		});
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			toolCalls: [{ name: "write_file" }, { name: "shell" }],
+			mutations: [{ tool: "write_file" }],
+			verification: [{ command: "npm test" }],
+		});
+		expect(parsed.receipt.verification[0]?.command).toBe("npm test");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when a completed task has no active evidence", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-empty-task-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Do work" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: {
+				failures: string[];
+				summary: { completedTasks: number; completedTasksWithEvidence: number; verificationCount: number };
+				taskEvidence: Array<{ id: string; toolCalls: unknown[]; mutations: unknown[]; verification: unknown[] }>;
+			};
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("completed task lacked evidence: task-1");
+		expect(parsed.receipt.summary).toMatchObject({
+			completedTasks: 1,
+			completedTasksWithEvidence: 0,
+			verificationCount: 1,
+		});
+		expect(parsed.receipt.taskEvidence[0]).toMatchObject({
+			id: "task-1",
+			toolCalls: [],
+			mutations: [],
+			verification: [],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when no task list was created", async () => {
+		faux.setResponses([fauxAssistantMessage("done without tasks")]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[] };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("no task list was created");
+	});
+
+	it("reliable json mode fails when verification never passed", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-no-verify-"));
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Do work" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done without verification."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[] };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("no successful verification command was recorded");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode explains masked verification attempts", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-masked-verify-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Do work" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "result.txt", content: "changed\n" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: 'npm test; echo "exit:$?"', timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage('Done. Verified with npm test; echo "exit:$?".'),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[]; warnings: string[]; verification: unknown[] };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.verification).toEqual([]);
+		expect(parsed.receipt.failures[0]).toContain("masked verification command ignored");
+		expect(parsed.receipt.warnings[0]).toContain("masked verification command ignored");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("recognizes project-local test and smoke commands as verification", () => {
+		expect(isVerificationCommand("node test.mjs")).toBe(true);
+		expect(isVerificationCommand("node --test")).toBe(true);
+		expect(isVerificationCommand("node --experimental-strip-types _verify_rename.ts")).toBe(true);
+		expect(isVerificationCommand("node --experimental-strip-types src/index.ts")).toBe(true);
+		expect(
+			isVerificationCommand("node --experimental-strip-types -e \"import { parseTimestamp } from './parse.ts';\""),
+		).toBe(true);
+		expect(
+			isVerificationCommand(`node --input-type=module -e "
+import { parseTimestamp } from './src/parse.ts';
+import { sortByDate } from './src/util.ts';
+console.log(parseTimestamp('2024-01-01T00:00:00Z'), sortByDate([]));
+"`),
+		).toBe(true);
+		expect(isVerificationCommand("npx tsx src/index.ts")).toBe(true);
+		expect(
+			isVerificationCommand("npx tsx -e \"import {greet} from './src/index.ts'; console.log(greet('test'))\""),
+		).toBe(true);
+		expect(
+			isVerificationCommand(
+				"npx -y typescript@latest --noEmit --lib es2020 --module nodenext --target es2020 src/parse.ts src/main.ts 2>&1",
+			),
+		).toBe(true);
+		expect(isVerificationCommand("deno check src/parse.ts")).toBe(true);
+		expect(isVerificationCommand("bun src/index.ts")).toBe(true);
+		expect(isVerificationCommand("grep -q 'hello world' src/index.ts && ! grep -q 'helo world' src/index.ts")).toBe(
+			true,
+		);
+		expect(
+			isVerificationCommand(
+				"test -f src/math.test.ts && grep -q 'describe(' src/math.test.ts && grep -q 'it(' src/math.test.ts && grep -q 'expect(' src/math.test.ts",
+			),
+		).toBe(true);
+		expect(isVerificationCommand("! grep -REn '\\bparseDate\\b' src/ && grep -REn '\\bparseTimestamp\\b' src/")).toBe(
+			true,
+		);
+		expect(isVerificationCommand("npx tsc --noEmit 2>&1 || true")).toBe(false);
+		expect(isVerificationCommand('npm test; echo "exit:$?"')).toBe(false);
+		expect(isVerificationCommand("which node && node --version && which tsc")).toBe(false);
+		expect(isVerificationCommand("grep -q 'hello world' src/index.ts || echo missing")).toBe(false);
+		expect(
+			isVerificationCommand("test -f src/math.test.ts && grep -q 'expect(' src/math.test.ts || echo missing"),
+		).toBe(false);
+		expect(isVerificationCommand("grep -rn 'parseDate' src/ 2>&1; echo \"---EXIT:$?\"")).toBe(false);
+		expect(isVerificationCommand("npx tsx -e \"console.log('hello')\"")).toBe(false);
+		expect(isVerificationCommand("node -e \"console.log('hello')\"")).toBe(false);
+		expect(isVerificationCommand("node scripts/generate-fixture.mjs")).toBe(false);
+	});
+
+	it("reliable json mode fails when completed tasks skip in_progress", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-lifecycle-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("create_task", { title: "Do work" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "completed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[]; taskLifecycle: Array<{ id: string; transitions: unknown[] }> };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("completed task skipped in_progress: task-1");
+		expect(parsed.receipt.taskLifecycle[0]).toMatchObject({
+			id: "task-1",
+			transitions: [{ status: "pending" }, { status: "completed" }],
+		});
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("reliable json mode fails when active tasks overlap", async () => {
+		const tmpProject = mkdtempSync(join(tmpdir(), "headless-reliable-overlap-"));
+		writeFileSync(
+			join(tmpProject, "package.json"),
+			JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }),
+		);
+		process.chdir(tmpProject);
+		faux.setResponses([
+			fauxAssistantMessage(
+				[fauxToolCall("create_task", { title: "Do first" }), fauxToolCall("create_task", { title: "Do second" })],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-1", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("update_task", { id: "task-2", status: "in_progress" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("shell", { command: "npm test", timeout_ms: 10_000 })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage(
+				[
+					fauxToolCall("update_task", { id: "task-1", status: "completed" }),
+					fauxToolCall("update_task", { id: "task-2", status: "completed" }),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("Done. Verified with npm test."),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "do reliable work",
+			outputFormat: "json",
+			autoApprove: true,
+			reliable: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			code: string;
+			receipt: { failures: string[]; warnings: string[] };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.code).toBe("reliable_gate_failed");
+		expect(parsed.receipt.failures).toContain("multiple tasks were in_progress at once: task-1, task-2");
+		expect(parsed.receipt.warnings).not.toContain("multiple tasks were in_progress at once: task-1, task-2");
+		rmSync(tmpProject, { recursive: true, force: true });
+	});
+
+	it("json mode exits non-zero when the assistant turn ends with a provider error", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([], {
+				stopReason: "error",
+				errorMessage: "simulated provider failure",
+			}),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "hi",
+			outputFormat: "json",
+			autoApprove: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as { ok: boolean; exitCode: number; error: string };
+		expect(parsed.ok).toBe(false);
+		expect(parsed.exitCode).toBe(1);
+		expect(parsed.error).toBe("simulated provider failure");
+	});
+
+	it("json mode explains provider API key failures with recovery copy", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([], {
+				stopReason: "error",
+				errorMessage:
+					'ERROR 401\n{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+			}),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "hi",
+			outputFormat: "json",
+			autoApprove: true,
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(1);
+		const parsed = JSON.parse(capture.stdout.trim()) as { error: string };
+		expect(parsed.error).toContain("API key was rejected");
+		expect(parsed.error).toContain("codebase auth login");
+	});
+
+	it("json mode fails explicitly when a tool needs approval without auto-approve", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("write_file", { path: "note.txt", content: "hi\n" })], {
+				stopReason: "toolUse",
+			}),
+		]);
+		const { capture, write } = makeCapture();
+		const exitCode = await runHeadless({
+			prompt: "write a note",
+			outputFormat: "json",
+			configOverride: { model, apiKey: "faux-key", source: "byok" },
+			...write,
+		});
+		expect(exitCode).toBe(2);
+		const parsed = JSON.parse(capture.stdout.trim()) as {
+			ok: boolean;
+			exitCode: number;
+			code: string;
+			error: string;
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.exitCode).toBe(2);
+		expect(parsed.code).toBe("approval_required");
+		expect(parsed.error).toMatch(/--auto-approve/);
 	});
 
 	it("returns exit code 1 with a stderr error when ConfigError fires before the loop", async () => {
@@ -293,7 +1539,7 @@ describe("buildJsonResult", () => {
 		expect(result.error).toBe("boom");
 	});
 
-	it("preserves the raw messages array on the envelope", () => {
+	it("preserves user-visible messages on the envelope", () => {
 		const messages = [{ role: "user", content: "hi" } as never];
 		const result = buildJsonResult({
 			ok: true,
@@ -306,5 +1552,34 @@ describe("buildJsonResult", () => {
 		});
 		expect((result.messages as unknown[]).length).toBe(1);
 		expect(result.messageCount).toBe(1);
+	});
+
+	it("hides runtime reminders, thinking, and proxy protocol in JSON", () => {
+		const result = buildJsonResult({
+			ok: true,
+			exitCode: 0,
+			messages: [
+				{ role: "user", content: "<system-reminder>internal</system-reminder>Actual request" } as never,
+				{
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "private repair" },
+						{ type: "text", text: "Visible answer<｜DSML｜hidden" },
+					],
+				} as never,
+			],
+			usage: {},
+			model: { provider: "faux", id: "x", name: "X" },
+			source: "proxy",
+			durationMs: 1,
+		});
+		expect(JSON.stringify(result.messages)).toBe(
+			JSON.stringify([
+				{ role: "user", content: "Actual request" },
+				{ role: "assistant", content: [{ type: "text", text: "Visible answer" }] },
+			]),
+		);
+		expect(result.finalText).toBe("Visible answer");
+		expect(result.usageAvailable).toBe(false);
 	});
 });

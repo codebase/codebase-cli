@@ -1,7 +1,9 @@
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { validateByokApiKey } from "../auth/byok-key.js";
 import { CredentialsStore } from "../auth/credentials.js";
 import { type OAuthConfig, type PasteResult, runOAuthLogin } from "../auth/flow.js";
+import { DEFAULT_CODEBASE_SCOPES, parseScopeList } from "../auth/scopes.js";
 import { type DiscoveredServer, formatContextWindow, SCAN_PORTS, scanLocalEndpoints } from "../config/local-llm.js";
 import { PixelC } from "./PixelC.js";
 
@@ -73,11 +75,11 @@ interface FirstRunSetupProps {
 }
 
 const MENU_OPTIONS = [
-	{ key: "oauth", label: "Login to Codebase", hint: "free credits · Codebase Auto model · curated skills" },
+	{ key: "oauth", label: "Login to Codebase", hint: "free credits · Codebase Auto" },
 	{
 		key: "byok",
 		label: "Bring your own LLM key",
-		hint: "Anthropic / OpenAI / Groq key, or any OpenAI-compatible endpoint",
+		hint: "provider key or local endpoint",
 	},
 	{ key: "quit", label: "Quit", hint: "exit the wizard" },
 ] as const;
@@ -273,7 +275,11 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 				}
 				if (key.return) {
 					const trimmed = mode.buffer.trim();
-					if (trimmed.length === 0) return;
+					const validationError = validateByokApiKey(mode.provider.id, trimmed);
+					if (validationError) {
+						setMode({ kind: "error", message: validationError });
+						return;
+					}
 					try {
 						credStore.save({
 							accessToken: trimmed,
@@ -375,7 +381,7 @@ export function FirstRunSetup({ onDone, onQuit, store, authBase = DEFAULT_AUTH_B
 		<Box flexDirection="column" paddingX={1} paddingY={1}>
 			<BrandHeader />
 			<Box marginBottom={1}>
-				<Text dimColor>Pick how you want to power the agent. You can change this later via `codebase auth`.</Text>
+				<Text dimColor>Pick how you want to power the agent. Change later with /model, auth login, or --new.</Text>
 			</Box>
 			{renderBody(mode, authBase, manualUrl, pasteBuffer, pasteError)}
 		</Box>
@@ -419,7 +425,7 @@ function renderBody(
 							<Text bold={selected} color={selected ? "white" : undefined}>
 								{opt.label}
 							</Text>
-							<Text dimColor>{"   — " + opt.hint}</Text>
+							<Text dimColor>{`   — ${opt.hint}`}</Text>
 						</Text>
 					);
 				})}
@@ -486,7 +492,7 @@ function renderBody(
 								<Text bold={selected} color={selected ? "white" : undefined}>
 									{p.label}
 								</Text>
-								<Text dimColor>{"  — " + p.hint}</Text>
+								<Text dimColor>{`  — ${p.hint}`}</Text>
 							</Text>
 						);
 					})}
@@ -595,7 +601,7 @@ function renderBody(
 				</Box>
 				<Box marginTop={1}>
 					<Text dimColor>
-						Stored at ~/.codebase/credentials.json (mode 0600). Press Enter to save, Esc to go back.
+						Will be stored at ~/.codebase/credentials.json (mode 0600). Press Enter to save, Esc to go back.
 					</Text>
 				</Box>
 			</Box>
@@ -625,6 +631,6 @@ function oauthConfigForBase(base: string): OAuthConfig {
 		refreshUrl: `${trimmed}/api/oauth/token`,
 		revokeUrl: `${trimmed}/api/oauth/revoke`,
 		clientId: process.env.CODEBASE_CLIENT_ID ?? "codebase-cli",
-		scopes: (process.env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
+		scopes: parseScopeList(process.env.CODEBASE_SCOPES ?? DEFAULT_CODEBASE_SCOPES.join(" ")),
 	};
 }

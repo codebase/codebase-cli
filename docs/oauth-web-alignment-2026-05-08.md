@@ -96,7 +96,7 @@ function defaultOAuthConfig(env: NodeJS.ProcessEnv = process.env): OAuthConfig {
     revokeUrl:  `${base}/api/oauth/revoke`,
 
     clientId: env.CODEBASE_CLIENT_ID ?? "codebase-cli",
-    scopes:   (env.CODEBASE_SCOPES ?? "inference projects credits").split(/\s+/).filter(Boolean),
+    scopes:   (env.CODEBASE_SCOPES ?? "inference projects credits builds:read builds:write").split(/\s+/).filter(Boolean),
   };
 }
 ```
@@ -137,9 +137,11 @@ The web has separate routes for the two protocols:
 
 `pi-ai` already routes per-provider, so as long as `DEFAULT_PROXY_BASE` is `/api/inference` and provider configs append the right path (`/chat` or `/v1/messages`), it works. Worth testing one of each end-to-end before claiming the proxy mode is shipped.
 
-### Required scope for inference
+### Required scopes for inference and builds
 
-`/inference/chat` (line 32) and `/inference/v1/messages` (line 184) both check `if (!scopes.includes('inference'))` and return 403 otherwise. v2 already requests `inference projects credits` — fine. Just make sure the auth flow validates the scope is granted before claiming success.
+`/inference/chat` (line 32) and `/inference/v1/messages` (line 184) both check `if (!scopes.includes('inference'))` and return 403 otherwise. v2 requests `inference projects credits builds:read builds:write`; make sure the auth flow validates the granted scopes before claiming success.
+
+The v1 web build API accepts OAuth bearer tokens through the same auth bridge, but build start/cancel requires `builds:write` and status/preview/events requires `builds:read`. New CLI logins request both build scopes so `codebase project build --wait ...` can run without a separate API key.
 
 ### What the web returns on `/oauth/userinfo`
 
@@ -151,7 +153,7 @@ I didn't paste the body, but quick read of `routes/oauth.js:328` says it require
 
 - v1 OAuth flow works against current web (verified by reading both sides — no nginx, scope, or shape drift).
 - The web ALSO supports `/cli/projects` GET routes for project listing. v2 doesn't seem to use them yet but they're there when you wire the project-pull feature.
-- Scopes match: `inference projects credits`. PKCE uses S256 only on both sides. Token type is Bearer.
+- Scopes match for CLI inference, projects, credits, and v1 builds. PKCE uses S256 only on both sides. Token type is Bearer.
 - `~/.codebase/credentials.json` shape v2 uses (CredentialsStore) is independent of the web — purely client-side state. Nothing to align there.
 
 ---

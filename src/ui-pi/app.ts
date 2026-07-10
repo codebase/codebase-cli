@@ -1,7 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent } from "@earendil-works/pi-ai";
 import {
 	type AutocompleteItem,
 	CombinedAutocompleteProvider,
@@ -27,6 +26,7 @@ import {
 	type TournamentProgress,
 } from "../agent/tournament.js";
 import { createContestantRunner, defaultContestantPrompt } from "../agent/tournament-runner.js";
+import { visibleMessages } from "../agent/visible-messages.js";
 import { snapshotWorkingTree } from "../agent/wip-snapshot.js";
 import { copyToClipboard } from "../clipboard/copy.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
@@ -34,6 +34,7 @@ import { buildMcpPromptCommands } from "../commands/mcp-prompt-commands.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { buildSkillCommands } from "../commands/skill-commands.js";
 import { ConfigStore } from "../config/store.js";
+import { userFacingErrorMessage } from "../errors/user-facing.js";
 import { quickAddMemory } from "../memory/quick-add.js";
 import { runPlanFlow } from "../plan/run-flow.js";
 import type { ChatState, ToolExecution } from "../types.js";
@@ -144,10 +145,11 @@ export class App extends Container {
 
 		// If we resumed, the saved transcript already includes env context
 		// from the prior session — don't re-inject on first turn.
-		if (this.bundle.resumedMessages.length > 0) this.envInjected = true;
-		this.messages.push(...this.bundle.resumedMessages);
+		const resumedMessages = visibleMessages(this.bundle.resumedMessages);
+		if (resumedMessages.length > 0) this.envInjected = true;
+		this.messages.push(...resumedMessages);
 
-		this.transcript = new TranscriptView(this.bundle.resumedMessages, this.tools, this.copyRegistry);
+		this.transcript = new TranscriptView(resumedMessages, this.tools, this.copyRegistry);
 		// Async store subscribers need to schedule a TUI render after every
 		// state change — pi-tui only paints on input events or explicit
 		// requestRender, never automatically on child invalidate.
@@ -949,6 +951,9 @@ export class App extends Container {
 			this.tui?.requestRender();
 			return;
 		}
+		// Command output is useful until the next real task starts. Clear old
+		// /usage, /cost, shell, and typo notes so they do not crowd the live turn.
+		this.statusBar.note("");
 
 		// `@path` tokens auto-attach file contents to the prompt so the
 		// user doesn't have to spend a tool turn just to put a file in
@@ -1168,10 +1173,12 @@ export class App extends Container {
 			// before building the new one — a /model switch must not leak.
 			this.bundle.mcp.dispose();
 			this.bundle.checkpoints.dispose();
+			this.bundle.toolContext.tasks.dispose();
 			const next = createAgent({
 				cwd: this.bundle.toolContext.cwd,
 				modelOverride: spec ?? undefined,
 				initialMessages: previousMessages,
+				taskListId: this.bundle.sessions.id,
 				resume: false,
 			});
 			this.adoptBundle(next);
@@ -1198,10 +1205,11 @@ export class App extends Container {
 			// Replace the on-screen transcript with the resumed session's.
 			this.transcript.clear();
 			this.messages.length = 0;
-			this.messages.push(...next.resumedMessages);
-			for (const m of next.resumedMessages) this.transcript.appendMessage(m);
+			const resumedMessages = visibleMessages(next.resumedMessages);
+			this.messages.push(...resumedMessages);
+			for (const m of resumedMessages) this.transcript.appendMessage(m);
 			const when = next.resumedFrom ? new Date(next.resumedFrom.updatedAt).toLocaleString() : "unknown time";
-			this.statusBar.note(`Resumed session from ${when} (${next.resumedMessages.length} messages).`);
+			this.statusBar.note(`Resumed session from ${when} (${resumedMessages.length} messages).`);
 			this.tui?.requestRender();
 		} catch (err) {
 			this.statusBar.note(`session switch failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1484,7 +1492,7 @@ export class App extends Container {
 				{
 					const errMsg = this.bundle.agent.state.errorMessage;
 					if (errMsg) {
-						this.errorCard.show(errMsg);
+						this.errorCard.show(userFacingErrorMessage(errMsg));
 					} else {
 						this.errorCard.hide();
 						// agent_end without errorMessage AND without any assistant

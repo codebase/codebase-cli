@@ -6,12 +6,21 @@ export interface MemoryFrontmatter {
 	name: string;
 	description: string;
 	type: MemoryType;
+	source?: string;
+	sourceSessionId?: string;
+	createdAt?: number;
+	updatedAt?: number;
+	lastUsedAt?: number;
+	retrievalCount?: number;
 }
 
 export interface MemoryRecord extends MemoryFrontmatter {
 	filename: string;
+	source: string;
+	createdAt: number;
 	body: string;
 	updatedAt: number;
+	retrievalCount: number;
 }
 
 export function parseMemoryType(raw: string): MemoryType | null {

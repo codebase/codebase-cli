@@ -1,0 +1,3 @@
+Fix the dependency scheduler in src/workflow.mjs so npm test passes.
+
+Use the task checklist for this work. Create an implementation task with owner "main-agent". Create a separate verification task whose title includes "verify" or "test", and make that verification task explicitly blocked by the implementation task using blocked_by when you create it, or add_blocked_by/add_blocks when you update it. Keep that blocker edge in the durable task data while you run npm test.

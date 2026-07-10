@@ -39,6 +39,108 @@ describe("MemoryStore", () => {
 		expect(record?.body.trim()).toBe("User is a senior dev with 10y Go.");
 	});
 
+	it("writes durable provenance frontmatter and preserves created_at on overwrite", () => {
+		const createdAt = Date.UTC(2026, 6, 7, 12);
+		const updatedAt = Date.UTC(2026, 6, 8, 12);
+		store = new MemoryStore({ cwd, dataRoot, sourceSessionId: "s-source-session" });
+		store.save({
+			filename: "project_rule.md",
+			name: "Project rule",
+			description: "Keep receipts",
+			type: "project",
+			body: "Always keep verification receipts.",
+			source: "unit test",
+			now: createdAt,
+		});
+
+		let raw = readFileSync(join(store.directory, "project_rule.md"), "utf8");
+		expect(raw).toContain("source: unit test");
+		expect(raw).toContain("source_session_id: s-source-session");
+		expect(raw).toContain("created_at: 2026-07-07T12:00:00.000Z");
+		expect(raw).toContain("updated_at: 2026-07-07T12:00:00.000Z");
+
+		const overwritten = store.save({
+			filename: "project_rule.md",
+			name: "Project rule",
+			description: "Keep receipts updated",
+			type: "project",
+			body: "Always keep fresh verification receipts.",
+			now: updatedAt,
+		});
+
+		expect(overwritten.source).toBe("unit test");
+		expect(overwritten.sourceSessionId).toBe("s-source-session");
+		expect(overwritten.createdAt).toBe(createdAt);
+		expect(overwritten.updatedAt).toBe(updatedAt);
+		raw = readFileSync(join(store.directory, "project_rule.md"), "utf8");
+		expect(raw).toContain("created_at: 2026-07-07T12:00:00.000Z");
+		expect(raw).toContain("updated_at: 2026-07-08T12:00:00.000Z");
+	});
+
+	it("marks retrieval usage without refreshing updated_at", () => {
+		const updatedAt = Date.UTC(2026, 6, 7, 12);
+		const usedAt = Date.UTC(2026, 6, 9, 12);
+		store.save({
+			filename: "runbook.md",
+			name: "Runbook",
+			description: "Deploy runbook",
+			type: "project",
+			body: "Deploy carefully.",
+			now: updatedAt,
+		});
+
+		const marked = store.markUsed("runbook.md", { now: usedAt });
+
+		expect(marked).toMatchObject({
+			filename: "runbook.md",
+			updatedAt,
+			lastUsedAt: usedAt,
+			retrievalCount: 1,
+		});
+		const raw = readFileSync(join(store.directory, "runbook.md"), "utf8");
+		expect(raw).toContain("updated_at: 2026-07-07T12:00:00.000Z");
+		expect(raw).toContain("last_used_at: 2026-07-09T12:00:00.000Z");
+		expect(raw).toContain("retrieval_count: 1");
+		expect(store.read("runbook.md")).toMatchObject({ updatedAt, lastUsedAt: usedAt, retrievalCount: 1 });
+	});
+
+	it("reads legacy memory files without provenance frontmatter", () => {
+		store.writeIndex("");
+		writeFileSync(
+			join(store.directory, "legacy.md"),
+			"---\nname: Legacy\ndescription: Old format\ntype: project\n---\n\nbody\n",
+		);
+
+		const record = store.read("legacy.md");
+		expect(record).toMatchObject({
+			filename: "legacy.md",
+			name: "Legacy",
+			description: "Old format",
+			type: "project",
+			source: "local project memory",
+			retrievalCount: 0,
+		});
+		expect(record?.createdAt).toEqual(expect.any(Number));
+		expect(record?.updatedAt).toEqual(expect.any(Number));
+	});
+
+	it("redacts high-confidence secrets before durable save", () => {
+		const fakeToken = "ghp_0123456789abcdef0123456789abcdef0123";
+		const record = store.save({
+			filename: "secret_note.md",
+			name: `Token ${fakeToken}`,
+			description: `Do not keep ${fakeToken}`,
+			type: "feedback",
+			body: `Never persist ${fakeToken} in memory.`,
+		});
+
+		expect(record.name).not.toContain(fakeToken);
+		expect(record.description).not.toContain(fakeToken);
+		expect(record.body).not.toContain(fakeToken);
+		expect(record.body).toContain("[REDACTED]");
+		expect(readFileSync(join(store.directory, "secret_note.md"), "utf8")).not.toContain(fakeToken);
+	});
+
 	it("rejects bad filenames", () => {
 		expect(() =>
 			store.save({
@@ -113,7 +215,7 @@ describe("MemoryStore", () => {
 	});
 
 	it("truncatedIndex caps at 25KB cutting at newline boundaries", () => {
-		const big = "- " + "x".repeat(1000) + "\n";
+		const big = `- ${"x".repeat(1000)}\n`;
 		const content = big.repeat(50);
 		store.writeIndex(content);
 		const truncated = store.truncatedIndex();

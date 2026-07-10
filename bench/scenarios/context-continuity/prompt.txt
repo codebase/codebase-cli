@@ -1,0 +1,12 @@
+This is a context-continuity reliability scenario. A long/noisy incident log and durable project memory both contain important facts, and the current facts conflict with stale distractors.
+
+Use the task checklist from start to finish. Create tasks for memory inspection, incident-log inspection, implementation, handoff documentation, and verification. Move each task in_progress before doing that work and complete it afterward.
+
+Requirements:
+- Read the existing project memory and use the current/non-stale Context Guardian runbook. It provides the release codename, owner, preserve flag, and verification command.
+- Inspect docs/incident-log.md. It intentionally contains stale fragments. Use only the section labeled "FINAL CURRENT DECISION" for canary percent, rollback threshold, and rollback command.
+- Update src/contextPolicy.mjs with the selected values.
+- Create docs/context-handoff.md with the selected values, the memory source, whether the memory was stale, and the exact verification command.
+- Run `npm test` as an unmasked verification command after the final file change, then name `npm test` in your final answer.
+
+Do not use stale values like cedar-loop, CONTEXT_GUARDIAN_PRESERVE=none, Noah Pike, 25 percent, 1.5 threshold, or npm run rollback:legacy.

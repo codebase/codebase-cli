@@ -67,7 +67,7 @@ describe("refreshTokens", () => {
 
 describe("registerClient", () => {
 	it("posts DCR metadata and returns the client_id", async () => {
-		const { calls, fetchImpl } = capture();
+		const { calls } = capture();
 		const fetch2 = (async (url: string, init: RequestInit) => {
 			calls.push({ url, init });
 			return {

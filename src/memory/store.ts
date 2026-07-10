@@ -2,16 +2,20 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { redactSecrets } from "./secrets.js";
 import { MEMORY_TYPES, type MemoryFrontmatter, type MemoryRecord, type MemoryType, parseMemoryType } from "./types.js";
 
 const MAX_INDEX_LINES = 200;
 const MAX_INDEX_BYTES = 25_000;
 const FILENAME_PATTERN = /^[a-z0-9_-]{1,80}\.md$/;
+const DEFAULT_SOURCE = "local project memory";
 
 export interface MemoryStoreOptions {
 	cwd: string;
 	/** Override the data root. Defaults to ~/.codebase. */
 	dataRoot?: string;
+	/** Session id that created/updated memories in this store, when known. */
+	sourceSessionId?: string;
 }
 
 /**
@@ -24,9 +28,11 @@ export interface MemoryStoreOptions {
 export class MemoryStore {
 	private readonly cwd: string;
 	private readonly dir: string;
+	private readonly sourceSessionId?: string;
 
 	constructor(options: MemoryStoreOptions) {
 		this.cwd = options.cwd;
+		this.sourceSessionId = cleanOptional(options.sourceSessionId);
 		const dataRoot = options.dataRoot ?? join(homedir(), ".codebase");
 		const projectHash = createHash("sha256").update(this.cwd).digest("hex").slice(0, 8);
 		this.dir = join(dataRoot, "projects", projectHash, "memory");
@@ -46,7 +52,17 @@ export class MemoryStore {
 		const stat = statSync(path);
 		const parsed = parseMemoryFile(raw);
 		if (!parsed) return null;
-		return { filename: safe, ...parsed.frontmatter, body: parsed.body, updatedAt: stat.mtimeMs };
+		return {
+			filename: safe,
+			...parsed.frontmatter,
+			source: parsed.frontmatter.source ?? DEFAULT_SOURCE,
+			sourceSessionId: parsed.frontmatter.sourceSessionId,
+			createdAt: parsed.frontmatter.createdAt ?? stat.birthtimeMs ?? stat.mtimeMs,
+			body: parsed.body,
+			updatedAt: parsed.frontmatter.updatedAt ?? stat.mtimeMs,
+			lastUsedAt: parsed.frontmatter.lastUsedAt,
+			retrievalCount: parsed.frontmatter.retrievalCount ?? 0,
+		};
 	}
 
 	list(typeFilter?: MemoryType): MemoryRecord[] {
@@ -64,7 +80,16 @@ export class MemoryStore {
 		return out;
 	}
 
-	save(input: { filename: string; name: string; description: string; type: MemoryType; body: string }): MemoryRecord {
+	save(input: {
+		filename: string;
+		name: string;
+		description: string;
+		type: MemoryType;
+		body: string;
+		source?: string;
+		sourceSessionId?: string;
+		now?: number;
+	}): MemoryRecord {
 		const safe = sanitizeFilename(input.filename);
 		if (!safe) {
 			throw new Error(`memory filename must match ${FILENAME_PATTERN}; got "${input.filename}"`);
@@ -72,21 +97,73 @@ export class MemoryStore {
 		if (!parseMemoryType(input.type)) {
 			throw new Error(`memory type must be one of ${MEMORY_TYPES.join(", ")}; got "${input.type}"`);
 		}
+		const existing = this.read(safe);
+		const now = input.now ?? Date.now();
+		const name = redactSecrets(input.name);
+		const description = redactSecrets(input.description);
+		const redactedBody = redactSecrets(input.body);
+		const source = cleanSource(input.source ?? existing?.source ?? DEFAULT_SOURCE);
+		const sourceSessionId = cleanOptional(input.sourceSessionId ?? this.sourceSessionId ?? existing?.sourceSessionId);
+		const createdAt = existing?.createdAt ?? now;
 		mkdirSync(this.dir, { recursive: true });
 		const body = serializeMemoryFile({
-			frontmatter: { name: input.name, description: input.description, type: input.type },
-			body: input.body,
+			frontmatter: {
+				name,
+				description,
+				type: input.type,
+				source,
+				sourceSessionId,
+				createdAt,
+				updatedAt: now,
+				lastUsedAt: existing?.lastUsedAt,
+				retrievalCount: existing?.retrievalCount,
+			},
+			body: redactedBody,
 		});
 		const path = join(this.dir, safe);
 		writeFileSync(path, body, { mode: 0o644 });
 		return {
 			filename: safe,
-			name: input.name,
-			description: input.description,
+			name,
+			description,
 			type: input.type,
-			body: input.body,
-			updatedAt: statSync(path).mtimeMs,
+			source,
+			sourceSessionId,
+			createdAt,
+			body: redactedBody,
+			updatedAt: now,
+			lastUsedAt: existing?.lastUsedAt,
+			retrievalCount: existing?.retrievalCount ?? 0,
 		};
+	}
+
+	markUsed(filename: string, options: { now?: number } = {}): MemoryRecord | null {
+		const safe = sanitizeFilename(filename);
+		if (!safe) return null;
+		const record = this.read(safe);
+		if (!record) return null;
+		const lastUsedAt = options.now ?? Date.now();
+		const retrievalCount = record.retrievalCount + 1;
+		const path = join(this.dir, safe);
+		writeFileSync(
+			path,
+			serializeMemoryFile({
+				frontmatter: {
+					name: record.name,
+					description: record.description,
+					type: record.type,
+					source: record.source,
+					sourceSessionId: record.sourceSessionId,
+					createdAt: record.createdAt,
+					updatedAt: record.updatedAt,
+					lastUsedAt,
+					retrievalCount,
+				},
+				body: record.body,
+			}),
+			{ mode: 0o644 },
+		);
+		return { ...record, lastUsedAt, retrievalCount };
 	}
 
 	delete(filename: string): boolean {
@@ -138,6 +215,16 @@ function sanitizeFilename(filename: string): string | null {
 	return trimmed;
 }
 
+function cleanSource(source: string): string {
+	const redacted = redactSecrets(source).trim().replace(/\s+/g, " ");
+	return redacted ? redacted.slice(0, 120) : DEFAULT_SOURCE;
+}
+
+function cleanOptional(value?: string): string | undefined {
+	const cleaned = value?.trim().replace(/\s+/g, " ");
+	return cleaned ? redactSecrets(cleaned).slice(0, 120) : undefined;
+}
+
 interface ParsedMemory {
 	frontmatter: MemoryFrontmatter;
 	body: string;
@@ -164,7 +251,17 @@ function parseMemoryFile(raw: string): ParsedMemory | null {
 	const type = fields.type ? parseMemoryType(fields.type) : null;
 	if (!type || !fields.name || !fields.description) return null;
 	return {
-		frontmatter: { name: fields.name, description: fields.description, type },
+		frontmatter: {
+			name: fields.name,
+			description: fields.description,
+			type,
+			source: fields.source || undefined,
+			sourceSessionId: fields.source_session_id || undefined,
+			createdAt: parseDateMs(fields.created_at),
+			updatedAt: parseDateMs(fields.updated_at),
+			lastUsedAt: parseDateMs(fields.last_used_at),
+			retrievalCount: parseCount(fields.retrieval_count),
+		},
 		body,
 	};
 }
@@ -175,10 +272,31 @@ function serializeMemoryFile(input: ParsedMemory): string {
 		`name: ${input.frontmatter.name}`,
 		`description: ${input.frontmatter.description}`,
 		`type: ${input.frontmatter.type}`,
-		"---",
-		"",
-		input.body.replace(/\n+$/, ""),
-		"",
+		`source: ${input.frontmatter.source ?? DEFAULT_SOURCE}`,
 	];
+	if (input.frontmatter.sourceSessionId) lines.push(`source_session_id: ${input.frontmatter.sourceSessionId}`);
+	lines.push(
+		`created_at: ${formatDate(input.frontmatter.createdAt ?? Date.now())}`,
+		`updated_at: ${formatDate(input.frontmatter.updatedAt ?? Date.now())}`,
+	);
+	if (input.frontmatter.lastUsedAt) lines.push(`last_used_at: ${formatDate(input.frontmatter.lastUsedAt)}`);
+	if (input.frontmatter.retrievalCount) lines.push(`retrieval_count: ${input.frontmatter.retrievalCount}`);
+	lines.push("---", "", input.body.replace(/\n+$/, ""), "");
 	return lines.join("\n");
+}
+
+function parseDateMs(value?: string): number | undefined {
+	if (!value) return undefined;
+	const ms = Date.parse(value);
+	return Number.isFinite(ms) ? ms : undefined;
+}
+
+function parseCount(value?: string): number | undefined {
+	if (!value) return undefined;
+	const count = Number.parseInt(value, 10);
+	return Number.isFinite(count) && count > 0 ? count : undefined;
+}
+
+function formatDate(ms: number): string {
+	return new Date(ms).toISOString();
 }

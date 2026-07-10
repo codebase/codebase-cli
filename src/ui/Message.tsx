@@ -1,6 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
+import { stripRuntimeMarkup } from "../agent/visible-messages.js";
+import { providerAuthRecoveryMessage } from "../errors/user-facing.js";
 import type { ToolExecution } from "../types.js";
 import { Markdown } from "./Markdown.js";
 import { type AssistantContent, COLLAPSIBLE_READ_TOOLS, CollapsedReadGroup, ToolCallLine } from "./tool-call-line.js";
@@ -81,7 +83,7 @@ function MessageBody({
 }) {
 	if (message.role === "user") {
 		if (typeof message.content === "string") {
-			return <WrappedLines text={message.content} width={width} keyPrefix="user" />;
+			return <WrappedLines text={stripRuntimeMarkup(message.content)} width={width} keyPrefix="user" />;
 		}
 		return <UserBlocks blocks={message.content} width={width} />;
 	}
@@ -143,21 +145,12 @@ function renderAssistantBlocks(
 		const block = content[i];
 		const key = blockKey(block, i);
 		if (block.type === "text") {
-			out.push(<Markdown key={key} text={block.text} width={width} keyPrefix={key} />);
+			const text = stripRuntimeMarkup(block.text);
+			if (text) out.push(<Markdown key={key} text={text} width={width} keyPrefix={key} />);
 			i++;
 			continue;
 		}
 		if (block.type === "thinking") {
-			out.push(
-				<WrappedLines
-					key={key}
-					text={`(thinking) ${block.thinking}`}
-					width={width}
-					keyPrefix={key}
-					dimColor
-					italic
-				/>,
-			);
 			i++;
 			continue;
 		}
@@ -219,7 +212,8 @@ function UserBlocks({ blocks, width }: { blocks: unknown; width: number }) {
 	for (let i = 0; i < blocks.length; i++) {
 		const b = blocks[i] as { type: string; text?: string; mimeType?: string; data?: string };
 		if (b.type === "text" && b.text) {
-			rows.push(<WrappedLines key={`u-t-${i}`} text={b.text} width={width} keyPrefix={`u-t-${i}`} />);
+			const text = stripRuntimeMarkup(b.text);
+			if (text) rows.push(<WrappedLines key={`u-t-${i}`} text={text} width={width} keyPrefix={`u-t-${i}`} />);
 			continue;
 		}
 		if (b.type === "image") {
@@ -275,6 +269,10 @@ export function errorMessageNote(message: AgentMessage & { role: "assistant" }):
 	if (!raw) return null;
 	const trimmed = raw.trim();
 	const hasContent = messageHasVisibleText(message);
+	const authRecovery = providerAuthRecoveryMessage(trimmed);
+	if (authRecovery) {
+		return { text: `error: ${authRecovery}`, severity: "error" };
+	}
 
 	if (TRUNCATION_PATTERNS.some((re) => re.test(trimmed))) {
 		return { text: "(response truncated — model hit its output length limit)", severity: "warning" };

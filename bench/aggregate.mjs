@@ -6,39 +6,88 @@
  *
  * Usage:
  *   # Single sweep
- *   node bench/aggregate.mjs sweep-2026-05-09T01-23-45
+ *   codebase bench report sweep-2026-05-09T01-23-45
  *
  *   # Multiple sweeps to compare arms (control / treatment)
- *   node bench/aggregate.mjs sweep-control sweep-treatment
+ *   codebase bench report sweep-control sweep-treatment
  *
  *   # Write to a file
- *   node bench/aggregate.mjs sweep-foo --out docs/benchmarks/2026-05-09-foo.md
+ *   codebase bench report sweep-foo --out docs/benchmarks/2026-05-09-foo.md
+ *
+ *   # Also write machine-readable launch metrics
+ *   codebase bench report sweep-foo --out docs/benchmarks/foo.md --json-out docs/benchmarks/foo.json
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { redactBenchmarkRecord, SECRET_REDACTION_RULESET_VERSION } from "./redact.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const RESULTS_DIR = join(__dirname, "results");
+const RESULTS_DIR = process.env.CODEBASE_BENCH_RESULTS_DIR
+	? resolve(process.env.CODEBASE_BENCH_RESULTS_DIR)
+	: join(__dirname, "results");
+const CAPABILITY_DIMENSIONS = [
+	{
+		label: "core edits",
+		scenarios: new Set(["add-test", "fix-typo", "multi-file-rename", "read-only-explain"]),
+	},
+	{
+		label: "task fidelity",
+		scenarios: new Set(["task-list-fidelity", "durable-task-dependencies", "complex-issue-recovery"]),
+	},
+	{
+		label: "memory hygiene",
+		scenarios: new Set(["memory-secret-hygiene"]),
+	},
+	{
+		label: "memory retrieval",
+		scenarios: new Set(["memory-retrieval"]),
+	},
+	{
+		label: "context continuity",
+		scenarios: new Set(["context-continuity"]),
+	},
+	{
+		label: "permission safety",
+		scenarios: new Set(["permission-denial-recovery"]),
+	},
+	{
+		label: "complex recovery",
+		scenarios: new Set(["complex-issue-recovery"]),
+	},
+];
 
-const args = parseArgs(process.argv.slice(2));
+const rawArgv = process.argv.slice(2);
+if (rawArgv.includes("--help") || rawArgv.includes("-h")) {
+	printHelp();
+	process.exit(0);
+}
+
+const args = parseArgs(rawArgv);
 const positional = args._;
 const outPath = args.out ? resolve(args.out) : null;
+const jsonOutPath = args["json-out"] ? resolve(args["json-out"]) : null;
 
 if (positional.length === 0) {
-	console.error("usage: aggregate.mjs <sweep-id> [<sweep-id> …] [--out path.md]");
+	console.error("usage: aggregate.mjs <sweep-id> [<sweep-id> …] [--out path.md] [--json-out path.json]");
 	process.exit(1);
 }
 
 const sweeps = positional.map((id) => loadSweep(id));
-const md = renderReport(sweeps);
+const generatedAt = new Date().toISOString();
+const scorecard = buildScorecardJson(sweeps, generatedAt);
+const md = renderReport(sweeps, scorecard);
 
 if (outPath) {
-	writeFileSync(outPath, md);
+	writeReportFile(outPath, md);
 	console.error(`wrote ${outPath}`);
 } else {
 	process.stdout.write(md);
+}
+if (jsonOutPath) {
+	writeReportFile(jsonOutPath, `${JSON.stringify(scorecard, null, 2)}\n`);
+	console.error(`wrote ${jsonOutPath}`);
 }
 
 // ─── load ─────────────────────────────────────────────────────────────
@@ -52,15 +101,67 @@ function loadSweep(id) {
 	const lines = readFileSync(path, "utf8")
 		.split("\n")
 		.filter((l) => l.trim().length > 0);
-	const runs = lines.map((line) => JSON.parse(line));
-	return { id, runs };
+	let reportTimeRedactions = 0;
+	let runsWithReportTimeRedactions = 0;
+	const runs = lines.map((line) => {
+		const redacted = redactBenchmarkRecord(JSON.parse(line));
+		reportTimeRedactions += redacted.replacements;
+		if (redacted.replacements > 0) runsWithReportTimeRedactions += 1;
+		return redacted.value;
+	});
+	return {
+		id,
+		runs,
+		redaction: {
+			applied: true,
+			rulesVersion: SECRET_REDACTION_RULESET_VERSION,
+			reportTimeRedactions,
+			runsWithReportTimeRedactions,
+		},
+	};
+}
+
+function writeReportFile(path, contents) {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, contents);
+}
+
+function buildScorecardJson(sweeps, generatedAt) {
+	return {
+		schemaVersion: 1,
+		generatedAt,
+		sweeps: sweeps.map((sweep) => {
+			const publicScorecard = publicScorecardRows(sweep.runs);
+			const byScope = new Map(publicScorecard.map((row) => [row.scope, row]));
+			const scenarios = [...new Set(sweep.runs.map((run) => run.scenario))].sort();
+			return {
+				id: sweep.id,
+				runCount: sweep.runs.length,
+				scenarioCount: scenarios.length,
+				scenarios,
+				models: summarizeModels(sweep.runs),
+				provenance: summarizeProvenance(sweep.runs),
+				redaction: summarizeRedaction(sweep),
+				reliableReceiptRuns: sweep.runs.filter((run) => run.receipt).length,
+				publicScorecard,
+				claims: {
+					overall: byScope.get("overall"),
+					taskFidelity: byScope.get("task fidelity") ?? null,
+					memoryHygiene: byScope.get("memory hygiene") ?? null,
+					memoryRetrieval: byScope.get("memory retrieval") ?? null,
+					contextContinuity: byScope.get("context continuity") ?? null,
+					permissionSafety: byScope.get("permission safety") ?? null,
+				},
+			};
+		}),
+	};
 }
 
 // ─── render ───────────────────────────────────────────────────────────
 
-function renderReport(sweeps) {
+function renderReport(sweeps, scorecard) {
 	const lines = [];
-	const date = new Date().toISOString().slice(0, 10);
+	const date = scorecard.generatedAt.slice(0, 10);
 	const title = sweeps.length === 1 ? `Bench report — ${sweeps[0].id}` : `Bench comparison — ${sweeps.map((s) => s.id).join(" vs ")}`;
 
 	lines.push(`# ${title}`);
@@ -69,9 +170,20 @@ function renderReport(sweeps) {
 	lines.push("");
 
 	for (const sweep of sweeps) {
+		const sweepScorecard = scorecard.sweeps.find((item) => item.id === sweep.id);
 		lines.push(`## ${sweep.id}`);
 		lines.push("");
+		if (sweepScorecard) {
+			lines.push(...renderMethodology(sweepScorecard));
+			lines.push("");
+			lines.push(...renderLaunchClaims(sweepScorecard));
+			lines.push("");
+		}
+		lines.push(...renderPublicScorecard(sweepScorecard?.publicScorecard ?? publicScorecardRows(sweep.runs)));
+		lines.push("");
 		lines.push(...renderOutcomesTable(sweep.runs));
+		lines.push("");
+		lines.push(...renderReceiptScorecard(sweep.runs));
 		lines.push("");
 		lines.push(...renderPerScenarioTable(sweep.runs));
 		lines.push("");
@@ -87,16 +199,266 @@ function renderReport(sweeps) {
 	return lines.join("\n");
 }
 
+function renderMethodology(scorecard) {
+	const lines = [
+		"### Methodology",
+		"",
+	];
+	const items = [
+		`- Source: \`bench/results/${scorecard.id}/runs.jsonl\``,
+		`- Runs: ${scorecard.runCount} across ${scorecard.scenarioCount} scenario${scorecard.scenarioCount === 1 ? "" : "s"}`,
+		`- Scenarios: ${scorecard.scenarios.join(", ") || "none"}`,
+		`- Models: ${scorecard.models.map((model) => `${model.name} (${model.provider}/${model.id}) x${model.runs}`).join(", ") || "unknown"}`,
+		`- Reliable receipts: ${scorecard.reliableReceiptRuns}/${scorecard.runCount} runs`,
+	];
+	if (scorecard.provenance?.recordedRuns > 0) {
+		const p = scorecard.provenance;
+		items.push(
+			`- CLI builds: ${formatCountedValues(p.cliBuilds)}`,
+			`- Repo commits: ${formatCountedValues(p.repoCommits)}; dirty runs ${p.repoDirtyRuns}/${p.recordedRuns}`,
+			`- Runner flags: reliable ${p.reliableRuns}/${p.recordedRuns}, isolated HOME ${p.isolatedHomeRuns}/${p.recordedRuns}`,
+			`- Node versions: ${formatCountedValues(p.nodeVersions)}`,
+		);
+	} else {
+		items.push("- Run provenance: not recorded in this sweep (older harness output)");
+	}
+	if (scorecard.redaction?.applied) {
+		const r = scorecard.redaction;
+		items.push(
+			`- Public artifact redaction: ruleset v${r.rulesVersion}; writer redactions ${r.writerRedactions}; report-time redactions ${r.reportTimeRedactions}`,
+		);
+	}
+	lines.push(items.join("\n"));
+	return lines;
+}
+
+function renderLaunchClaims(scorecard) {
+	const claim = scorecard.claims;
+	const task = claim.taskFidelity;
+	const memory = claim.memoryHygiene;
+	const retrieval = claim.memoryRetrieval;
+	const context = claim.contextContinuity;
+	const permission = claim.permissionSafety;
+	return [
+		"### Claim-ready summary",
+		"",
+		"| claim | evidence |",
+		"|---|---|",
+		`| Overall pass rate | ${formatRatio(claim.overall.passCount, claim.overall.runs)} across ${claim.overall.runs} runs |`,
+		`| Task fidelity | ${task ? `${formatRatio(task.passCount, task.runs)} on task-fidelity scenarios; task evidence ${formatReceiptCount(task, "taskEvidenceCount")}; task verification ${formatReceiptCount(task, "taskVerifiedCount")}` : "not in sweep"} |`,
+		`| Memory hygiene | ${memory ? `${formatRatio(memory.passCount, memory.runs)} on memory hygiene scenarios` : "not in sweep"} |`,
+		`| Memory retrieval | ${retrieval ? `${formatRatio(retrieval.passCount, retrieval.runs)} on memory-retrieval scenarios` : "not in sweep"} |`,
+		`| Context continuity | ${context ? `${formatRatio(context.passCount, context.runs)} on long/noisy context-continuity scenarios` : "not in sweep"} |`,
+		`| Permission safety | ${permission ? `${formatRatio(permission.passCount, permission.runs)} on permission-denial recovery scenarios` : "not in sweep"} |`,
+		`| Speed | p50 passing run ${formatSeconds(claim.overall.medianPassSeconds)} |`,
+		`| Cost | average passing run ${formatCost(claim.overall.avgPassCost)} |`,
+		`| Receipt proof | receipt ok ${formatReceiptCount(claim.overall, "receiptOkCount")}; final proof ${formatReceiptCount(claim.overall, "finalProofCount")}; fresh verification ${formatReceiptCount(claim.overall, "freshVerifiedCount")} |`,
+	];
+}
+
+function renderPublicScorecard(rows) {
+	const out = [
+		"### Public scorecard",
+		"",
+		"Launch-facing summary across all runs. Receipt columns show `not collected` unless the sweep used `--reliable true`.",
+		"",
+		"| scope | runs | pass rate | receipt ok | task evidence | task verified | final proof | fresh verified | p50 pass time | avg pass cost |",
+		"|---|---|---|---|---|---|---|---|---|---|",
+	];
+
+	for (const row of rows) out.push(renderPublicScorecardRow(row));
+
+	return out;
+}
+
+function publicScorecardRows(runs) {
+	const rows = [publicScorecardRow("overall", runs)];
+	for (const dimension of CAPABILITY_DIMENSIONS) {
+		const items = runs.filter((run) => dimension.scenarios.has(run.scenario));
+		if (items.length === 0) continue;
+		rows.push(publicScorecardRow(dimension.label, items));
+	}
+	return rows;
+}
+
+function publicScorecardRow(label, runs) {
+	const passing = runs.filter(isPassingRun);
+	const medianElapsed = median(passing.map((run) => run.elapsedMs / 1000));
+	const passCosts = passing
+		.filter(hasUsageMeasurement)
+		.map((run) => run.usage?.cost?.total)
+		.filter((value) => Number.isFinite(value));
+	const avgCost = passCosts.length > 0 ? mean(passCosts) : null;
+	const receipts = runs.map((run) => run.receipt).filter(Boolean);
+	return {
+		scope: label,
+		runs: runs.length,
+		passCount: passing.length,
+		passRate: ratio(passing.length, runs.length),
+		receiptRuns: receipts.length,
+		receiptOkCount: receipts.filter((receipt) => receipt.ok === true).length,
+		taskEvidenceCount: receipts.filter((receipt) => hasCompletedTaskEvidence(receipt)).length,
+		taskVerifiedCount: receipts.filter((receipt) => hasCompletedTaskVerification(receipt)).length,
+		finalProofCount: receipts.filter((receipt) => hasFinalAnswerProof(receipt)).length,
+		freshVerifiedCount: receipts.filter((receipt) => hasFreshVerification(receipt)).length,
+		usageReportedRuns: passing.filter(hasUsageMeasurement).length,
+		medianPassSeconds: medianElapsed,
+		avgPassCost: avgCost,
+	};
+}
+
+function summarizeProvenance(runs) {
+	const benches = runs.map((run) => run.bench).filter(Boolean);
+	const recordedRuns = benches.length;
+	return {
+		recordedRuns,
+		cliBuilds: countedValues(
+			benches.map((bench) => {
+				const version = bench.cliVersion ?? "unknown";
+				const path = bench.cliPath ?? "unknown path";
+				return `${version} @ ${path}`;
+			}),
+		),
+		repoCommits: countedValues(
+			benches.map((bench) => {
+				const commit = bench.repoCommit ?? "unknown";
+				return bench.repoDirty === true ? `${commit} (dirty)` : commit;
+			}),
+		),
+		repoDirtyRuns: benches.filter((bench) => bench.repoDirty === true).length,
+		reliableRuns: benches.filter((bench) => bench.reliable === true).length,
+		isolatedHomeRuns: benches.filter((bench) => bench.isolateHome === true).length,
+		nodeVersions: countedValues(benches.map((bench) => bench.nodeVersion ?? "unknown")),
+		timeoutsMs: countedValues(benches.map((bench) => bench.timeoutMs ?? "unknown")),
+	};
+}
+
+function summarizeRedaction(sweep) {
+	const writerSummaries = sweep.runs
+		.map((run) => run.bench?.publicArtifact?.secretRedaction)
+		.filter(Boolean);
+	const writerRedactions = writerSummaries.reduce((sum, item) => sum + numeric(item.replacements), 0);
+	return {
+		applied: true,
+		rulesVersion: SECRET_REDACTION_RULESET_VERSION,
+		writerRedactions,
+		runsWithWriterRedactions: writerSummaries.filter((item) => numeric(item.replacements) > 0).length,
+		reportTimeRedactions: sweep.redaction?.reportTimeRedactions ?? 0,
+		runsWithReportTimeRedactions: sweep.redaction?.runsWithReportTimeRedactions ?? 0,
+	};
+}
+
+function renderPublicScorecardRow(row) {
+	return [
+		row.scope,
+		row.runs,
+		formatRatio(row.passCount, row.runs),
+		formatReceiptCount(row, "receiptOkCount"),
+		formatReceiptCount(row, "taskEvidenceCount"),
+		formatReceiptCount(row, "taskVerifiedCount"),
+		formatReceiptCount(row, "finalProofCount"),
+		formatReceiptCount(row, "freshVerifiedCount"),
+		formatSeconds(row.medianPassSeconds),
+		formatCost(row.avgPassCost),
+	]
+		.map((value) => escapePipes(value))
+		.join(" | ")
+		.replace(/^/, "| ")
+		.replace(/$/, " |");
+}
+
 function renderOutcomesTable(runs) {
 	const grouped = groupBy(runs, (r) => r.scenario);
 	const out = ["### Outcomes", "", "| scenario | n | passed | failed | harness-errored |", "|---|---|---|---|---|"];
 	for (const [scenario, items] of grouped) {
-		const passed = items.filter((r) => r.ok && r.verifyPassed).length;
+		const passed = items.filter((r) => isPassingRun(r)).length;
 		const failed = items.filter((r) => !r.harnessError && (!r.ok || !r.verifyPassed)).length;
 		const errored = items.filter((r) => r.harnessError).length;
 		out.push(`| ${scenario} | ${items.length} | ${passed} | ${failed} | ${errored} |`);
 	}
 	return out;
+}
+
+function renderReceiptScorecard(runs) {
+	const withReceipt = runs.filter((r) => r.receipt);
+	if (withReceipt.length === 0) {
+		return [
+			"### Reliability receipts",
+			"",
+			"No reliable-mode receipts in this sweep. Run `codebase bench run --scenario all --reliable true` to collect them.",
+		];
+	}
+	const grouped = groupBy(runs, (r) => r.scenario);
+	const out = [
+		"### Reliability receipts",
+		"",
+		"| scenario | n | receipt ok | task ok | task evidence | task verified | final proof | verified | fresh verified | avg mutations | avg verifies | avg checkpoints | common failures |",
+		"|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+	];
+	for (const [scenario, items] of grouped) {
+		const receipts = items.map((r) => r.receipt).filter(Boolean);
+		if (receipts.length === 0) {
+			out.push(`| ${scenario} | ${items.length} | — | — | — | — | — | — | — | — | — | — | — |`);
+			continue;
+		}
+		const receiptOk = receipts.filter((r) => r.ok).length;
+		const taskOk = receipts.filter((r) => (r.summary?.completedTasks ?? 0) > 0 && (r.summary?.openTasks ?? 0) === 0).length;
+		const taskEvidence = receipts.filter((r) => hasCompletedTaskEvidence(r)).length;
+		const taskVerified = receipts.filter((r) => hasCompletedTaskVerification(r)).length;
+		const finalProof = receipts.filter((r) => hasFinalAnswerProof(r)).length;
+		const verified = receipts.filter((r) => (r.summary?.verificationCount ?? 0) > 0).length;
+		const freshVerified = receipts.filter((r) => hasFreshVerification(r)).length;
+		const avgMutations = mean(receipts.map((r) => r.summary?.mutationCount ?? r.mutations?.length ?? 0));
+		const avgVerifies = mean(receipts.map((r) => r.summary?.verificationCount ?? 0));
+		const avgCheckpoints = mean(receipts.map((r) => r.summary?.checkpoints ?? 0));
+		out.push(
+			`| ${scenario} | ${receipts.length}/${items.length} | ${receiptOk} | ${taskOk} | ${taskEvidence} | ${taskVerified} | ${finalProof} | ${verified} | ${freshVerified} | ${avgMutations.toFixed(2)} | ${avgVerifies.toFixed(2)} | ${avgCheckpoints.toFixed(2)} | ${commonFailures(receipts)} |`,
+		);
+	}
+	return out;
+}
+
+function hasCompletedTaskEvidence(receipt) {
+	const completed = receipt.summary?.completedTasks ?? 0;
+	if (completed === 0) return false;
+	const evidenced = receipt.summary?.completedTasksWithEvidence;
+	if (typeof evidenced === "number") return evidenced >= completed;
+	const byTask = receipt.taskEvidence;
+	if (!Array.isArray(byTask)) return false;
+	return byTask.filter((item) => item.status === "completed" && taskEvidenceCount(item) > 0).length >= completed;
+}
+
+function hasCompletedTaskVerification(receipt) {
+	const completed = receipt.summary?.completedTasks ?? 0;
+	if (completed === 0) return false;
+	const verified = receipt.summary?.completedTasksWithVerification;
+	if (typeof verified === "number") return verified > 0;
+	const byTask = receipt.taskEvidence;
+	if (!Array.isArray(byTask)) return false;
+	return byTask.some((item) => item.status === "completed" && (item.verification?.length ?? 0) > 0);
+}
+
+function taskEvidenceCount(item) {
+	return (item.toolCalls?.length ?? 0) + (item.mutations?.length ?? 0) + (item.verification?.length ?? 0);
+}
+
+function hasFinalAnswerProof(receipt) {
+	const mutationCount = receipt.summary?.mutationCount ?? receipt.mutations?.length ?? 0;
+	const verificationCount = receipt.summary?.verificationCount ?? receipt.verification?.length ?? 0;
+	if (mutationCount > 0 || verificationCount > 0) {
+		if (receipt.summary?.finalAnswerMentionsFreshVerification === true) return true;
+		return receipt.finalAnswer?.mentionsFreshVerification === true;
+	}
+	if (receipt.summary?.finalAnswerMentionsNoFileChangeVerification === true) return true;
+	return receipt.finalAnswer?.mentionsNoFileChangeVerification === true;
+}
+
+function hasFreshVerification(receipt) {
+	const verificationCount = receipt.summary?.verificationCount ?? 0;
+	const mutationCount = receipt.summary?.mutationCount ?? receipt.mutations?.length ?? 0;
+	if (verificationCount === 0) return false;
+	if (mutationCount === 0) return true;
+	return (receipt.summary?.verificationAfterLastMutationCount ?? 0) > 0;
 }
 
 function renderPerScenarioTable(runs) {
@@ -108,22 +470,38 @@ function renderPerScenarioTable(runs) {
 		"|---|---|---|---|---|---|---|---|",
 	];
 	for (const [scenario, items] of grouped) {
-		const passing = items.filter((r) => r.ok && r.verifyPassed);
+		const passing = items.filter((r) => isPassingRun(r));
 		if (passing.length === 0) {
 			out.push(`| ${scenario} | 0 | — | — | — | — | — | — |`);
 			continue;
 		}
 		const elapsed = mean(passing.map((r) => r.elapsedMs / 1000));
 		const tools = mean(passing.map((r) => r.toolCalls ?? 0));
-		const input = mean(passing.map((r) => r.usage?.input ?? 0));
-		const output = mean(passing.map((r) => r.usage?.output ?? 0));
-		const cached = mean(passing.map((r) => r.usage?.cacheRead ?? 0));
-		const cost = mean(passing.map((r) => r.usage?.cost?.total ?? 0));
+		const measuredUsage = passing.filter(hasUsageMeasurement);
+		const input = measuredUsage.length > 0 ? mean(measuredUsage.map((r) => r.usage?.input ?? 0)) : null;
+		const output = measuredUsage.length > 0 ? mean(measuredUsage.map((r) => r.usage?.output ?? 0)) : null;
+		const cached = measuredUsage.length > 0 ? mean(measuredUsage.map((r) => r.usage?.cacheRead ?? 0)) : null;
+		const cost = measuredUsage.length > 0 ? mean(measuredUsage.map((r) => r.usage?.cost?.total ?? 0)) : null;
 		out.push(
-			`| ${scenario} | ${passing.length} | ${elapsed.toFixed(1)}s | ${tools.toFixed(2)} | ${fmt(input)} | ${fmt(output)} | ${fmt(cached)} | $${cost.toFixed(4)} |`,
+			`| ${scenario} | ${passing.length} | ${elapsed.toFixed(1)}s | ${tools.toFixed(2)} | ${fmt(input)} | ${fmt(output)} | ${fmt(cached)} | ${formatCost(cost)} |`,
 		);
 	}
 	return out;
+}
+
+function commonFailures(receipts) {
+	const counts = new Map();
+	for (const receipt of receipts) {
+		for (const failure of receipt.failures ?? []) {
+			counts.set(failure, (counts.get(failure) ?? 0) + 1);
+		}
+	}
+	if (counts.size === 0) return "—";
+	return [...counts.entries()]
+		.sort((a, b) => b[1] - a[1])
+		.slice(0, 2)
+		.map(([failure, count]) => `${escapePipes(failure)} (${count})`)
+		.join("<br>");
 }
 
 function renderToolUsage(runs) {
@@ -153,8 +531,8 @@ function renderComparison(sweeps) {
 		"|---|---|---|---|---|---|---|---|---|---|",
 	];
 	for (const scenario of aGrouped.keys()) {
-		const aPass = (aGrouped.get(scenario) ?? []).filter((r) => r.ok && r.verifyPassed);
-		const bPass = (bGrouped.get(scenario) ?? []).filter((r) => r.ok && r.verifyPassed);
+		const aPass = (aGrouped.get(scenario) ?? []).filter((r) => isPassingRun(r));
+		const bPass = (bGrouped.get(scenario) ?? []).filter((r) => isPassingRun(r));
 		if (aPass.length === 0 || bPass.length === 0) {
 			out.push(`| ${scenario} | — | — | — | — | — | — | — | — | — |`);
 			continue;
@@ -189,9 +567,100 @@ function mean(arr) {
 	return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
+function median(arr) {
+	const values = arr.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+	if (values.length === 0) return null;
+	const middle = Math.floor(values.length / 2);
+	if (values.length % 2 === 1) return values[middle];
+	return (values[middle - 1] + values[middle]) / 2;
+}
+
+function isPassingRun(run) {
+	return run.ok === true && run.verifyPassed === true && !run.harnessError;
+}
+
+function hasUsageMeasurement(run) {
+	const usage = run.usage;
+	if (!usage || typeof usage !== "object") return false;
+	const values = [
+		usage.input,
+		usage.output,
+		usage.cacheRead,
+		usage.cacheWrite,
+		usage.totalTokens,
+		usage.cost?.input,
+		usage.cost?.output,
+		usage.cost?.cacheRead,
+		usage.cost?.cacheWrite,
+		usage.cost?.total,
+	];
+	return values.some((value) => Number.isFinite(value) && value > 0);
+}
+
+function summarizeModels(runs) {
+	const counts = new Map();
+	for (const run of runs) {
+		const model = run.model ?? {};
+		const provider = model.provider ?? "?";
+		const id = model.id ?? "?";
+		const name = model.name ?? id;
+		const key = `${provider}\0${id}\0${name}`;
+		const existing = counts.get(key) ?? { provider, id, name, runs: 0 };
+		existing.runs += 1;
+		counts.set(key, existing);
+	}
+	return [...counts.values()].sort((a, b) => b.runs - a.runs || a.name.localeCompare(b.name));
+}
+
+function countedValues(values) {
+	const counts = new Map();
+	for (const value of values) {
+		const key = String(value ?? "unknown");
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.map(([value, runs]) => ({ value, runs }))
+		.sort((a, b) => b.runs - a.runs || a.value.localeCompare(b.value));
+}
+
+function formatCountedValues(values) {
+	if (!Array.isArray(values) || values.length === 0) return "unknown";
+	return values.map((item) => `${item.value} x${item.runs}`).join(", ");
+}
+
+function ratio(count, total) {
+	if (total === 0) return null;
+	return count / total;
+}
+
+function formatRatio(count, total) {
+	if (total === 0) return "—";
+	return `${count}/${total} (${Math.round((count / total) * 100)}%)`;
+}
+
+function formatReceiptCount(row, field) {
+	if (row.receiptRuns === 0) return "not collected";
+	const formatted = formatRatio(row[field] ?? 0, row.receiptRuns);
+	if (row.receiptRuns === row.runs) return formatted;
+	return `${formatted}; ${row.receiptRuns}/${row.runs} collected`;
+}
+
+function formatSeconds(value) {
+	return value == null ? "—" : `${value.toFixed(1)}s`;
+}
+
+function formatCost(value) {
+	return value == null ? "not reported" : `$${value.toFixed(4)}`;
+}
+
 function fmt(n) {
+	if (n == null) return "not reported";
 	if (!Number.isFinite(n)) return "—";
 	return Math.round(n).toLocaleString();
+}
+
+function escapePipes(value) {
+	return String(value).replaceAll("|", "\\|");
 }
 
 function pctDelta(a, b) {
@@ -199,6 +668,10 @@ function pctDelta(a, b) {
 	const d = ((b - a) / a) * 100;
 	const sign = d > 0 ? "+" : "";
 	return `${sign}${d.toFixed(0)}%`;
+}
+
+function numeric(value) {
+	return Number.isFinite(value) ? value : 0;
 }
 
 function parseArgs(argv) {
@@ -223,4 +696,25 @@ function parseArgs(argv) {
 		}
 	}
 	return out;
+}
+
+function printHelp() {
+	process.stdout.write(
+		[
+			"usage: codebase bench report <sweep-id> [<sweep-id> ...] [--out path.md] [--json-out path.json]",
+			"       node bench/aggregate.mjs <sweep-id> [<sweep-id> ...] [--out path.md] [--json-out path.json]",
+			"",
+			"Render benchmark JSONL sweeps into markdown reports and machine-readable scorecards.",
+			"",
+			"Options:",
+			"  --out PATH        write markdown report instead of printing to stdout",
+			"  --json-out PATH   also write a JSON launch scorecard",
+			"  --help, -h        show this help",
+			"",
+			"Examples:",
+			"  codebase bench report sweep-2026-05-09T01-23-45",
+			"  codebase bench report control treatment --out docs/benchmarks/compare.md",
+			"",
+		].join("\n"),
+	);
 }

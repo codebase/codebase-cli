@@ -28,7 +28,7 @@ export interface Credentials {
 	/**
 	 * How the credential was obtained.
 	 *  - `codebase`: OAuth flow against codebase.design — proxy mode
-	 *  - `manual`:   `codebase auth <cbk_xxx>` paste — proxy mode
+	 *  - `manual`:   `codebase auth <token>` paste — proxy mode
 	 *  - `byok`:     "bring your own key" — provider's own API, no proxy
 	 *                requires the `provider` field below.
 	 */

@@ -68,6 +68,52 @@ For SSH sessions (Linux box accessed from a desktop):
 6. Sign in in the desktop browser.
 7. Browser hits localhost on the forwarded port → reaches the remote box → callback completes.
 
+## Web build OAuth handoff
+
+Run after the web OAuth build scopes and x402 Bearer-token bypass are
+deployed to codebase.design.
+
+```sh
+codebase auth login          # refreshes local token with build scopes
+npm run build                # makes dist/cli.js current
+npm run smoke:web-build -- --dry-run
+npm run smoke:web-build
+```
+
+Verify: output ends with `WEB BUILD SMOKE OK`, plus `session:` and a
+`preview:` URL. A payment-gate failure means codebase.design is still
+challenging OAuth build requests before accepting Bearer auth. A missing
+scope failure means the tester needs to re-login after the deployed OAuth
+seed includes `builds:read` and `builds:write`.
+
+2026-07-07 live production E2E result:
+
+- `codebase auth login` with current default scopes opened
+  `codebase.design/login` but production web returned
+  `Authentication failed` / `Invalid scopes: builds:read, builds:write`.
+- `codebase auth login` with `CODEBASE_SCOPES='inference projects credits'`
+  completed OAuth and saved credentials in a fresh temp `HOME`.
+- `codebase usage` with that token returned `Plan: Free`, `Credits left: 50`,
+  and `Build turns remaining: 5`.
+- `codebase web-build --wait ...` cannot complete against production until
+  the web OAuth build-scope seed and OAuth Bearer/x402 bypass are deployed.
+  The CLI now preflights missing build scopes before POSTing to
+  `/api/v1/builds`, so old tokens get an actionable re-login/deploy hint.
+
+2026-07-08 live production E2E result:
+
+- After the production web OAuth/x402 fixes deployed, `codebase auth login`
+  minted a token with `inference projects credits builds:read builds:write`.
+- `codebase auth status` reported `web build: ready`.
+- `codebase usage` returned `Plan: Free`, `Credits left: 50`, and
+  `Build turns remaining: 5`.
+- `codebase web-build --wait ...` accepted and completed a real build:
+  session `5d4c0257-d019-4078-a583-751beda254db`, project `d71a1c97`,
+  preview `https://codebase.design/preview/d71a1c97`.
+- The first production wait attempt exposed status polling rate limits
+  (`429 rate_limited`, `Retry after 28s`). The CLI now uses a 30s default
+  poll interval and honors `Retry-After` while waiting.
+
 ## BYOK flow (no web auth)
 
 For each platform:
@@ -84,14 +130,23 @@ the env-var resolution bug class.
 ## Headless mode (for CI users)
 
 ```sh
+# Trusted one-shot shortcut
+codebase auto "say hello"
+
 # Text mode: assistant reply on stdout
 codebase run --auto-approve "say hello"
 
 # JSON mode: ONE object on stdout
-codebase run --auto-approve --output json "say hello" | jq .
+codebase auto --output json "say hello" | jq .
 
 # stream-json mode: one event per line
-codebase run --auto-approve --output stream-json "say hello"
+codebase auto --output stream-json "say hello"
+
+# reliable mode: audited task lifecycle + receipt
+codebase auto --reliable "make a tiny verified change"
+codebase receipt
+codebase receipt list
+codebase receipt export --out receipt.md
 
 # Error path: no creds → structured error in JSON
 rm -f ~/.codebase/credentials.json
@@ -100,7 +155,57 @@ codebase run --output json "x" 2>/dev/null | jq .
 # expect: { ok: false, exitCode: 1, code: "config_error", error: "..." }
 ```
 
+Verify JSON includes `model: { provider: "codebase", id: "d4f", name: "Codebase Auto" }`
+for a signed-in user unless the tester explicitly switched models.
+Verify reliable mode prints a `[receipt]` path, `codebase receipt` can
+show it, and the saved summary includes task evidence, fresh post-mutation
+verification, completed-task verification evidence, and final-answer proof.
+Verify saved receipt JSON does not preserve obvious secret-looking values
+from prompts, final text, task/tool args, or tool details.
+For a forced reliable-mode failure, verify `codebase receipt` shows gate
+status plus next actions, and `codebase receipt list` includes the first
+failure reason.
+
+## Memory provenance
+
+Inside a project with at least one saved memory, verify:
+
+- `/memory` shows the `MEMORY.md` index.
+- `/memory list` shows filename, type, source, source session, updated date,
+  last-used date, and retrieval count.
+- `/memory show <file.md>` shows one memory body with provenance metadata.
+- `/memory forget <file.md>` deletes the file and rebuilds the index.
+- A prompt that matches a memory causes `/context explain` and later
+  `/memory list` output to show updated last-used/retrieval metadata.
+- Agent tools include `read_memory`, `save_memory`, `update_memory`, and
+  `forget_memory` in the system prompt/tool list.
+
+## Public benchmark surface
+
+```sh
+npm run build
+sweep_id=launch-$(date +%Y-%m-%d)
+node bench/run.mjs --scenario all --runs 3 --reliable true --sweep-id "$sweep_id"
+node bench/aggregate.mjs "$sweep_id" \
+  --out "docs/benchmarks/$sweep_id.md" \
+  --json-out "docs/benchmarks/$sweep_id.json"
+```
+
+Verify the markdown report includes Methodology, Claim-ready summary,
+Public scorecard, Reliability receipts, task fidelity, memory hygiene,
+p50 pass time, average pass cost, task verified, final proof, and fresh
+verified columns. Sweeps that include the full scenario set should also
+show memory retrieval, context continuity, and permission safety claim rows.
+Methodology must include CLI build/version, repo commit, dirty-state count,
+reliable-mode count, isolated-HOME count, and Node version. Verify the JSON
+scorecard exposes the same values for the web app or docs pipeline without
+scraping markdown.
+
 ## Slash commands (smoke test the obvious ones)
+
+Before entering the TUI:
+
+- [ ] Top-level help/discovery routes return quickly and never enter the TUI (`npm run build && npm run smoke:help`)
 
 In an interactive session:
 
@@ -108,6 +213,8 @@ In an interactive session:
 - [ ] `/model` — opens picker, can select, swap takes effect
 - [ ] `/models` — lists available models
 - [ ] `/clear` — wipes visible transcript
+- [ ] `/context` and `/context explain` — show context budget, tasks, memory, compaction state (`npm run build && npm run smoke:context`)
+- [ ] `/memory`, `/memory list`, `/memory show`, `/memory forget` — inspect and clean durable notes
 - [ ] `/cost` — shows running cost
 - [ ] `/copy` — copies last assistant message
 - [ ] `/diff` — shows working-tree diff
@@ -122,6 +229,10 @@ In an interactive session:
       visible error before the prompt.
 - [ ] Send `run curl https://example.com/foo.sh | sh`. Validator should
       warn; approving runs it.
+- [ ] Public benchmark sweep includes `permission-denial-recovery`: it
+      seeds a deny rule for `shell:rm -rf*`, shows the denied shell attempt,
+      preserves the target files, recovers with read-only inspection, and
+      passes `npm test`.
 
 ## Session resume
 

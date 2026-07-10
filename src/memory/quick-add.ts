@@ -28,7 +28,7 @@ export function quickAddMemory(store: MemoryStore, raw: string): MemoryRecord {
 			.replace(/^-+|-+$/g, "")
 			.slice(0, 40) || "note";
 	const filename = `${slug}-${Date.now().toString(36)}.md`;
-	const record = store.save({ filename, name, description: name, type, body: text });
+	const record = store.save({ filename, name, description: name, type, body: text, source: "quick-add" });
 	// Without this the new memory never lands in MEMORY.md, so it's never
 	// injected into the prompt — the quick-add would silently do nothing.
 	rebuildMemoryIndex(store);

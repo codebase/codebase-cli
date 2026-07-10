@@ -15,7 +15,7 @@ import { GlueClient, resolveGlueModels } from "../glue/client.js";
 import { HookManager } from "../hooks/manager.js";
 import { McpManager, type McpServerStatus } from "../mcp/manager.js";
 import { MemoryExtractor } from "../memory/extractor.js";
-import { buildMemoryAddendum } from "../memory/inject.js";
+import { buildMemoryAddendum, buildRelevantMemoryReminder } from "../memory/inject.js";
 import { MemoryStore } from "../memory/store.js";
 import { PermissionStore } from "../permissions/store.js";
 import { PlanModeStore } from "../plan/store.js";
@@ -33,6 +33,7 @@ import { UserQueryStore } from "../user-queries/store.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
 import { type Effort, resolveEffort } from "./effort.js";
 import { buildProjectFilesAddendum } from "./project-files.js";
+import { streamProxySafely } from "./safe-stream.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
 const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
@@ -95,6 +96,12 @@ export interface CreateAgentOptions {
 	 * doesn't lose context, but we don't want to disk-roundtrip.
 	 */
 	initialMessages?: AgentMessage[];
+	/** Extra behavior guidance appended after the default tool-aware prompt. */
+	systemPromptAddendum?: string;
+	/** Reuse an existing task-list id while rebuilding an in-memory agent. */
+	taskListId?: string;
+	/** Persist settled turns to the resumable session store. Default true. */
+	persistSession?: boolean;
 }
 
 export interface AgentBundle {
@@ -193,7 +200,6 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	});
 	const userQueries = new UserQueryStore();
 	const planMode = new PlanModeStore();
-	const memory = new MemoryStore({ cwd });
 	const hooks = new HookManager();
 	hooks.loadFrom(join(homedir(), ".codebase", "hooks.json"), join(cwd, ".codebase", "hooks.json"));
 	const diagnostics = new DiagnosticsEngine({ cwd });
@@ -216,6 +222,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const compactionMonitor = new CompactionMonitor();
 	const sessions = new SessionStore({ cwd });
 	const resumed = opts.sessionId ? sessions.loadById(opts.sessionId) : opts.resume ? sessions.load(model.id) : null;
+	const memory = new MemoryStore({ cwd, sourceSessionId: sessions.id });
 
 	// Background memory extraction: a cheap-model pass mines settled turns
 	// for durable facts. Seeded past any resumed transcript so it only
@@ -248,6 +255,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					`${toolName} is blocked while plan mode is active. ` +
 					"Use exit_plan_mode after presenting your plan to regain write access.",
 			};
+		}
+		const preview = permissions.preview(toolName, args);
+		if (preview.decision === "block") {
+			return { block: true, reason: preview.reason ?? "Blocked by permission policy." };
 		}
 		const decision = await permissions.evaluate(toolName, args);
 		if (decision === "block") {
@@ -311,7 +322,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const toolContext: ToolContext = {
 		cwd,
 		fileStateCache: new FileStateCache(),
-		tasks: new TaskStore(),
+		tasks: new TaskStore({ cwd, taskListId: opts.taskListId ?? sessions.id }),
 		userQueries,
 		planMode,
 		memory,
@@ -333,6 +344,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					...(thinkingLevel && { thinkingLevel: thinkingLevel as Effort }),
 				},
 				getApiKey,
+				...(source === "proxy" && { streamFn: streamProxySafely }),
 				beforeToolCall: (ctx, signal) => guardToolCall(ctx.toolCall.name, ctx.args, signal),
 				afterToolCall: async (ctx, signal) => {
 					await dispatchPostToolHooks(
@@ -356,6 +368,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		buildSystemPrompt({
 			tools: tools.map((t) => ({ name: t.name, description: t.description })),
 		});
+	const systemPromptAddendum = opts.systemPromptAddendum?.trim() ? `\n\n${opts.systemPromptAddendum.trim()}` : "";
 
 	// MEMORY.md gets concatenated onto the system prompt at agent creation;
 	// edits during a session don't take effect until next launch.
@@ -365,6 +378,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// after — it's the user's accumulated long-term notes.
 	const fullSystemPrompt =
 		systemPrompt +
+		systemPromptAddendum +
 		buildProjectFilesAddendum(cwd) +
 		buildMemoryAddendum(memory) +
 		buildOutputStyleAddendum(persistedConfig, cwd);
@@ -378,9 +392,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			messages: opts.initialMessages ?? resumed?.messages ?? [],
 			...(effort && { thinkingLevel: effort }),
 		},
-		getApiKey: () => apiKey,
+		getApiKey,
+		...(source === "proxy" && { streamFn: streamProxySafely }),
 		transformContext: async (messages, signal) => {
-			if (!compaction.needsCompaction(messages)) return messages;
+			if (!compaction.needsCompaction(messages)) return withRelevantMemoryReminder(memory, messages);
 
 			// Stage 1 — microcompaction: clear stale tool-result content
 			// (old reads, grep dumps, command output) without a summary
@@ -388,7 +403,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			// threshold, we're done and skip the expensive summarize path.
 			const micro = compaction.microcompact(messages);
 			if (micro.clearedCount > 0 && !compaction.needsCompaction(micro.messages)) {
-				return micro.messages;
+				return withRelevantMemoryReminder(memory, micro.messages);
 			}
 			// Microcompaction wasn't enough (or freed nothing) — fall through
 			// to the full summarize-everything compaction, operating on the
@@ -414,7 +429,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					},
 					signal,
 				);
-				return result.messages;
+				return withRelevantMemoryReminder(memory, result.messages);
 			} finally {
 				// Always clear — even if compact() threw, the user shouldn't
 				// see a stuck "Compacting…" banner forever.
@@ -476,6 +491,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// Persist after every agent_end so a crash mid-session doesn't lose work.
 	agent.subscribe((event) => {
 		if (event.type !== "agent_end") return;
+		if (opts.persistSession === false) return;
 		try {
 			const messages = event.messages.length > 0 ? event.messages : (resumed?.messages ?? []);
 			if (messages.length === 0) return;
@@ -626,6 +642,42 @@ function buildOutputStyleAddendum(config: ConfigStore, cwd: string): string {
 	const style = getOutputStyle(id, { cwd });
 	if (!style) return "";
 	return `\n\n# Response style: ${style.name}\n${style.body}`;
+}
+
+function withRelevantMemoryReminder(memory: MemoryStore, messages: AgentMessage[]): AgentMessage[] {
+	const target = latestRealUserMessage(messages);
+	if (!target) return messages;
+	const reminder = buildRelevantMemoryReminder(memory, target.text, { recordUsage: true });
+	if (!reminder) return messages;
+	const reminderMessage: AgentMessage = {
+		role: "user",
+		content: reminder,
+		timestamp: Date.now(),
+	};
+	return [...messages.slice(0, target.index), reminderMessage, ...messages.slice(target.index)];
+}
+
+function latestRealUserMessage(messages: readonly AgentMessage[]): { index: number; text: string } | null {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (!message || !("role" in message) || message.role !== "user") continue;
+		const text = userMessageText(message.content).trim();
+		if (!text || text.startsWith("<system-reminder>")) continue;
+		return { index: i, text };
+	}
+	return null;
+}
+
+function userMessageText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((block) => {
+			if (!block || typeof block !== "object") return [];
+			const candidate = block as { type?: unknown; text?: unknown };
+			return candidate.type === "text" && typeof candidate.text === "string" ? [candidate.text] : [];
+		})
+		.join("\n");
 }
 
 /** Extract the trailing assistant text content from an array of messages. */

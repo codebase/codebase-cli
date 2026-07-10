@@ -38,6 +38,8 @@ Save ONLY facts that are non-obvious AND useful across sessions, using this taxo
 - project: durable context about the work (goals, decisions, constraints, blockers). Convert relative dates to absolute.
 - reference: pointers to external systems (tickets, dashboards, URLs).
 
+Task-local instructions such as "do not add dependencies", "run the full suite", or "keep a task list" apply only to the current request. Save a preference or rule only when the USER explicitly says it should apply in future sessions or by default. Never promote the assistant's paraphrase into a durable preference.
+
 Do NOT save: anything derivable from the code, file paths, git history, transient conversation state, or facts already in the existing index below. When in doubt, omit — a wrong or noisy memory is worse than a missing one.
 
 Respond with a JSON array (and nothing else) of objects:
@@ -91,12 +93,14 @@ export class MemoryExtractor {
 		const reply = await this.model.fast(prompt, SYSTEM_PROMPT, signal);
 		const proposed = parseProposals(reply);
 		if (proposed.length === 0) return [];
+		const durablePreferenceSignal = hasDurablePreferenceSignal(slice);
 
 		const existingSlugs = new Set(
 			this.store.list().map((r) => r.filename.replace(/\.md$/, "").replace(/-[a-z0-9]+$/, "")),
 		);
 		const saved: MemoryRecord[] = [];
 		for (const p of proposed) {
+			if (isPreferenceProposal(p) && !durablePreferenceSignal) continue;
 			const slug = slugify(p.name);
 			if (existingSlugs.has(slug)) continue; // already captured under this subject
 			existingSlugs.add(slug);
@@ -107,12 +111,36 @@ export class MemoryExtractor {
 					description: clip(p.description, 200),
 					type: p.type,
 					body: p.body.trim(),
+					source: "auto-extract",
 				}),
 			);
 		}
 		if (saved.length > 0) rebuildMemoryIndex(this.store);
 		return saved;
 	}
+}
+
+function isPreferenceProposal(proposal: Proposal): boolean {
+	if (proposal.type === "feedback") return true;
+	if (proposal.type !== "user") return false;
+	return /\b(prefer|preference|always|never|workflow|rule|by default|should)\b/i.test(
+		`${proposal.name} ${proposal.description} ${proposal.body}`,
+	);
+}
+
+function hasDurablePreferenceSignal(messages: AgentMessage[]): boolean {
+	const userText = messages
+		.filter((message) => message.role === "user")
+		.map(messageText)
+		.join("\n");
+	return userText
+		.split(/(?<=[.!?\n])\s+/)
+		.some(
+			(sentence) =>
+				/\b(always|never|from now on|going forward|in the future|by default|remember (?:this|that)|i prefer|my preference|whenever|every time|across (?:projects|sessions))\b/i.test(
+					sentence,
+				) && !/\b(for this|in this|this task|this change|this time|for now|today|right now)\b/i.test(sentence),
+		);
 }
 
 interface Proposal {

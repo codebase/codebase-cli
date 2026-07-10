@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FileStateCache } from "./file-state-cache.js";
 import { TaskStore } from "./task-store.js";
@@ -24,6 +27,8 @@ describe("task tools", () => {
 		expect(result.details.status).toBe("pending");
 		expect(result.details.title).toBe("Add OAuth refresh");
 		expect(result.details.activeForm).toBe("Adding OAuth refresh");
+		expect(result.details.owner).toBeNull();
+		expect(result.details.blockedBy).toEqual([]);
 	});
 
 	it("update_task moves a task through states", async () => {
@@ -80,6 +85,45 @@ describe("task tools", () => {
 		expect(done.details.tasks.map((t) => t.title)).toEqual(["b"]);
 	});
 
+	it("tracks owners, blockers, and available tasks", async () => {
+		const ctx = makeCtx();
+		await createCreateTask(ctx).execute("c1", { title: "Design migration" });
+		await createCreateTask(ctx).execute("c2", { title: "Implement migration", blocked_by: ["task-1"] });
+		await createCreateTask(ctx).execute("c3", { title: "Review migration", owner: "reviewer" });
+
+		const blocked = await createGetTask(ctx).execute("g", { id: "task-2" });
+		const blocker = await createGetTask(ctx).execute("g", { id: "task-1" });
+		expect(blocked.details.blockedBy).toEqual(["task-1"]);
+		expect(blocker.details.blocks).toEqual(["task-2"]);
+
+		const available = await createListTasks(ctx).execute("l", { available: true });
+		expect(available.details.tasks.map((t) => t.id)).toEqual(["task-1"]);
+
+		await expect(createUpdateTask(ctx).execute("u", { id: "task-2", status: "in_progress" })).rejects.toThrow(
+			/blocked by task-1/,
+		);
+
+		await createUpdateTask(ctx).execute("u", { id: "task-1", status: "completed" });
+		const newlyAvailable = await createListTasks(ctx).execute("l", { available: true });
+		expect(newlyAvailable.details.tasks.map((t) => t.id)).toEqual(["task-2"]);
+	});
+
+	it("updates blocker edges bidirectionally", async () => {
+		const ctx = makeCtx();
+		await createCreateTask(ctx).execute("c1", { title: "First" });
+		await createCreateTask(ctx).execute("c2", { title: "Second" });
+
+		await createUpdateTask(ctx).execute("u", { id: "task-1", add_blocks: ["task-2"], owner: "agent-a" });
+		expect(ctx.tasks.get("task-1")?.blocks).toEqual(["task-2"]);
+		expect(ctx.tasks.get("task-2")?.blockedBy).toEqual(["task-1"]);
+		expect(ctx.tasks.get("task-1")?.owner).toBe("agent-a");
+
+		await createUpdateTask(ctx).execute("u", { id: "task-1", remove_blocks: ["task-2"], clear_owner: true });
+		expect(ctx.tasks.get("task-1")?.blocks).toEqual([]);
+		expect(ctx.tasks.get("task-2")?.blockedBy).toEqual([]);
+		expect(ctx.tasks.get("task-1")?.owner).toBeNull();
+	});
+
 	it("list_tasks shows a friendly message when empty", async () => {
 		const ctx = makeCtx();
 		const result = await createListTasks(ctx).execute("l", {});
@@ -109,5 +153,47 @@ describe("task tools", () => {
 
 		expect(listener).toHaveBeenCalledTimes(2);
 		expect(listener.mock.calls[1][0][0].status).toBe("in_progress");
+	});
+});
+
+describe("TaskStore", () => {
+	it("persists tasks for a session and resumes the id counter", () => {
+		const dataRoot = mkdtempSync(join(tmpdir(), "codebase-task-store-"));
+		const cwd = mkdtempSync(join(tmpdir(), "codebase-task-cwd-"));
+		try {
+			const first = new TaskStore({ cwd, taskListId: "s-test", dataRoot, watch: false });
+			first.create({ title: "One", owner: "agent-a" });
+			first.create({ title: "Two", blockedBy: ["task-1"] });
+
+			const second = new TaskStore({ cwd, taskListId: "s-test", dataRoot, watch: false });
+			expect(second.list().map((t) => t.title)).toEqual(["One", "Two"]);
+			expect(second.get("task-1")?.owner).toBe("agent-a");
+			expect(second.get("task-1")?.blocks).toEqual(["task-2"]);
+			expect(second.get("task-2")?.blockedBy).toEqual(["task-1"]);
+			expect(second.create({ title: "Three" }).id).toBe("task-3");
+		} finally {
+			rmSync(dataRoot, { recursive: true, force: true });
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects dependency cycles", () => {
+		const store = new TaskStore();
+		store.create({ title: "A" });
+		store.create({ title: "B" });
+		store.update("task-1", { addBlocks: ["task-2"] });
+
+		expect(() => store.update("task-2", { addBlocks: ["task-1"] })).toThrow(/dependency cycle/);
+	});
+
+	it("can send an immediate snapshot to subscribers", () => {
+		const store = new TaskStore();
+		store.create({ title: "Already here" });
+		const listener = vi.fn();
+
+		store.subscribe(listener, { immediate: true });
+
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect(listener.mock.calls[0][0][0].title).toBe("Already here");
 	});
 });

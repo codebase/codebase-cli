@@ -27,3 +27,36 @@ export interface PlatformProject {
 export interface ListProjectsResponse {
 	projects: PlatformProject[];
 }
+
+export interface BuildStartResponse {
+	sessionId: string;
+	projectId: string;
+	status: string;
+	continued?: boolean;
+	model?: string;
+	poll?: string;
+	events?: string;
+}
+
+export interface BuildStatusResponse {
+	sessionId: string;
+	status: string;
+	projectId?: string;
+	filesCreated?: string[];
+	model?: string;
+	timeline?: unknown[];
+}
+
+export interface BuildPreviewResponse {
+	ok: boolean;
+	previewPath: string | null;
+	reason?: string | null;
+}
+
+export interface BuildCancelResponse {
+	sessionId: string;
+	status: string;
+	stopped: boolean;
+	persisted?: boolean;
+	events?: string;
+}

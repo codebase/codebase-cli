@@ -35,13 +35,13 @@ export class TaskPanel extends Container {
 		this.maxVisible = maxVisible;
 		this.requestRender = requestRender;
 		this.header = new Text(ansi.bold(ansi.dim("tasks")), 1, 0);
-		this.unsubscribe = store.subscribe((tasks) => this.applyTasks(tasks));
+		this.unsubscribe = store.subscribe((tasks) => this.applyTasks(tasks), { immediate: true });
 	}
 
 	/** Re-bind to a fresh TaskStore after a model swap rebuilds the bundle. */
 	rebind(store: TaskStore): void {
 		this.unsubscribe();
-		this.unsubscribe = store.subscribe((tasks) => this.applyTasks(tasks));
+		this.unsubscribe = store.subscribe((tasks) => this.applyTasks(tasks), { immediate: true });
 	}
 
 	private applyTasks(tasks: readonly Task[]): void {
@@ -62,8 +62,20 @@ export class TaskPanel extends Container {
 		const sorted = [...visible].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]);
 		const shown = sorted.slice(0, this.maxVisible);
 		const hidden = sorted.length - shown.length;
+		const openTaskIds = new Set(
+			visible.filter((task) => task.status !== "completed" && task.status !== "cancelled").map((task) => task.id),
+		);
 		for (const task of shown) {
-			this.addChild(new Text(renderTaskLine(task), 1, 0));
+			this.addChild(
+				new Text(
+					renderTaskLine(
+						task,
+						task.blockedBy.filter((id) => openTaskIds.has(id)),
+					),
+					1,
+					0,
+				),
+			);
 		}
 		if (hidden > 0) {
 			this.addChild(new Text(ansi.dim(`  …+${hidden} more`), 1, 0));
@@ -76,14 +88,20 @@ export class TaskPanel extends Container {
 	}
 }
 
-function renderTaskLine(task: Task): string {
+function renderTaskLine(task: Task, openBlockers: string[]): string {
 	const glyph = STATUS_GLYPH[task.status];
 	const label = task.status === "in_progress" && task.activeForm ? task.activeForm : task.title;
+	const owner = task.owner ? ` @${task.owner}` : "";
+	const blocked = openBlockers.length > 0 ? ` blocked by ${openBlockers.join(",")}` : "";
+	const blocks = task.blocks.length > 0 ? ` blocks ${task.blocks.join(",")}` : "";
+	const text = `${glyph} ${label}${owner}${blocked}${blocks}`;
 	const colored =
-		task.status === "in_progress"
-			? ansi.magenta(`${glyph} ${label}`)
-			: task.status === "completed"
-				? ansi.green(`${glyph} ${label}`)
-				: `${glyph} ${label}`;
+		openBlockers.length > 0
+			? ansi.yellow(text)
+			: task.status === "in_progress"
+				? ansi.magenta(text)
+				: task.status === "completed"
+					? ansi.green(text)
+					: text;
 	return colored;
 }

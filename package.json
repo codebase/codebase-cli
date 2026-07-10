@@ -1,6 +1,6 @@
 {
 	"name": "codebase-cli",
-	"version": "2.0.0-pre.73",
+	"version": "2.0.0-pre.74",
 	"description": "Codebase CLI — a TypeScript coding agent on the pi-mono runtime. OAuth-aware, any LLM provider, single install.",
 	"keywords": [
 		"ai",
@@ -31,6 +31,7 @@
 	"main": "./dist/cli.js",
 	"files": [
 		"bin/",
+		"bench/",
 		"dist/",
 		"LICENSE",
 		"README.md"
@@ -55,6 +56,9 @@
 		"bench": "node bench/run.mjs",
 		"bench:report": "node bench/aggregate.mjs",
 		"bench:micro": "vitest bench --run",
+		"smoke:help": "node scripts/help-smoke.mjs",
+		"smoke:context": "node scripts/context-smoke.mjs",
+		"smoke:web-build": "node scripts/web-build-smoke.mjs",
 		"prepublishOnly": "npm run clean && npm run check && npm run build",
 		"prepack": "npm run build"
 	},
@@ -70,7 +74,8 @@
 		"ink": "^5.2.1",
 		"proper-lockfile": "^4.1.2",
 		"react": "^18.3.1",
-		"typebox": "^1.1.24"
+		"typebox": "^1.1.24",
+		"typescript": "^5.9.2"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.5",
@@ -78,7 +83,6 @@
 		"@types/react": "^18.3.18",
 		"shx": "^0.4.0",
 		"tsx": "^4.20.3",
-		"typescript": "^5.9.2",
 		"vitest": "^2.1.8"
 	}
 }

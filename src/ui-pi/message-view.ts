@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type Component, Markdown, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { stripRuntimeMarkup } from "../agent/visible-messages.js";
 import type { ToolExecution } from "../types.js";
 import { type DiffHunk, type DiffInfo, diffSummary } from "../ui/diff-summary.js";
 import { splitMarkdownSegments } from "../ui/markdown-split.js";
@@ -241,7 +242,8 @@ export function buildMessageBlocks(
 	const out: Component[] = [];
 	const copyable = copy.registry !== undefined && !copy.streaming;
 	if (typeof message.content === "string") {
-		if (message.content) out.push(new PlainText(message.content));
+		const text = role === "toolResult" ? message.content : stripRuntimeMarkup(message.content);
+		if (text) out.push(new PlainText(text));
 		return out;
 	}
 	if (!Array.isArray(message.content)) return out;
@@ -302,8 +304,10 @@ export function buildMessageBlocks(
 		switch (block.type) {
 			case "text": {
 				if (typeof block.text !== "string") break;
+				const visibleText = role === "toolResult" ? block.text : stripRuntimeMarkup(block.text);
+				if (!visibleText) break;
 				if (role !== "assistant") {
-					out.push(new PlainText(block.text));
+					out.push(new PlainText(visibleText));
 					break;
 				}
 				// Split assistant prose from fenced code so each code block
@@ -311,7 +315,7 @@ export function buildMessageBlocks(
 				// rendering. During streaming, render the whole thing as
 				// markdown to avoid box churn until the turn settles.
 				if (copyable && copy.registry) {
-					const segments = splitMarkdownSegments(block.text);
+					const segments = splitMarkdownSegments(visibleText);
 					segments.forEach((seg, s) => {
 						if (seg.type === "code" && seg.text.trim()) {
 							out.push(
@@ -327,13 +331,11 @@ export function buildMessageBlocks(
 						}
 					});
 				} else {
-					out.push(new Markdown(block.text, 0, 0, markdownTheme));
+					out.push(new Markdown(visibleText, 0, 0, markdownTheme));
 				}
 				break;
 			}
 			case "thinking": {
-				if (typeof block.thinking !== "string") break;
-				out.push(new PlainText(ansi.dim(ansi.italic(block.thinking))));
 				break;
 			}
 			case "toolCall": {

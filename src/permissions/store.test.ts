@@ -154,6 +154,59 @@ describe("PermissionStore request shape", () => {
 		expect(store.current()?.risk).toBe("medium");
 	});
 
+	it("explains shell prompts and trust scope", async () => {
+		const store = new PermissionStore();
+		store.evaluate("shell", { command: 'git commit -m "wip"' });
+
+		expect(store.current()).toMatchObject({
+			reason: expect.stringContaining("local git history"),
+			trustScope: "shell:git commit*",
+			guidance: expect.arrayContaining([
+				"Trust tool grants shell:git commit* for this session only.",
+				'Persist exact allow: /permissions allow shell:git commit -m "wip"',
+				"Persist family allow: /permissions allow shell:git commit*",
+				"Persist family deny: /permissions deny shell:git commit*",
+			]),
+		});
+	});
+
+	it("surfaces shell validator warnings on the permission request", async () => {
+		const store = new PermissionStore();
+		store.evaluate("shell", { command: "sudo apt update" });
+
+		expect(store.current()).toMatchObject({
+			risk: "high",
+			reason: expect.stringContaining("shell validator warning"),
+			trustScope: "shell:apt update*",
+			guidance: expect.arrayContaining([
+				expect.stringContaining("Safer path: prefer a non-sudo command"),
+				"Persist exact allow: /permissions allow shell:sudo apt update",
+				"Persist family allow: /permissions allow shell:apt update*",
+			]),
+		});
+	});
+
+	it("does not offer persistent allow guidance for hard-blocked shell commands", async () => {
+		const store = new PermissionStore();
+		store.evaluate("shell", { command: "rm -rf /" });
+
+		expect(store.current()).toMatchObject({
+			risk: "high",
+			reason: expect.stringContaining("hard-block"),
+			guidance: ["No allow rule is offered for hard-blocked commands; rewrite it to target a safe path."],
+		});
+	});
+
+	it("sets a trust scope for non-shell tools", async () => {
+		const store = new PermissionStore();
+		store.evaluate("write_file", { path: "src/foo.ts", content: "x" });
+
+		expect(store.current()).toMatchObject({
+			reason: expect.stringContaining("create or overwrite"),
+			trustScope: "write_file",
+		});
+	});
+
 	it("includes a multi-line detail for shell and git_commit", async () => {
 		const store = new PermissionStore();
 		store.evaluate("shell", { command: "rm -rf dist" });
@@ -221,5 +274,113 @@ describe("PermissionStore config patterns", () => {
 		await expect(store.evaluate("web_fetch", { url: "https://docs.codebase.design/getting-started" })).resolves.toBe(
 			"allow",
 		);
+	});
+});
+
+describe("PermissionStore preview", () => {
+	it("explains built-in read-only auto-allows", () => {
+		const store = new PermissionStore();
+
+		expect(store.preview("shell", { command: "git status --short" })).toMatchObject({
+			decision: "allow",
+			source: "built-in-read-only",
+			risk: "low",
+			reason: "Allowed by the built-in read-only policy.",
+		});
+	});
+
+	it("shows shell validator hard-blocks before persisted allows", () => {
+		const store = new PermissionStore({ allowPatterns: ["shell:*"] });
+
+		expect(store.preview("shell", { command: "rm -rf /" })).toMatchObject({
+			decision: "block",
+			source: "shell-validator",
+			risk: "high",
+			reason: expect.stringContaining("hard-block"),
+			guidance: ["No allow rule is offered for hard-blocked commands; rewrite it to target a safe path."],
+		});
+	});
+
+	it("shows persisted deny and allow rules", () => {
+		const store = new PermissionStore({
+			allowPatterns: ["write_file:src/**"],
+			denyPatterns: ["read_file:.env*"],
+		});
+
+		expect(store.preview("read_file", { path: ".env.local" })).toMatchObject({
+			decision: "block",
+			source: "deny-rule",
+			reason: "Blocked by a persisted deny rule.",
+		});
+		expect(store.preview("write_file", { path: "src/index.ts" })).toMatchObject({
+			decision: "allow",
+			source: "allow-rule",
+			reason: "Allowed by a persisted allow rule.",
+		});
+	});
+
+	it("shows prompt guidance for shell commands that need approval", () => {
+		const store = new PermissionStore();
+
+		expect(store.preview("shell", { command: "npm install" })).toMatchObject({
+			decision: "prompt",
+			source: "prompt",
+			risk: "medium",
+			reason: expect.stringContaining("package installs"),
+			trustScope: "shell:npm install*",
+			guidance: expect.arrayContaining([
+				"Trust tool grants shell:npm install* for this session only.",
+				"Persist exact allow: /permissions allow shell:npm install",
+				"Persist family allow: /permissions allow shell:npm install*",
+				"Persist family deny: /permissions deny shell:npm install*",
+			]),
+		});
+	});
+
+	it("omits exact allow guidance when the command already contains glob metacharacters", () => {
+		const store = new PermissionStore();
+		const preview = store.preview("shell", { command: "rm *.log" });
+
+		expect(preview).toMatchObject({
+			decision: "prompt",
+			source: "prompt",
+			risk: "high",
+			reason: expect.stringContaining("delete commands"),
+			trustScope: "shell:rm*",
+			guidance: expect.arrayContaining([
+				"Trust tool grants shell:rm* for this session only.",
+				"Persist family allow: /permissions allow shell:rm*",
+				"Persist family deny: /permissions deny shell:rm*",
+			]),
+		});
+		expect(preview.guidance).not.toContain("Persist exact allow: /permissions allow shell:rm *.log");
+	});
+
+	it("reflects session trust in previews", async () => {
+		const store = new PermissionStore();
+		const first = store.evaluate("shell", { command: 'git commit -m "wip"' });
+		store.respond(store.current()!.id, "trust-tool");
+		await first;
+
+		expect(store.preview("shell", { command: 'git commit -m "more"' })).toMatchObject({
+			decision: "allow",
+			source: "session-trust",
+			reason: "Allowed by session trust.",
+			trustScope: "shell:git commit*",
+		});
+	});
+
+	it("shows auto-approve without hiding shell hard-blocks", () => {
+		const store = new PermissionStore({ autoApprove: true });
+
+		expect(store.preview("write_file", { path: "x.ts", content: "" })).toMatchObject({
+			decision: "allow",
+			source: "auto-approve",
+			reason: expect.stringContaining("auto-approve is enabled"),
+		});
+		expect(store.preview("shell", { command: "rm -rf /" })).toMatchObject({
+			decision: "block",
+			source: "shell-validator",
+		});
 	});
 });

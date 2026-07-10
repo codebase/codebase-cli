@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createAskUser } from "./ask-user.js";
 import { capToolResult } from "./cap-tool-result.js";
+import { createCodeNavigation } from "./code-navigation.js";
 import { createConfig } from "./config.js";
 import { createDispatchAgent } from "./dispatch-agent.js";
 import { createEditFile } from "./edit-file.js";
@@ -53,6 +54,7 @@ export function buildTools(ctx: ToolContext): AgentTool<any>[] {
 		createListFiles(ctx),
 		createGlob(ctx),
 		createGrep(ctx),
+		createCodeNavigation(ctx),
 		createGitStatus(ctx),
 		createGitDiff(ctx),
 		createGitLog(ctx),

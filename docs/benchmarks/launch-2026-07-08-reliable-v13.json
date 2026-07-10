@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-09T01:10:26.111Z",
+  "sweeps": [
+    {
+      "id": "launch-2026-07-08-reliable-v13",
+      "runCount": 8,
+      "scenarioCount": 8,
+      "scenarios": [
+        "add-test",
+        "complex-issue-recovery",
+        "durable-task-dependencies",
+        "fix-typo",
+        "memory-secret-hygiene",
+        "multi-file-rename",
+        "read-only-explain",
+        "task-list-fidelity"
+      ],
+      "models": [
+        {
+          "provider": "codebase",
+          "id": "d4f",
+          "name": "Codebase Auto",
+          "runs": 8
+        }
+      ],
+      "provenance": {
+        "recordedRuns": 8,
+        "cliBuilds": [
+          {
+            "value": "2.0.0-pre.73 @ /Users/j/Documents/New project/codebase-cli-usage-pass/dist/cli.js",
+            "runs": 8
+          }
+        ],
+        "repoCommits": [
+          {
+            "value": "d65a8a8a9c2d",
+            "runs": 8
+          }
+        ],
+        "repoDirtyRuns": 0,
+        "reliableRuns": 8,
+        "isolatedHomeRuns": 8,
+        "nodeVersions": [
+          {
+            "value": "v24.2.0",
+            "runs": 8
+          }
+        ],
+        "timeoutsMs": [
+          {
+            "value": "900000",
+            "runs": 8
+          }
+        ]
+      },
+      "redaction": {
+        "applied": true,
+        "rulesVersion": 1,
+        "writerRedactions": 1,
+        "runsWithWriterRedactions": 1,
+        "reportTimeRedactions": 0,
+        "runsWithReportTimeRedactions": 0
+      },
+      "reliableReceiptRuns": 8,
+      "publicScorecard": [
+        {
+          "scope": "overall",
+          "runs": 8,
+          "passCount": 7,
+          "passRate": 0.875,
+          "receiptRuns": 8,
+          "receiptOkCount": 7,
+          "taskEvidenceCount": 8,
+          "taskVerifiedCount": 5,
+          "finalProofCount": 5,
+          "freshVerifiedCount": 5,
+          "usageReportedRuns": 0,
+          "medianPassSeconds": 25.814,
+          "avgPassCost": null
+        },
+        {
+          "scope": "core edits",
+          "runs": 4,
+          "passCount": 3,
+          "passRate": 0.75,
+          "receiptRuns": 4,
+          "receiptOkCount": 3,
+          "taskEvidenceCount": 4,
+          "taskVerifiedCount": 2,
+          "finalProofCount": 2,
+          "freshVerifiedCount": 2,
+          "usageReportedRuns": 0,
+          "medianPassSeconds": 17.713,
+          "avgPassCost": null
+        },
+        {
+          "scope": "task fidelity",
+          "runs": 3,
+          "passCount": 3,
+          "passRate": 1,
+          "receiptRuns": 3,
+          "receiptOkCount": 3,
+          "taskEvidenceCount": 3,
+          "taskVerifiedCount": 3,
+          "finalProofCount": 3,
+          "freshVerifiedCount": 3,
+          "usageReportedRuns": 0,
+          "medianPassSeconds": 30.064,
+          "avgPassCost": null
+        },
+        {
+          "scope": "memory hygiene",
+          "runs": 1,
+          "passCount": 1,
+          "passRate": 1,
+          "receiptRuns": 1,
+          "receiptOkCount": 1,
+          "taskEvidenceCount": 1,
+          "taskVerifiedCount": 0,
+          "finalProofCount": 0,
+          "freshVerifiedCount": 0,
+          "usageReportedRuns": 0,
+          "medianPassSeconds": 9.483,
+          "avgPassCost": null
+        },
+        {
+          "scope": "complex recovery",
+          "runs": 1,
+          "passCount": 1,
+          "passRate": 1,
+          "receiptRuns": 1,
+          "receiptOkCount": 1,
+          "taskEvidenceCount": 1,
+          "taskVerifiedCount": 1,
+          "finalProofCount": 1,
+          "freshVerifiedCount": 1,
+          "usageReportedRuns": 0,
+          "medianPassSeconds": 25.814,
+          "avgPassCost": null
+        }
+      ],
+      "claims": {
+        "overall": {
+          "scope": "overall",
+          "runs": 8,
+          "passCount": 7,
+          "passRate": 0.875,
+          "receiptRuns": 8,
+          "receiptOkCount": 7,
+          "taskEvidenceCount": 8,
+          "taskVerifiedCount": 5,
+          "finalProofCount": 5,
+          "freshVerifiedCount": 5,
+          "usageReportedRuns": 0,
+          "medianPassSeconds": 25.814,
+          "avgPassCost": null
+        },
+        "taskFidelity": {
+          "scope": "task fidelity",
+          "runs": 3,
+          "passCount": 3,
+          "passRate": 1,
+          "receiptRuns": 3,
+          "receiptOkCount": 3,
+          "taskEvidenceCount": 3,
+          "taskVerifiedCount": 3,
+          "finalProofCount": 3,
+          "freshVerifiedCount": 3,
+          "usageReportedRuns": 0,
+          "medianPassSeconds": 30.064,
+          "avgPassCost": null
+        },
+        "memoryHygiene": {
+          "scope": "memory hygiene",
+          "runs": 1,
+          "passCount": 1,
+          "passRate": 1,
+          "receiptRuns": 1,
+          "receiptOkCount": 1,
+          "taskEvidenceCount": 1,
+          "taskVerifiedCount": 0,
+          "finalProofCount": 0,
+          "freshVerifiedCount": 0,
+          "usageReportedRuns": 0,
+          "medianPassSeconds": 9.483,
+          "avgPassCost": null
+        }
+      }
+    }
+  ]
+}

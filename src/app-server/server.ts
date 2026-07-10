@@ -4,9 +4,12 @@ import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { type AgentBundle, type CreateAgentOptions, createAgent } from "../agent/agent.js";
 import { ConfigError } from "../agent/config.js";
+import { ConfigStore } from "../config/store.js";
 import type { PermissionRequest } from "../permissions/store.js";
+import { type CodeNavigationParams, createCodeNavigation } from "../tools/code-navigation.js";
 import {
 	buildErrorResponse,
+	type CodeNavigationResponse,
 	isCommand,
 	type ModelInfo,
 	type OutboundMessage,
@@ -35,6 +38,8 @@ export interface AppServerOptions {
 	resume?: boolean;
 	/** When true, every tool call that would prompt the user auto-allows. */
 	autoApprove?: boolean;
+	/** Override cwd for tests and embedding clients. Defaults to process.cwd(). */
+	cwd?: string;
 	/**
 	 * Test escape hatch — forwarded straight to createAgent so tests
 	 * can inject a pi-ai faux provider. Production never sets this.
@@ -66,6 +71,7 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 	let bundle: AgentBundle;
 	try {
 		bundle = createAgent({
+			cwd: opts.cwd,
 			resume: opts.resume,
 			autoApprove: opts.autoApprove,
 			configOverride: opts.configOverride,
@@ -86,60 +92,72 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 	let status: SessionState["status"] = "idle";
 	let pendingPermission: PendingPermission | undefined;
 	let inFlightPrompt: Promise<void> | null = null;
+	let unsubscribeAgent: () => void = () => {};
+	let unsubscribePerms: () => void = () => {};
 
 	// ─── outbound: forward agent events + track status ──────────────────
 
-	const unsubscribeAgent = bundle.subscribe((event: AgentEvent) => {
-		// Update local status mirror for get_state queries.
-		if (event.type === "agent_start" || event.type === "turn_start") {
-			status = "thinking";
-		} else if (event.type === "message_update" && event.message.role === "assistant") {
-			status = "streaming";
-		} else if (event.type === "tool_execution_start") {
-			status = "tool";
-		} else if (event.type === "tool_execution_end") {
-			status = "thinking";
-		} else if (event.type === "agent_end") {
-			status = "idle";
-		}
-
-		// Accumulate usage from message_end events (pi-agent-core
-		// emits per-message usage there).
-		if (event.type === "message_end") {
-			const candidate = (event.message as { usage?: Usage }).usage;
-			if (candidate) {
-				totalUsage = mergeUsage(totalUsage, candidate);
-				send({ type: "event", event: { type: "usage_update", usage: totalUsage } });
+	function subscribeBundleEvents(): void {
+		unsubscribeAgent = bundle.subscribe((event: AgentEvent) => {
+			// Update local status mirror for get_state queries.
+			if (event.type === "agent_start" || event.type === "turn_start") {
+				status = "thinking";
+			} else if (event.type === "message_update" && event.message.role === "assistant") {
+				status = "streaming";
+			} else if (event.type === "tool_execution_start") {
+				status = "tool";
+			} else if (event.type === "tool_execution_end") {
+				status = "thinking";
+			} else if (event.type === "agent_end") {
+				status = "idle";
 			}
-		}
 
-		send({ type: "event", event });
-	});
+			// Accumulate usage from message_end events (pi-agent-core
+			// emits per-message usage there).
+			if (event.type === "message_end") {
+				const candidate = (event.message as { usage?: Usage }).usage;
+				if (candidate) {
+					totalUsage = mergeUsage(totalUsage, candidate);
+					send({ type: "event", event: { type: "usage_update", usage: totalUsage } });
+				}
+			}
+
+			send({ type: "event", event });
+		});
+	}
 
 	// ─── permission requests: forward to the extension ─────────────────
 
-	const unsubscribePerms = bundle.permissions.subscribe((req: PermissionRequest | undefined) => {
-		if (!req) {
-			if (pendingPermission) {
-				pendingPermission = undefined;
-				send({ type: "event", event: { type: "permission_cleared" } });
+	function subscribePermissionEvents(): void {
+		unsubscribePerms = bundle.permissions.subscribe((req: PermissionRequest | undefined) => {
+			if (!req) {
+				if (pendingPermission) {
+					pendingPermission = undefined;
+					send({ type: "event", event: { type: "permission_cleared" } });
+				}
+				status = inFlightPrompt ? "thinking" : "idle";
+				return;
 			}
-			status = inFlightPrompt ? "thinking" : "idle";
-			return;
-		}
-		pendingPermission = {
-			id: req.id,
-			tool: req.tool,
-			summary: req.summary,
-			detail: req.detail,
-			risk: req.risk,
-		};
-		status = "awaiting-permission";
-		send({
-			type: "event",
-			event: { type: "permission_request", request: pendingPermission },
+			pendingPermission = {
+				id: req.id,
+				tool: req.tool,
+				summary: req.summary,
+				reason: req.reason,
+				detail: req.detail,
+				trustScope: req.trustScope,
+				guidance: req.guidance,
+				risk: req.risk,
+			};
+			status = "awaiting-permission";
+			send({
+				type: "event",
+				event: { type: "permission_request", request: pendingPermission },
+			});
 		});
-	});
+	}
+
+	subscribeBundleEvents();
+	subscribePermissionEvents();
 
 	// ─── inbound: line-by-line JSONL on stdin ───────────────────────────
 
@@ -186,8 +204,7 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 
 	unsubscribeAgent();
 	unsubscribePerms();
-	bundle.mcp.dispose();
-	bundle.checkpoints.dispose();
+	disposeBundle(bundle);
 	return 0;
 
 	// ─── command dispatch ──────────────────────────────────────────────
@@ -211,12 +228,25 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 					return buildErrorResponse(c.id, c.type, "a prompt is already in flight — abort first");
 				}
 				// Fire-and-forget; the response just acknowledges receipt.
-				// The real work surfaces via the agent event stream. Pi's
-				// `prompt(text, images?)` overload handles multimodal input
-				// transparently — base64-encoded image bytes plus mimeType.
+				// The real work surfaces via the agent event stream. Route
+				// through submitUserPrompt so prompt hooks and user-facing
+				// policy apply to web/IDE clients too.
 				const images = c.images && c.images.length > 0 ? [...c.images] : undefined;
-				inFlightPrompt = bundle.agent
-					.prompt(c.message, images)
+				inFlightPrompt = bundle
+					.submitUserPrompt(c.message, images)
+					.then((result) => {
+						if (!result.submitted) {
+							send(
+								buildErrorResponse(
+									undefined,
+									"prompt",
+									`prompt blocked: ${result.reason ?? "refused by hook"}`,
+								),
+							);
+						} else if (result.error) {
+							send(buildErrorResponse(undefined, "prompt", result.error));
+						}
+					})
 					.catch((err: unknown) => {
 						send(buildErrorResponse(undefined, "prompt", err instanceof Error ? err.message : String(err)));
 					})
@@ -251,16 +281,58 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 				};
 			}
 
+			case "code_navigation": {
+				const params = codeNavigationParams(c);
+				if (typeof params === "string") return buildErrorResponse(c.id, c.type, params);
+				const result = await createCodeNavigation(bundle.toolContext).execute("app-server-code-navigation", params);
+				return {
+					id: c.id,
+					type: "response",
+					command: "code_navigation",
+					success: true,
+					data: {
+						text: result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
+						details: result.details,
+					} satisfies CodeNavigationResponse,
+				};
+			}
+
 			case "set_model": {
-				// Light-touch: pi-agent-core's Agent exposes a `state.model`
-				// setter, but switching mid-session requires careful handling
-				// of in-flight requests. For now we reject — the user picks
-				// the model at startup via env vars and we just report it.
-				return buildErrorResponse(
-					c.id,
-					c.type,
-					"set_model is not yet supported in app-server mode — set CODEBASE_PROVIDER + CODEBASE_MODEL before launch",
-				);
+				if (inFlightPrompt) {
+					return buildErrorResponse(c.id, c.type, "a prompt is already in flight — abort first");
+				}
+				const modelId = c.modelId.trim();
+				if (!modelId) return buildErrorResponse(c.id, c.type, "modelId is required");
+				const provider = c.provider.trim();
+				const spec = { ...(provider ? { provider } : {}), modelId };
+				const previous = bundle;
+				const previousMessages = [...previous.agent.state.messages];
+				const next = createAgent({
+					cwd: previous.toolContext.cwd,
+					autoApprove: opts.autoApprove,
+					modelOverride: spec,
+					initialMessages: previousMessages,
+					taskListId: previous.sessions.id,
+					resume: false,
+					configOverride: opts.configOverride,
+				});
+
+				try {
+					new ConfigStore({ cwd: previous.toolContext.cwd }).setPreferredModel(spec);
+				} catch {
+					// Persistence is helpful but not required for the live app-server session.
+				}
+
+				unsubscribeAgent();
+				unsubscribePerms();
+				disposeBundle(previous);
+				bundle = next;
+				pendingPermission = undefined;
+				status = "idle";
+				subscribeBundleEvents();
+				subscribePermissionEvents();
+				await connectBundle(next);
+				return { id: c.id, type: "response", command: "set_model", success: true, data: modelInfo() };
 			}
 
 			case "permission_respond": {
@@ -292,6 +364,60 @@ export async function runAppServer(opts: AppServerOptions = {}): Promise<number>
 			pendingPermission,
 		};
 	}
+
+	async function connectBundle(target: AgentBundle): Promise<void> {
+		await target.connectMcp().catch((e) => {
+			stderr.write(`app-server: MCP connect failed: ${e instanceof Error ? e.message : String(e)}\n`);
+		});
+	}
+
+	function disposeBundle(target: AgentBundle): void {
+		target.mcp.dispose();
+		target.checkpoints.dispose();
+		target.toolContext.tasks.dispose();
+	}
+}
+
+const CODE_NAVIGATION_OPERATIONS = new Set<CodeNavigationParams["operation"]>([
+	"definition",
+	"type_definition",
+	"references",
+	"implementation",
+	"hover",
+	"symbols",
+	"diagnostics",
+]);
+
+function codeNavigationParams(
+	command: Extract<RpcCommand, { type: "code_navigation" }>,
+): CodeNavigationParams | string {
+	if (!CODE_NAVIGATION_OPERATIONS.has(command.operation)) return "operation must be a valid code_navigation operation";
+	if (typeof command.path !== "string" || !command.path.trim()) return "path is required";
+	if (command.line !== undefined && (!Number.isInteger(command.line) || command.line < 1)) {
+		return "line must be a positive integer";
+	}
+	if (command.column !== undefined && (!Number.isInteger(command.column) || command.column < 1)) {
+		return "column must be a positive integer";
+	}
+	if (command.query !== undefined && typeof command.query !== "string") return "query must be a string";
+	if (command.include_external !== undefined && typeof command.include_external !== "boolean") {
+		return "include_external must be a boolean";
+	}
+	if (
+		command.max_results !== undefined &&
+		(!Number.isInteger(command.max_results) || command.max_results < 1 || command.max_results > 1000)
+	) {
+		return "max_results must be an integer from 1 to 1000";
+	}
+	return {
+		operation: command.operation,
+		path: command.path,
+		line: command.line,
+		column: command.column,
+		query: command.query,
+		include_external: command.include_external,
+		max_results: command.max_results,
+	};
 }
 
 function mergeUsage(a: Usage, b: Usage): Usage {

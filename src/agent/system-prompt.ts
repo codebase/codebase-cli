@@ -55,6 +55,9 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 		"Issue independent tool calls together in a single response. If you need to read three files whose contents don't depend on each other, request all three reads at once instead of one per turn — sequential reads are the slow path and should only happen when a later call genuinely needs an earlier call's result. The same applies to greps, glob queries, and any read-only investigation.",
 	);
 	lines.push(
+		"Before editing or overwriting an existing file, inspect that file in the current session. Never guess a path or its current contents; read the target first so the write tools have a fresh snapshot.",
+	);
+	lines.push(
 		"When a task fans out cleanly — multi-file audits, security reviews, broad codebase exploration — prefer dispatching subagents via dispatch_agent so each stream runs in parallel and their context stays out of your main loop. Don't also do the same searches yourself; that wastes turns and doubles the noise.",
 	);
 	lines.push(
@@ -88,6 +91,12 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 	lines.push(
 		"- If a check fails, fix the underlying cause rather than working around it (no --no-verify, no skipping tests, no commenting out asserts).",
 	);
+	lines.push(
+		"- Tests must execute the production code they claim to verify. Never copy or reimplement application logic inside a test just to produce a green check.",
+	);
+	lines.push(
+		"- After checks pass, audit the changed implementation against every requested behavior. A passing command is evidence, not proof that the tests covered the request; add a focused negative or interaction check when a requirement is otherwise untested.",
+	);
 	lines.push("");
 	lines.push("# Conversation conventions");
 	lines.push(
@@ -110,6 +119,10 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 	lines.push(
 		"  - Exactly ONE task is in_progress at a time. Flip the next one to in_progress BEFORE starting it; mark it completed IMMEDIATELY after — never batch completions.",
 	);
+	lines.push(
+		"  - Use blocker edges for dependent work. Keep blocked tasks pending until their blockers complete; use list_tasks({available:true}) when choosing what to start next.",
+	);
+	lines.push("  - Use owner when claiming or delegating task work so parallel agents can avoid duplicate effort.");
 	lines.push(
 		"  - Never mark a task completed if it errored, tests are failing, or you couldn't finish. Keep it in_progress and append a follow-up task for whatever's blocking.",
 	);

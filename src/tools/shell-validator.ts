@@ -80,6 +80,17 @@ const BLOCK_PATTERNS: readonly PatternRule[] = [
 
 	// Format-the-disk commands. `mkfs.ext4`, `mkfs.xfs`, ...
 	{ regex: /\bmkfs(\.[a-z0-9]+)?\b/, reason: "formats a filesystem" },
+
+	// Download-and-execute has no trustworthy persistent approval scope: the
+	// bytes at a URL can change between runs even when the command does not.
+	{
+		regex: /\bcurl\b[^\n;|]*\|\s*(sh|bash|zsh)(?:\s|$)/,
+		reason: "pipes a downloaded script straight into a shell",
+	},
+	{
+		regex: /\bwget\b[^\n;|]*\|\s*(sh|bash|zsh)(?:\s|$)/,
+		reason: "pipes a downloaded script straight into a shell",
+	},
 ];
 
 /**
@@ -93,14 +104,6 @@ const BLOCK_PATTERNS: readonly PatternRule[] = [
  */
 const WARN_PATTERNS: readonly PatternRule[] = [
 	{ regex: /\bsudo\b/, reason: "uses sudo (privilege escalation)" },
-	{
-		regex: /\bcurl\b[^\n;|]*\|\s*(sh|bash|zsh|sh\b)/,
-		reason: "pipes a downloaded script straight into a shell — verify the source",
-	},
-	{
-		regex: /\bwget\b[^\n;|]*\|\s*(sh|bash|zsh|sh\b)/,
-		reason: "pipes a downloaded script straight into a shell — verify the source",
-	},
 	{
 		regex: /\bchmod\s+(-[a-zA-Z]*R[a-zA-Z]*\s+)?(0?777|a\+w)\b/,
 		reason: "world-writable permissions",

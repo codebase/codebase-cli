@@ -49,6 +49,27 @@ describe("buildMessageBlocks", () => {
 		expect(out).toEqual([]);
 	});
 
+	it("hides runtime reminders, DSML protocol, and thinking", () => {
+		const user = buildMessageBlocks(
+			userText("<system-reminder>internal</system-reminder>Actual request"),
+			NO_TOOLS,
+			"user",
+		);
+		expect((user[0] as PlainText).render(80).join("\n")).toBe("Actual request");
+
+		const assistant = buildMessageBlocks(
+			assistantBlocks([
+				{ type: "thinking", thinking: "private repair narration" },
+				{ type: "text", text: "Visible answer<｜DSML｜hidden protocol" },
+			]),
+			NO_TOOLS,
+			"assistant",
+		);
+		expect(assistant).toHaveLength(1);
+		expect(assistant[0]?.render(80).join("\n")).toContain("Visible answer");
+		expect(assistant[0]?.render(80).join("\n")).not.toContain("DSML");
+	});
+
 	it("renders an image attachment as a 📷 card", () => {
 		const blocks = userBlocks([
 			{ type: "text", text: "look" },

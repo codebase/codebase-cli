@@ -6,7 +6,7 @@ import { MemoryStore } from "../memory/store.js";
 import { PlanModeStore } from "../plan/store.js";
 import { UserQueryStore } from "../user-queries/store.js";
 import { FileStateCache } from "./file-state-cache.js";
-import { createReadMemory, createSaveMemory } from "./memory-tools.js";
+import { createForgetMemory, createReadMemory, createSaveMemory, createUpdateMemory } from "./memory-tools.js";
 import { TaskStore } from "./task-store.js";
 import type { ToolContext } from "./types.js";
 
@@ -54,6 +54,7 @@ describe("save_memory", () => {
 		);
 
 		const stored = ctx.memory.read("user_role.md");
+		expect(stored?.source).toBe("save_memory tool");
 		expect(stored?.body.trim()).toBe("Background: 10 years Go, new to TS.");
 
 		const indexPath = join(ctx.memory.directory, "MEMORY.md");
@@ -122,6 +123,10 @@ describe("read_memory", () => {
 		const result = await createReadMemory(ctx).execute("r", { filename: "user_a.md" }, undefined);
 		expect(result.details.mode).toBe("single");
 		expect(result.details.record?.body).toContain("u-body");
+		expect((result.content[0] as { text: string }).text).toContain("source: save_memory tool");
+		expect((result.content[0] as { text: string }).text).toContain("last_used: never");
+		expect((result.content[0] as { text: string }).text).toContain("retrievals: 0");
+		expect((result.content[0] as { text: string }).text).toContain("stale: no");
 	});
 
 	it("errors with a clear message on missing filename", async () => {
@@ -134,5 +139,41 @@ describe("read_memory", () => {
 		await seed();
 		const result = await createReadMemory(ctx).execute("r", { type: "project" }, undefined);
 		expect((result.content[0] as { text: string }).text).toMatch(/no memories of type project/);
+	});
+
+	it("updates an existing memory and rebuilds the index", async () => {
+		await seed();
+		const result = await createUpdateMemory(ctx).execute(
+			"u",
+			{
+				filename: "user_a.md",
+				description: "updated desc",
+				body: "updated body",
+			},
+			undefined,
+		);
+
+		expect(result.details.updatedFields).toEqual(["description", "body"]);
+		const stored = ctx.memory.read("user_a.md");
+		expect(stored).toMatchObject({
+			description: "updated desc",
+			source: "update_memory tool",
+		});
+		expect(stored?.body.trim()).toBe("updated body");
+		expect(ctx.memory.index()).toContain("updated desc");
+	});
+
+	it("deletes a memory and rebuilds the index", async () => {
+		await seed();
+		const result = await createForgetMemory(ctx).execute(
+			"f",
+			{ filename: "feedback_b.md", reason: "user asked to forget it" },
+			undefined,
+		);
+
+		expect(result.details).toMatchObject({ filename: "feedback_b.md", reason: "user asked to forget it" });
+		expect(ctx.memory.read("feedback_b.md")).toBeNull();
+		expect(ctx.memory.index()).not.toContain("feedback_b.md");
+		expect(ctx.memory.index()).toContain("user_a.md");
 	});
 });

@@ -1,7 +1,12 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { Model } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CredentialsStore } from "../auth/credentials.js";
+import { ConfigStore } from "../config/store.js";
 import { runAppServer } from "./server.js";
 
 /**
@@ -24,7 +29,7 @@ interface Harness {
 	close: () => Promise<number>;
 }
 
-function makeHarness(opts: { model: Model<string> }): Harness {
+function makeHarness(opts: { model?: Model<string>; autoApprove?: boolean; cwd?: string }): Harness {
 	const stdin = new PassThrough();
 	const stdout = new PassThrough();
 	const stderr = new PassThrough();
@@ -50,8 +55,9 @@ function makeHarness(opts: { model: Model<string> }): Harness {
 		stdin,
 		stdout,
 		stderr,
-		autoApprove: true,
-		configOverride: { model: opts.model, apiKey: "faux-key", source: "byok" },
+		autoApprove: opts.autoApprove ?? true,
+		cwd: opts.cwd,
+		configOverride: opts.model ? { model: opts.model, apiKey: "faux-key", source: "byok" } : undefined,
 	});
 
 	const send = (cmd: Record<string, unknown>): void => {
@@ -87,8 +93,18 @@ function makeHarness(opts: { model: Model<string> }): Harness {
 describe("runAppServer", () => {
 	let faux: ReturnType<typeof registerFauxProvider>;
 	let model: Model<string>;
+	let home: string;
+	let cwd: string;
+	let prevHome: string | undefined;
+	let prevNoAutoMemory: string | undefined;
 
 	beforeEach(() => {
+		prevHome = process.env.HOME;
+		prevNoAutoMemory = process.env.CODEBASE_NO_AUTO_MEMORY;
+		home = mkdtempSync(join(tmpdir(), "app-server-home-"));
+		cwd = mkdtempSync(join(tmpdir(), "app-server-cwd-"));
+		process.env.HOME = home;
+		process.env.CODEBASE_NO_AUTO_MEMORY = "1";
 		faux = registerFauxProvider({
 			models: [
 				{
@@ -108,17 +124,23 @@ describe("runAppServer", () => {
 
 	afterEach(() => {
 		faux.unregister();
+		rmSync(cwd, { recursive: true, force: true });
+		rmSync(home, { recursive: true, force: true });
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
+		if (prevNoAutoMemory === undefined) delete process.env.CODEBASE_NO_AUTO_MEMORY;
+		else process.env.CODEBASE_NO_AUTO_MEMORY = prevNoAutoMemory;
 	});
 
 	it("emits server_ready on startup", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		const ready = await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		expect(ready).toBeTruthy();
 		await h.close();
 	});
 
 	it("rejects commands before initialize", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "1", type: "get_state" });
 		const err = await h.waitFor((m) => m.type === "response" && m.id === "1");
@@ -128,7 +150,7 @@ describe("runAppServer", () => {
 	});
 
 	it("initializes successfully and returns model info", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		const resp = await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -141,7 +163,7 @@ describe("runAppServer", () => {
 
 	it("routes a prompt through the agent and streams events back", async () => {
 		faux.setResponses([fauxAssistantMessage("response from faux")]);
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -159,7 +181,7 @@ describe("runAppServer", () => {
 	});
 
 	it("get_state reports cwd, model, status, message count", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -174,9 +196,59 @@ describe("runAppServer", () => {
 		await h.close();
 	});
 
+	it("serves code navigation results directly to app clients", async () => {
+		writeCodeNavFixture(cwd);
+		const h = makeHarness({ model, cwd });
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
+		h.send({ id: "init", type: "initialize" });
+		await h.waitFor((m) => m.type === "response" && m.id === "init");
+
+		h.send({ id: "nav", type: "code_navigation", operation: "symbols", path: "src/util.ts", query: "make" });
+		const resp = await h.waitFor((m) => m.type === "response" && m.id === "nav");
+
+		expect(resp.success).toBe(true);
+		const data = resp.data as { text: string; details: { operation: string; results: Array<{ file: string }> } };
+		expect(data.text).toContain("src/util.ts:1:1 function makeGreeting");
+		expect(data.details.operation).toBe("symbols");
+		expect(data.details.results[0].file).toBe("src/util.ts");
+		await h.close();
+	});
+
+	it("serves TypeScript diagnostics directly to app clients", async () => {
+		writeCodeNavFixture(cwd);
+		const h = makeHarness({ model, cwd });
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
+		h.send({ id: "init", type: "initialize" });
+		await h.waitFor((m) => m.type === "response" && m.id === "init");
+
+		h.send({ id: "diag", type: "code_navigation", operation: "diagnostics", path: "src/main.ts" });
+		const resp = await h.waitFor((m) => m.type === "response" && m.id === "diag");
+
+		expect(resp.success).toBe(true);
+		const data = resp.data as { text: string; details: { operation: string } };
+		expect(data.details.operation).toBe("diagnostics");
+		expect(data.text).toContain("TS2322");
+		expect(data.text).toContain("Type 'string' is not assignable to type 'number'");
+		await h.close();
+	});
+
+	it("validates app-server code navigation requests", async () => {
+		const h = makeHarness({ model, cwd });
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
+		h.send({ id: "init", type: "initialize" });
+		await h.waitFor((m) => m.type === "response" && m.id === "init");
+
+		h.send({ id: "bad-nav", type: "code_navigation", operation: "symbols", path: "src/nope.ts", max_results: 0 });
+		const resp = await h.waitFor((m) => m.type === "response" && m.id === "bad-nav");
+
+		expect(resp.success).toBe(false);
+		expect(resp.error).toContain("max_results");
+		await h.close();
+	});
+
 	it("rejects a second prompt while one is in flight", async () => {
 		faux.setResponses([fauxAssistantMessage("first response")]);
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
 		await h.waitFor((m) => m.type === "response" && m.id === "init");
@@ -190,8 +262,40 @@ describe("runAppServer", () => {
 		await h.close();
 	});
 
+	it("forwards permission reason and trust scope to app clients", async () => {
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("shell", { command: 'git commit -m "bridge"' }, { id: "call-1" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Permission denied, so I stopped."),
+		]);
+		const h = makeHarness({ model, autoApprove: false, cwd });
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
+		h.send({ id: "init", type: "initialize" });
+		await h.waitFor((m) => m.type === "response" && m.id === "init");
+		h.send({ id: "p1", type: "prompt", message: "commit the change" });
+		await h.waitFor((m) => m.type === "response" && m.id === "p1");
+
+		const event = await h.waitFor(
+			(m) => m.type === "event" && (m.event as { type: string }).type === "permission_request",
+			5000,
+		);
+		const request = (event.event as { request: Record<string, unknown> }).request;
+		expect(request.tool).toBe("shell");
+		expect(request.reason).toContain("local git history");
+		expect(request.trustScope).toBe("shell:git commit*");
+		expect(request.guidance).toContain('Persist exact allow: /permissions allow shell:git commit -m "bridge"');
+		expect(request.guidance).toContain("Persist family allow: /permissions allow shell:git commit*");
+
+		h.send({ id: "perm", type: "permission_respond", requestId: request.id, choice: "deny" });
+		const response = await h.waitFor((m) => m.type === "response" && m.id === "perm");
+		expect(response.success).toBe(true);
+		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "permission_cleared");
+		await h.close();
+	});
+
 	it("rejects malformed JSON with a parse error", async () => {
-		const h = makeHarness({ model });
+		const h = makeHarness({ model, cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.stdin.write("not-json\n");
 		const err = await h.waitFor((m) => m.type === "response" && m.command === "parse");
@@ -200,15 +304,59 @@ describe("runAppServer", () => {
 		await h.close();
 	});
 
-	it("set_model returns the not-yet-supported error", async () => {
-		const h = makeHarness({ model });
+	it("set_model switches the app-server bundle and persists the preference", async () => {
+		new CredentialsStore().save({
+			accessToken: "oauth-token",
+			scopes: ["inference"],
+			source: "codebase",
+		});
+		const h = makeHarness({ cwd });
 		await h.waitFor((m) => m.type === "event" && (m.event as { type: string }).type === "server_ready");
 		h.send({ id: "init", type: "initialize" });
-		await h.waitFor((m) => m.type === "response" && m.id === "init");
-		h.send({ id: "m", type: "set_model", provider: "anthropic", modelId: "claude" });
+		const init = await h.waitFor((m) => m.type === "response" && m.id === "init");
+		expect((init.data as { model: { id: string } }).model.id).toBe("d4f");
+		h.send({ id: "m", type: "set_model", provider: "codebase", modelId: "deepseek-r1:14b" });
 		const resp = await h.waitFor((m) => m.type === "response" && m.id === "m");
-		expect(resp.success).toBe(false);
-		expect(resp.error).toMatch(/not yet supported/i);
+		expect(resp.success).toBe(true);
+		expect((resp.data as { id: string; provider: string }).id).toBe("deepseek-r1:14b");
+		expect((resp.data as { id: string; provider: string }).provider).toBe("codebase");
+		h.send({ id: "s2", type: "get_state" });
+		const state = await h.waitFor((m) => m.type === "response" && m.id === "s2");
+		expect((state.data as { model: { id: string } }).model.id).toBe("deepseek-r1:14b");
+		expect(new ConfigStore({ home, cwd }).preferredModel()).toEqual({
+			provider: "codebase",
+			modelId: "deepseek-r1:14b",
+		});
 		await h.close();
 	});
 });
+
+function writeCodeNavFixture(cwd: string): void {
+	mkdirSync(join(cwd, "src"), { recursive: true });
+	writeFileSync(
+		join(cwd, "tsconfig.json"),
+		JSON.stringify({
+			compilerOptions: {
+				target: "ES2022",
+				module: "Node16",
+				moduleResolution: "Node16",
+				strict: true,
+			},
+			include: ["src/**/*.ts"],
+		}),
+	);
+	writeFileSync(
+		join(cwd, "src", "util.ts"),
+		["export function makeGreeting(name: string): string {", '  return "hello " + name;', "}", ""].join("\n"),
+	);
+	writeFileSync(
+		join(cwd, "src", "main.ts"),
+		[
+			'import { makeGreeting } from "./util";',
+			"",
+			"const count: number = makeGreeting(123);",
+			"console.log(count);",
+			"",
+		].join("\n"),
+	);
+}
