@@ -15,7 +15,7 @@
 # that opens a PR against the tap (see Phase 12.5).
 class Codebase < Formula
   desc "AI coding agent in your terminal — TypeScript, multi-provider, OAuth-aware"
-  homepage "https://codebase.foundation"
+  homepage "https://codebase.design"
   # Replace VERSION_PLACEHOLDER with the published version on each bump.
   url "https://registry.npmjs.org/codebase-cli/-/codebase-cli-VERSION_PLACEHOLDER.tgz"
   sha256 "SHA256_PLACEHOLDER"

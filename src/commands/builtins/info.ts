@@ -39,7 +39,7 @@ export const whoami: Command = {
 		const source = ctx.bundle.source;
 		ctx.emit(
 			source === "proxy"
-				? "signed in via codebase.foundation (inference proxy)"
+				? "signed in via codebase.design (inference proxy)"
 				: source === "explicit"
 					? "using model selected via CODEBASE_PROVIDER + CODEBASE_MODEL"
 					: "using auto-detected provider from env",

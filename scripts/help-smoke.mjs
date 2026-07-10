@@ -10,7 +10,7 @@ const repo = resolve(__dirname, "..");
 const cli = process.env.CODEBASE_HELP_SMOKE_CLI ?? join(repo, "dist", "cli.js");
 
 const commands = [
-	{ args: ["--help"], expect: "codebase --help" },
+	{ args: ["--help"], expect: "sign in via codebase.design browser OAuth" },
 	{ args: ["help"], expect: "Help topics:" },
 	{ args: ["help", "permissions"], expect: "/permissions suggest <command>" },
 	{ args: ["help", "web-build"], expect: "codebase web-build" },
@@ -70,6 +70,11 @@ try {
 		if (output.includes('"server_ready"') || output.includes("No LLM provider configured")) {
 			failures++;
 			console.error(`FAIL ${label}: appears to have entered a runtime mode\n${output.trim()}`);
+			continue;
+		}
+		if (output.includes("codebase.foundation")) {
+			failures++;
+			console.error(`FAIL ${label}: references retired codebase.foundation domain\n${output.trim()}`);
 			continue;
 		}
 		console.log(`ok ${label}`);

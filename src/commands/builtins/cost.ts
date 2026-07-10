@@ -10,7 +10,7 @@ export const cost: Command = {
 		const promptTokens = u.input + u.cacheRead;
 		const hitRate = promptTokens > 0 ? `${((u.cacheRead / promptTokens) * 100).toFixed(0)}%` : "—";
 		const turnAvg = turns > 0 ? u.cost.total / turns : 0;
-		const proxyNote = bundle.source === "proxy" ? " (proxied via codebase.foundation)" : "";
+		const proxyNote = bundle.source === "proxy" ? " (proxied via codebase.design)" : "";
 		const usageUnavailable =
 			bundle.source === "proxy" &&
 			u.input + u.output + u.cacheRead + u.cacheWrite + u.totalTokens === 0 &&
