@@ -24,7 +24,7 @@ interface Balance {
  */
 export const usage: Command = {
 	name: "usage",
-	description: "Show metered credits and included Codebase turn allowances.",
+	description: "Show metered credits and Codebase turn quotas.",
 	handler: async (_args, ctx) => {
 		ctx.emit(await fetchUsageReport());
 		return { handled: true };
@@ -67,16 +67,25 @@ export async function fetchUsageReport(): Promise<string> {
 		} else {
 			lines.push("Monthly allowance was not returned yet; showing remaining credits only.");
 		}
-		if (typeof b.anyBuildsRemaining === "number" && b.anyBuildsRemaining >= 0) {
-			lines.push(`Included web-build turns remaining: ${b.anyBuildsRemaining.toLocaleString()}`);
-		}
-		if (typeof b.cheapBuildsRemaining === "number" && b.cheapBuildsRemaining >= 0) {
-			lines.push(`Included fast coding turns remaining: ${b.cheapBuildsRemaining.toLocaleString()}`);
-		}
+		lines.push(...formatTurnQuotas(b));
 		return lines.join("\n");
 	} catch (err) {
 		return `Couldn't fetch usage: ${(err as Error).message}`;
 	}
+}
+
+export function formatTurnQuotas(b: Balance): string[] {
+	const lines: string[] = [];
+	if (typeof b.anyBuildsRemaining === "number" && b.anyBuildsRemaining >= 0) {
+		lines.push(`Any-model turn quota remaining: ${b.anyBuildsRemaining.toLocaleString()}`);
+	}
+	if (typeof b.cheapBuildsRemaining === "number" && b.cheapBuildsRemaining >= 0) {
+		lines.push(`Low-cost model turn quota remaining: ${b.cheapBuildsRemaining.toLocaleString()}`);
+	}
+	if (lines.length > 0) {
+		lines.push("Metered runs require both an eligible turn and credits; builds that fail final QA are not charged.");
+	}
+	return lines;
 }
 
 export function formatUsageBalance(b: Balance): {
