@@ -4,7 +4,7 @@ set -e
 # Codebase CLI installer (Linux / macOS).
 # Usage:
 #   curl -fsSL https://codebase.design/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/codebase-foundation/codebase-cli/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/codebase/codebase-cli/main/install.sh | sh
 #
 # What this does:
 #   1. Detects an existing v1 (Go) binary and offers to remove it.

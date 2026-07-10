@@ -41,6 +41,15 @@ jobs:
             exit 1
           fi
 
+      - name: Verify npm provenance repository
+        run: |
+          REPOSITORY_URL="$(node -p "require('./package.json').repository.url")"
+          EXPECTED="git+https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "$REPOSITORY_URL" != "$EXPECTED" ]; then
+            echo "::error::package.json repository.url is $REPOSITORY_URL; expected $EXPECTED for npm provenance"
+            exit 1
+          fi
+
       - name: Determine npm dist-tag
         id: disttag
         run: |
