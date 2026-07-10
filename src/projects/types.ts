@@ -41,6 +41,7 @@ export interface BuildStartResponse {
 export interface BuildStatusResponse {
 	sessionId: string;
 	status: string;
+	error?: string;
 	projectId?: string;
 	filesCreated?: string[];
 	model?: string;

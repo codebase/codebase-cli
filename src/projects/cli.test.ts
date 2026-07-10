@@ -237,6 +237,24 @@ describe("runProjectSubcommand", () => {
 		expect(result.stdout.join("\n")).toContain("preview: https://codebase.design/preview/proj-1");
 	});
 
+	it("fails a terminal build and prints the server reason", async () => {
+		const result = await runProject(
+			["project", "build", "--wait", "Build", "a", "demo"],
+			fakeClient({
+				status: {
+					sessionId: "sess-1",
+					status: "failed",
+					projectId: "proj-1",
+					error: "active-project cap reached (1)",
+				},
+			}),
+		);
+
+		expect(result.code).toBe(1);
+		expect(result.stdout.join("\n")).toContain("build sess-1: failed");
+		expect(result.stdout.join("\n")).toContain("error:   active-project cap reached (1)");
+	});
+
 	it("streams deduplicated file and phase progress while waiting", async () => {
 		let calls = 0;
 		const statuses: BuildStatusResponse[] = [

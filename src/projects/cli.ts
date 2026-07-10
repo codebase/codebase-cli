@@ -330,7 +330,7 @@ async function buildCmd(
 		if (previewUrl) handoffStore?.update({ sessionId: started.sessionId, previewUrl });
 		return 0;
 	}
-	return status.status === "failed" ? 1 : 0;
+	return 1;
 }
 
 async function waitForBuild(
@@ -408,7 +408,7 @@ async function statusCmd(
 	const status = await client.getBuildStatus(resolved.sessionId);
 	handoffStore?.update({ sessionId: resolved.sessionId, status: status.status, model: status.model });
 	printBuildStatus(status, out);
-	return status.status === "failed" ? 1 : 0;
+	return status.status === "completed" || status.status === "building" ? 0 : 1;
 }
 
 async function previewCmd(
@@ -472,6 +472,7 @@ function resolveBuildSessionId(
 
 function printBuildStatus(status: BuildStatusResponse, out: (msg: string) => void): void {
 	out(`build ${status.sessionId}: ${status.status}`);
+	if (status.error) out(`  error:   ${status.error}`);
 	if (status.projectId) out(`  project: ${status.projectId}`);
 	if (status.model) out(`  model:   ${status.model}`);
 	const files = uniqueStrings(status.filesCreated);
