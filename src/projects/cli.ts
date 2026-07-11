@@ -4,7 +4,7 @@ import { BuildHandoffStore } from "./handoff.js";
 import type { BuildStatusResponse, PlatformProject } from "./types.js";
 
 const DEFAULT_LIST_LIMIT = 25;
-const DEFAULT_BUILD_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_BUILD_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_BUILD_POLL_MS = 30_000;
 
 export interface ProjectCliOptions {
@@ -661,7 +661,7 @@ function printBuildHelp(out: (msg: string) => void): void {
 	out("");
 	out("Options:");
 	out("  --wait, -w           poll until the build completes, then print preview URL");
-	out("  --timeout SECONDS    max wait time with --wait (default: 600)");
+	out("  --timeout SECONDS    max wait time with --wait (default: 1800)");
 	out("  --model MODEL        request a specific web build model");
 	out("  --scaffold ID        request a specific web scaffold");
 	out("  --project ID         continue/build against an existing project when supported by the web API");

@@ -100,6 +100,7 @@ describe("runProjectSubcommand", () => {
 
 		expect(result.code).toBe(0);
 		expect(result.stdout.join("\n")).toContain("alias: codebase web-build");
+		expect(result.stdout.join("\n")).toContain("default: 1800");
 	});
 
 	it("prints pull help without treating the flag as a project id", async () => {
@@ -265,6 +266,39 @@ describe("runProjectSubcommand", () => {
 		expect(result.code).toBe(0);
 		expect(result.stdout.join("\n")).toContain("files:   index.html, styles.css");
 		expect(result.stdout.join("\n")).toContain("preview: https://codebase.design/preview/proj-1");
+	});
+
+	it("keeps the default wait alive beyond ten minutes", async () => {
+		let now = 0;
+		const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+		const client = fakeClient({
+			status: { sessionId: "sess-1", status: "building", projectId: "proj-1" },
+			preview: { ok: true, previewPath: "/preview/proj-1" },
+		}) as ProjectClient;
+		client.getBuildStatus = async () => ({
+			sessionId: "sess-1",
+			status: now >= 11 * 60_000 ? "completed" : "building",
+			projectId: "proj-1",
+		});
+
+		try {
+			const stdout: string[] = [];
+			const code = await runProjectSubcommand(["project", "build", "--wait", "Build", "a", "demo"], {
+				client,
+				stdout: (message) => stdout.push(message),
+				stderr: () => {},
+				sleep: async (ms) => {
+					now += ms;
+				},
+				handoffStore: null,
+			});
+
+			expect(code).toBe(0);
+			expect(now).toBeGreaterThanOrEqual(11 * 60_000);
+			expect(stdout.join("\n")).toContain("build sess-1: completed");
+		} finally {
+			nowSpy.mockRestore();
+		}
 	});
 
 	it("fails a terminal build and prints the server reason", async () => {
