@@ -73,12 +73,13 @@ export async function runProjectSubcommand(argv: string[], options: ProjectCliOp
 		if (e instanceof ProjectClientError) {
 			err(`error: ${e.message}`);
 			if (e.status === 402) {
-				err(
-					"hint: codebase.design returned a payment challenge before accepting OAuth. Run `codebase auth login`; if this persists, the web build OAuth gate needs to be deployed.",
-				);
+				err("hint: run `codebase usage` to check your remaining builds, plan limits, and reset date.");
 			}
 			if (e.status === 403) {
 				err("hint: run `codebase auth login` again so the CLI can request builds:read/builds:write.");
+			}
+			if (e.status === 429 && e.retryAfterMs) {
+				err(`hint: retry in ${formatRetryDelay(e.retryAfterMs)}.`);
 			}
 			return e.status === 404 ? 4 : 1;
 		}
@@ -524,6 +525,15 @@ function cleanTimelineText(value: string): string {
 function formatTimelineDuration(durationMs: number): string {
 	if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
 	return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
+}
+
+function formatRetryDelay(durationMs: number): string {
+	const totalSeconds = Math.max(1, Math.ceil(durationMs / 1000));
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes === 0) return `${seconds}s`;
+	if (seconds === 0) return `${minutes}m`;
+	return `${minutes}m ${seconds}s`;
 }
 
 async function printPreview(

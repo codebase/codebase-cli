@@ -216,7 +216,7 @@ describe("runProjectSubcommand", () => {
 		expect(cancelled).toEqual(["wrong-session"]);
 	});
 
-	it("explains payment challenges from the web build endpoint", async () => {
+	it("points plan-limit responses to usage", async () => {
 		const client = {
 			startBuild: async () => {
 				throw new ProjectClientError("request failed: 402", 402);
@@ -227,8 +227,25 @@ describe("runProjectSubcommand", () => {
 		const result = await runProject(["project", "build", "Build", "it"], client);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr.join("\n")).toContain("payment challenge");
-		expect(result.stderr.join("\n")).toContain("web build OAuth gate");
+		expect(result.stderr.join("\n")).toContain("codebase usage");
+	});
+
+	it("formats build cooldown retry guidance", async () => {
+		const client = {
+			startBuild: async () => {
+				throw new ProjectClientError(
+					"request failed: 429 build_cooldown — Build cooldown active. Retry in 313s.",
+					429,
+					313_000,
+				);
+			},
+			hasCredentials: () => true,
+		} as unknown as ProjectClient;
+
+		const result = await runProject(["project", "build", "Build", "it"], client);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr.join("\n")).toContain("retry in 5m 13s");
 	});
 
 	it("waits for a completed build and prints its preview URL", async () => {
