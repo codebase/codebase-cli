@@ -3,9 +3,9 @@ import {
 	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	createAssistantMessageEventStream,
-	streamSimple,
 	type SimpleStreamOptions,
 	type StreamFunction,
+	streamSimple,
 } from "@earendil-works/pi-ai";
 
 const DSML_MARKER = "<|dsml|";
@@ -60,7 +60,10 @@ export function createSafeProxyStream(upstreamFn: StreamFunction<string, SimpleS
 	return (...args) => streamWithSafety(upstreamFn, ...args);
 }
 
-function streamWithSafety(upstreamFn: StreamFunction<string, SimpleStreamOptions>, ...args: Parameters<typeof streamSimple>): ReturnType<typeof streamSimple> {
+function streamWithSafety(
+	upstreamFn: StreamFunction<string, SimpleStreamOptions>,
+	...args: Parameters<typeof streamSimple>
+): ReturnType<typeof streamSimple> {
 	const [model, context, options] = args;
 	const output = createAssistantMessageEventStream();
 	const controller = new AbortController();
