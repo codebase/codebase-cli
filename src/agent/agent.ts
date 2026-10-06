@@ -30,11 +30,13 @@ import { buildTools } from "../tools/registry.js";
 import { TaskStore } from "../tools/task-store.js";
 import type { ToolContext } from "../tools/types.js";
 import { UserQueryStore } from "../user-queries/store.js";
+import { BillingLedger } from "./codebase-billing.js";
+import { createCodebaseStream } from "./codebase-stream.js";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
 import { type Effort, resolveEffort } from "./effort.js";
 import { fetchAvailableModels, type ModelOption } from "./model-list.js";
 import { buildProjectFilesAddendum } from "./project-files.js";
-import { streamProxySafely } from "./safe-stream.js";
+import { createSafeProxyStream } from "./safe-stream.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
 const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(["write_file", "edit_file", "multi_edit", "notebook_edit"]);
@@ -111,6 +113,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentBundle {
+	billing?: BillingLedger;
 	agent: Agent;
 	model: Model<string>;
 	source: ResolvedConfig["source"];
@@ -203,6 +206,8 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	const tokenManager =
 		source === "proxy" ? new TokenManager({ store: credentials, oauthConfig: defaultOAuthConfig() }) : null;
 	const getApiKey = tokenManager ? () => tokenManager.getAccessToken() : () => apiKey;
+	const billing = source === "proxy" ? new BillingLedger() : undefined;
+	const streamFn = billing ? createSafeProxyStream(createCodebaseStream(billing, model.baseUrl!)) : undefined;
 
 	const config = persistedConfig;
 	const permissions = new PermissionStore({
@@ -225,6 +230,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		fastModel: glueModels.fast,
 		smartModel: glueModels.smart,
 		getApiKey,
+		streamFn,
 	});
 	// Pass model.contextWindow explicitly so proxy-synthesized models
 	// (Codebase Auto, custom in-house IDs) get the real window instead of
@@ -367,7 +373,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					...(thinkingLevel && { thinkingLevel: thinkingLevel as Effort }),
 				},
 				getApiKey,
-				...(source === "proxy" && { streamFn: streamProxySafely }),
+				streamFn,
 				beforeToolCall: (ctx, signal) => guardToolCall(ctx.toolCall.name, ctx.args, signal),
 				afterToolCall: async (ctx, signal) => {
 					await dispatchPostToolHooks(
@@ -416,7 +422,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 			...(effort && { thinkingLevel: effort }),
 		},
 		getApiKey,
-		...(source === "proxy" && { streamFn: streamProxySafely }),
+		streamFn,
 		transformContext: async (messages, signal) => {
 			if (!compaction.needsCompaction(messages)) return withRelevantMemoryReminder(memory, messages);
 
@@ -626,6 +632,7 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	void agentRef;
 	return {
 		agent,
+		billing,
 		model,
 		source,
 		toolContext,

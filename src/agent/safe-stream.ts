@@ -4,6 +4,8 @@ import {
 	type AssistantMessageEventStream,
 	createAssistantMessageEventStream,
 	streamSimple,
+	type SimpleStreamOptions,
+	type StreamFunction,
 } from "@earendil-works/pi-ai";
 
 const DSML_MARKER = "<|dsml|";
@@ -51,6 +53,14 @@ export function sanitizeAssistantMessage(message: AssistantMessage): AssistantMe
  * executor see the same safe response.
  */
 export function streamProxySafely(...args: Parameters<typeof streamSimple>): ReturnType<typeof streamSimple> {
+	return createSafeProxyStream(streamSimple)(...args);
+}
+
+export function createSafeProxyStream(upstreamFn: StreamFunction<string, SimpleStreamOptions>): typeof streamSimple {
+	return (...args) => streamWithSafety(upstreamFn, ...args);
+}
+
+function streamWithSafety(upstreamFn: StreamFunction<string, SimpleStreamOptions>, ...args: Parameters<typeof streamSimple>): ReturnType<typeof streamSimple> {
 	const [model, context, options] = args;
 	const output = createAssistantMessageEventStream();
 	const controller = new AbortController();
@@ -78,7 +88,7 @@ export function streamProxySafely(...args: Parameters<typeof streamSimple>): Ret
 	}, timeoutMs);
 	timer.unref?.();
 
-	const upstream = streamSimple(model, context, { ...options, signal: controller.signal });
+	const upstream = upstreamFn(model, context, { ...options, signal: controller.signal });
 	void (async () => {
 		try {
 			for await (const event of upstream) {

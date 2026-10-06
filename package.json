@@ -73,6 +73,7 @@
 		"glob": "^13.0.1",
 		"ignore": "^7.0.0",
 		"ink": "^5.2.1",
+		"openai": "6.26.0",
 		"proper-lockfile": "^4.1.2",
 		"react": "^18.3.1",
 		"typebox": "^1.1.24",

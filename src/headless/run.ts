@@ -398,7 +398,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 			receipt,
 			receiptRecord,
 		});
-		out(`${JSON.stringify(payload)}\n`);
+		out(`${JSON.stringify({ ...payload, ...(bundle.billing ? { billing: bundle.billing.snapshot() } : {}) })}\n`);
 	}
 
 	return exitCode;

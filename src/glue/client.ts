@@ -1,4 +1,11 @@
-import { completeSimple, getModel, type KnownProvider, type Model } from "@earendil-works/pi-ai";
+import {
+	completeSimple,
+	getModel,
+	type KnownProvider,
+	type Model,
+	type SimpleStreamOptions,
+	type StreamFunction,
+} from "@earendil-works/pi-ai";
 
 /**
  * Cheap-model sidecar. The agent's main model handles tool-using work;
@@ -26,6 +33,7 @@ export interface GlueOptions {
 	getApiKey: () => Promise<string> | string;
 	/** Default 8000 — glue calls cap their reply length so a runaway summary doesn't hang the UI. */
 	maxTokens?: number;
+	streamFn?: StreamFunction<string, SimpleStreamOptions>;
 }
 
 export class GlueClient {
@@ -46,7 +54,11 @@ export class GlueClient {
 		signal: AbortSignal | undefined,
 	): Promise<string> {
 		const apiKey = await this.options.getApiKey();
-		const message = await completeSimple(
+		const complete = this.options.streamFn
+			? (model: Model<string>, context: Parameters<typeof completeSimple>[1], options: SimpleStreamOptions) =>
+					this.options.streamFn!(model, context, options).result()
+			: completeSimple;
+		const message = await complete(
 			model,
 			{
 				systemPrompt: system,

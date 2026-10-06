@@ -10,6 +10,7 @@
 - Rewind and checkpoint behavior must keep conversation and filesystem state consistent.
 - Tournaments must isolate contestant worktrees and avoid merging failed/unsafe outputs.
 - Model selection should respect user config, live overrides, local/cloud capability, and BYOK settings.
+- Proxy spending uses confirmed server receipts, never dollar estimates. Missing receipts are unconfirmed. Share the billing ledger across main/helper/subagent requests and preserve the safe proxy stream wrapper. Totals cover the current agent lifetime only.
 
 ## Work Guidance
 
