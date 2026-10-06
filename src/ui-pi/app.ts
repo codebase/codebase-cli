@@ -11,6 +11,7 @@ import {
 	type TUI,
 } from "@earendil-works/pi-tui";
 import { type AgentBundle, createAgent } from "../agent/agent.js";
+import { formatBillingSummary } from "../agent/codebase-billing.js";
 import { CHARS_PER_TOKEN, estimateContextTokens, streamingChars } from "../agent/context-estimate.js";
 import { listRewindPoints, type RewindPoint, truncateBefore } from "../agent/conversation-rewind.js";
 import { fetchAvailableModels } from "../agent/model-list.js";
@@ -1304,7 +1305,12 @@ export class App extends Container {
 		// compaction engine, which already trusts model.contextWindow.
 		const contextWindow = this.bundle.model.contextWindow || 200_000;
 		const ctxPct = contextWindow > 0 ? Math.min(100, Math.round((usedTokens / contextWindow) * 100)) : 0;
-		this.statusBar.setMetrics(ctxPct, this.usage.cost.total, this.computeTokRate());
+		this.statusBar.setMetrics(
+			ctxPct,
+			this.usage.cost.total,
+			this.computeTokRate(),
+			this.bundle.billing ? formatBillingSummary(this.bundle.billing.snapshot()) : undefined,
+		);
 		this.contextWarning.setPercent(ctxPct);
 	}
 
@@ -1575,15 +1581,14 @@ class StatusBar extends Container {
 	private currentStatus = "idle";
 	private ctxPercent = 0;
 	private cost = 0;
+	private billingText: string | undefined;
 	private tokRate: number | undefined;
 	private throbberTick = 0;
 	/** Active cycling verb shown while currentStatus is "thinking". */
 	private verb = THINKING_VERBS[0];
 	private verbTimer: NodeJS.Timeout | undefined;
 	private readonly onTick: () => void;
-	/** Per-turn cost is only meaningful on metered (BYOK) sessions — the
-	 * proxy bills a flat subscription and returns no usage, so $0.0000 there
-	 * is noise, not information. Hidden for proxy. */
+	/** BYOK shows token-cost estimates; Codebase shows server-confirmed credits. */
 	private readonly showCost: boolean;
 	constructor(modelName: string, cwd: string, onTick: () => void = () => undefined, showCost = true) {
 		super();
@@ -1632,9 +1637,10 @@ class StatusBar extends Container {
 		this.line.setText(this.format());
 		this.line.invalidate();
 	}
-	setMetrics(ctxPercent: number, cost: number, tokRate?: number): void {
+	setMetrics(ctxPercent: number, cost: number, tokRate?: number, billingText?: string): void {
 		this.ctxPercent = ctxPercent;
 		this.cost = cost;
+		this.billingText = billingText;
 		this.tokRate = tokRate;
 		this.line.setText(this.format());
 		this.line.invalidate();
@@ -1674,7 +1680,11 @@ class StatusBar extends Container {
 		const bar = ctxBar(this.ctxPercent);
 		const ctxText = colorByThreshold(`${bar} ${this.ctxPercent}%`, this.ctxPercent);
 		const tokPart = this.tokRate !== undefined ? ` · ${this.tokRate} tok/s` : "";
-		const costPart = this.showCost ? ` · $${formatCost(this.cost)}` : "";
+		const costPart = this.billingText
+			? ` · ${this.billingText}`
+			: this.showCost
+				? ` · $${formatCost(this.cost)}`
+				: "";
 		// Model name reads at default brightness as the anchor; the rest of
 		// the meta recedes to dim so the line is glanceable, not a wall.
 		const meta = ansi.dim(`${this.cwdLabel} · ctx ${ctxText}${tokPart}${costPart}`);

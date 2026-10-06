@@ -1,3 +1,4 @@
+import { formatBillingSummary } from "../../agent/codebase-billing.js";
 import type { Command } from "../types.js";
 
 export const clear: Command = {
@@ -65,7 +66,9 @@ export const session: Command = {
 			usageUnavailable
 				? "usage:    unavailable from proxy"
 				: `usage:    ↓${u.input} ↑${u.output} cache ↓${u.cacheRead}/↑${u.cacheWrite}`,
-			usageUnavailable ? "cost:     unavailable from proxy" : `cost:     $${u.cost.total.toFixed(4)}`,
+			bundle.source === "proxy"
+				? `spending: ${bundle.billing ? formatBillingSummary(bundle.billing.snapshot()) : "Charge information unavailable"} (current agent)`
+				: `cost:     $${u.cost.total.toFixed(4)}`,
 			`source:   ${bundle.source}`,
 		];
 		ctx.emit(lines.join("\n"));

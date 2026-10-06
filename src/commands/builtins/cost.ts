@@ -1,3 +1,4 @@
+import { formatBillingSummary } from "../../agent/codebase-billing.js";
 import type { Command } from "../types.js";
 
 export const cost: Command = {
@@ -6,24 +7,27 @@ export const cost: Command = {
 	handler: (_args, ctx) => {
 		const { state, bundle } = ctx;
 		const u = state.usage;
+		if (bundle.source === "proxy") {
+			const summary = bundle.billing?.snapshot();
+			ctx.emit(
+				[
+					`Codebase spending: ${summary ? formatBillingSummary(summary) : "Charge information unavailable"}`,
+					"Since this CLI agent started, including its helper and subagent calls.",
+					...(summary?.estimated ? [`${summary.estimated} request(s) used estimated usage.`] : []),
+					...(summary?.models.length ? [`Served models: ${summary.models.join(", ")}`] : []),
+					`Tokens: ${u.input} input, ${u.output} output, ${u.cacheRead} cache read, ${u.cacheWrite} cache write`,
+					"Settings > Usage shows the authoritative account balance and final cancelled-request charges.",
+				].join("\n"),
+			);
+			return { handled: true };
+		}
 		const turns = state.messages.filter((m) => m.role === "assistant").length;
 		const promptTokens = u.input + u.cacheRead;
 		const hitRate = promptTokens > 0 ? `${((u.cacheRead / promptTokens) * 100).toFixed(0)}%` : "—";
 		const turnAvg = turns > 0 ? u.cost.total / turns : 0;
-		const proxyNote = bundle.source === "proxy" ? " (proxied via codebase.design)" : "";
-		const usageUnavailable =
-			bundle.source === "proxy" &&
-			u.input + u.output + u.cacheRead + u.cacheWrite + u.totalTokens === 0 &&
-			turns > 0;
-		if (usageUnavailable) {
-			ctx.emit(
-				"Session token and dollar usage is unavailable because the proxy did not return provider usage. Run /usage for account credits.",
-			);
-			return { handled: true };
-		}
 
 		const lines = [
-			`Session cost: $${u.cost.total.toFixed(4)}${proxyNote}`,
+			`Session cost estimate: $${u.cost.total.toFixed(4)}`,
 			"",
 			"Tokens:",
 			`  Input         ${padNum(u.input, 8)} ($${u.cost.input.toFixed(4)})`,
