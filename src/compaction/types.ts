@@ -11,6 +11,8 @@ export interface CompactionDetails {
 	truncatedTokens: number;
 	/** How many messages were collapsed into the summary. */
 	collapsedMessageCount: number;
+	/** True when summarizing threw or was aborted; `summary` is then a placeholder, not real context. */
+	summaryFailed: boolean;
 }
 
 export interface CompactionResult {

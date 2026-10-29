@@ -21,53 +21,59 @@ describe("estimateMessageTokens", () => {
 		expect(tokens).toBeLessThanOrEqual(15);
 	});
 
-	it("trusts provider-reported totalTokens over the heuristic when present", () => {
-		const message: AgentMessage = {
-			role: "assistant",
-			content: [{ type: "text", text: "x" }],
-			api: "x",
-			provider: "x",
-			model: "x",
-			usage: { ...ZERO_USAGE, totalTokens: 12345 },
-			stopReason: "stop",
-			timestamp: 0,
-		};
-		expect(estimateMessageTokens(message)).toBe(12345);
-	});
-
-	it("falls through to the heuristic when usage.totalTokens is 0", () => {
-		const message: AgentMessage = {
-			role: "assistant",
-			content: [{ type: "text", text: "hello world" }],
-			api: "x",
-			provider: "x",
-			model: "x",
-			usage: ZERO_USAGE,
-			stopReason: "stop",
-			timestamp: 0,
-		};
-		// Heuristic: 11 chars / 3.8 = ~3 + 4 overhead = 7
-		expect(estimateMessageTokens(message)).toBeGreaterThan(0);
-		expect(estimateMessageTokens(message)).toBeLessThan(15);
-	});
-
-	it("estimateTotalTokens sums across messages", () => {
-		const messages: AgentMessage[] = [
-			{ role: "user", content: "a".repeat(38), timestamp: 0 },
-			{
-				role: "assistant",
-				content: [{ type: "text", text: "x" }],
-				api: "x",
-				provider: "x",
-				model: "x",
-				usage: { ...ZERO_USAGE, totalTokens: 100 },
-				stopReason: "stop",
-				timestamp: 0,
-			},
-		];
-		expect(estimateTotalTokens(messages)).toBeGreaterThanOrEqual(110);
+	it("ignores usage — it measures the whole request, not the message", () => {
+		expect(estimateMessageTokens(assistant("x", 12345))).toBeLessThan(15);
 	});
 });
+
+describe("estimateTotalTokens", () => {
+	it("anchors on the newest assistant usage and adds only later messages", () => {
+		const messages: AgentMessage[] = [
+			{ role: "user", content: "a".repeat(38), timestamp: 0 },
+			assistant("x", 100),
+			{ role: "user", content: "a".repeat(38), timestamp: 0 },
+		];
+		expect(estimateTotalTokens(messages)).toBe(100 + estimateMessageTokens(messages[2]));
+	});
+
+	it("does not add up usage across assistant turns", () => {
+		const messages: AgentMessage[] = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			assistant("a", 14_000),
+			{ role: "user", content: "again", timestamp: 0 },
+			assistant("b", 14_100),
+		];
+		expect(estimateTotalTokens(messages)).toBe(14_100);
+	});
+
+	it("never drops below the chars-based sum (resumed, uncompacted history)", () => {
+		const messages: AgentMessage[] = [{ role: "user", content: "a".repeat(3800), timestamp: 0 }, assistant("x", 50)];
+		expect(estimateTotalTokens(messages)).toBeGreaterThan(1000);
+	});
+
+	it("falls back to the chars-based sum without usage", () => {
+		const messages: AgentMessage[] = [
+			{ role: "user", content: "a".repeat(38), timestamp: 0 },
+			assistant("hello world", 0),
+		];
+		expect(estimateTotalTokens(messages)).toBe(
+			estimateMessageTokens(messages[0]) + estimateMessageTokens(messages[1]),
+		);
+	});
+});
+
+function assistant(text: string, totalTokens: number): AgentMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "x",
+		provider: "x",
+		model: "x",
+		usage: { ...ZERO_USAGE, totalTokens },
+		stopReason: "stop",
+		timestamp: 0,
+	};
+}
 
 describe("contextWindow", () => {
 	it("returns 200K for Claude families", () => {

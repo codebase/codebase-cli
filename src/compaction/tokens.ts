@@ -5,31 +5,42 @@ const CHARS_PER_TOKEN = 3.8;
 const PER_MESSAGE_OVERHEAD = 4;
 
 /**
- * Rough token estimate from message length. Used to decide whether to
- * compact. We deliberately don't reach for a real tokenizer here:
+ * Rough token estimate from message length. We deliberately don't reach
+ * for a real tokenizer here:
  *   - Real tokenizers are slow on every turn.
  *   - The agent doesn't need exact counts to make a binary trigger
  *     decision; the 75% threshold has plenty of slack.
  *
- * Assistant messages emitted by pi-agent-core carry a `usage` block
- * with the provider-reported `totalTokens`. When that's present we
- * trust it over the chars/3.8 heuristic — this gives accurate
- * accounting on assistant turns and keeps the heuristic only for the
- * user/tool messages we have no real token count for.
+ * Never uses an assistant message's `usage`: that is the size of the
+ * whole request which produced it, not of the message itself.
  */
 export function estimateMessageTokens(message: AgentMessage): number {
-	const usage = (message as { usage?: Usage }).usage;
-	if (usage && typeof usage.totalTokens === "number" && usage.totalTokens > 0) {
-		return usage.totalTokens;
-	}
 	const body = serialize(message);
 	return Math.ceil(body.length / CHARS_PER_TOKEN) + PER_MESSAGE_OVERHEAD;
 }
 
+/**
+ * Context size of a transcript. The newest assistant message's
+ * provider-reported `totalTokens` covers everything sent before it
+ * (system prompt and tools included), so it anchors the estimate and only
+ * later messages are approximated. Summing every assistant's `usage`
+ * instead counted the context once per turn, so long sessions looked full
+ * and compacted on every request.
+ *
+ * Never below the plain chars-based sum: a resumed history whose last
+ * `usage` came from a smaller, compacted request must still compact.
+ */
 export function estimateTotalTokens(messages: AgentMessage[]): number {
-	let total = 0;
-	for (const m of messages) total += estimateMessageTokens(m);
-	return total;
+	let heuristic = 0;
+	for (const m of messages) heuristic += estimateMessageTokens(m);
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const usage = (messages[i] as { usage?: Usage }).usage;
+		if (messages[i].role !== "assistant" || !usage || !(usage.totalTokens > 0)) continue;
+		let after = 0;
+		for (const m of messages.slice(i + 1)) after += estimateMessageTokens(m);
+		return Math.max(heuristic, usage.totalTokens + after);
+	}
+	return heuristic;
 }
 
 /**

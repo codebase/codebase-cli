@@ -4,6 +4,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AutocompleteItem,
 	CombinedAutocompleteProvider,
+	type Component,
 	Container,
 	Editor,
 	type OverlayHandle,
@@ -27,10 +28,11 @@ import {
 	type TournamentProgress,
 } from "../agent/tournament.js";
 import { createContestantRunner, defaultContestantPrompt } from "../agent/tournament-runner.js";
-import { visibleMessages } from "../agent/visible-messages.js";
+import { recentMessages, visibleMessages } from "../agent/visible-messages.js";
 import { snapshotWorkingTree } from "../agent/wip-snapshot.js";
 import { copyToClipboard } from "../clipboard/copy.js";
 import { BUILTIN_COMMANDS } from "../commands/builtins/index.js";
+import { fetchBalance, formatUsageBalance } from "../commands/builtins/usage.js";
 import { buildMcpPromptCommands } from "../commands/mcp-prompt-commands.js";
 import { CommandRegistry } from "../commands/registry.js";
 import { buildSkillCommands } from "../commands/skill-commands.js";
@@ -54,10 +56,18 @@ import { CompactionBanner } from "./compaction-banner.js";
 import { CopyPickerOverlay } from "./copy-picker-overlay.js";
 import { CopyRegistry } from "./copy-targets.js";
 import { HistorySearchOverlay } from "./history-search-overlay.js";
-import { buildMessageBlocks, type CopyBoxOptions, type MessageKind, MessageView } from "./message-view.js";
+import {
+	attachesToPrevious,
+	buildMessageBlocks,
+	type CopyBoxOptions,
+	type MessageKind,
+	MessageView,
+	seedToolExecutions,
+} from "./message-view.js";
 import { type ModelOption, ModelPickerOverlay } from "./model-picker-overlay.js";
 import { PermissionOverlay } from "./permission-overlay.js";
 import { RewindOverlay } from "./rewind-overlay.js";
+import { fullscreenEnabled, ScrollViewport } from "./scroll-viewport.js";
 import { SuggestionLine } from "./suggestion-line.js";
 import { TaskPanel } from "./task-panel.js";
 import { ansi, editorTheme } from "./theme.js";
@@ -76,6 +86,18 @@ import { WelcomeBanner } from "./welcome.js";
 export class App extends Container {
 	private bundle: AgentBundle;
 	private readonly transcript: TranscriptView;
+	private readonly welcome: WelcomeBanner;
+	private readonly fullscreen = fullscreenEnabled();
+	private readonly viewport = new ScrollViewport({
+		onCopy: (text) => {
+			copyToClipboard(text).catch((err: unknown) => {
+				this.statusBar.note(`copy failed: ${err instanceof Error ? err.message : String(err)}`);
+				this.tui?.requestRender();
+			});
+		},
+		onChange: () => this.tui?.requestRender(),
+	});
+	private accountUsageFetchedAt = 0;
 	private readonly statusBar: StatusBar;
 	private inputBar: Editor | undefined;
 	private readonly bgShellPanel: BackgroundShellPanel;
@@ -150,6 +172,7 @@ export class App extends Container {
 		if (resumedMessages.length > 0) this.envInjected = true;
 		this.messages.push(...resumedMessages);
 
+		seedToolExecutions(this.tools, resumedMessages);
 		this.transcript = new TranscriptView(resumedMessages, this.tools, this.copyRegistry);
 		// Async store subscribers need to schedule a TUI render after every
 		// state change — pi-tui only paints on input events or explicit
@@ -172,14 +195,13 @@ export class App extends Container {
 		this.registry = new CommandRegistry();
 		this.registry.registerAll(BUILTIN_COMMANDS);
 
-		this.addChild(
-			new WelcomeBanner({
-				modelName: this.bundle.model.name,
-				source: this.bundle.source,
-				cwd: this.bundle.toolContext.cwd,
-				resumedFrom: this.bundle.resumedFrom,
-			}),
-		);
+		this.welcome = new WelcomeBanner({
+			modelName: this.bundle.model.name,
+			source: this.bundle.source,
+			cwd: this.bundle.toolContext.cwd,
+			resumedFrom: this.bundle.resumedFrom,
+		});
+		this.addChild(this.welcome);
 		this.addChild(this.transcript);
 		this.addChild(this.compactionBanner);
 		this.addChild(this.taskPanel);
@@ -236,6 +258,7 @@ export class App extends Container {
 		this.inputBar = editor;
 		this.addChild(editor);
 		tui.setFocus(editor);
+		this.refreshAccountUsage(true);
 		this.removeInputListener = tui.addInputListener((data) => this.handleGlobalInput(data));
 		this.setTitle(false);
 		// Permission + UserQuery requests arrive asynchronously from tool
@@ -484,7 +507,34 @@ export class App extends Container {
 		}
 	}
 
+	/** Re-fetch account credit usage for the status bar; throttled unless forced. */
+	private refreshAccountUsage(force = false): void {
+		const now = Date.now();
+		if (!force && now - this.accountUsageFetchedAt < ACCOUNT_USAGE_MIN_INTERVAL_MS) return;
+		this.accountUsageFetchedAt = now;
+		void fetchBalance().then((result) => {
+			if (!result.ok) {
+				this.statusBar.setAccountUsage(undefined);
+			} else {
+				const { pct, remaining } = formatUsageBalance(result.balance);
+				this.statusBar.setAccountUsage({ pct, remaining });
+			}
+			this.tui?.requestRender();
+		});
+	}
+
+	override render(width: number): string[] {
+		if (!this.fullscreen || !this.tui) return super.render(width);
+		// Everything after the welcome banner + transcript is the pinned footer.
+		const footer = this.children.filter((c) => c !== this.welcome && c !== this.transcript);
+		return this.viewport.render(width, this.tui.terminal.rows, [this.welcome, ...this.transcript.blocks()], footer);
+	}
+
 	private handleGlobalInput(data: string): { consume?: boolean } | undefined {
+		if (this.fullscreen && this.viewport.handleInput(data, !this.tui?.hasOverlay())) {
+			this.tui?.requestRender();
+			return { consume: true };
+		}
 		// Ctrl-O opens the copy picker when no other modal owns input.
 		if (
 			data === "\x0f" &&
@@ -655,8 +705,7 @@ export class App extends Container {
 		this.messages.length = 0;
 		this.messages.push(...truncated);
 		this.bundle.agent.state.messages = [...truncated];
-		this.transcript.clear();
-		for (const m of truncated) this.transcript.appendMessage(m);
+		this.transcript.load(truncated);
 
 		// Restore files mutated at or after the rewound prompt.
 		let fileNote = "";
@@ -873,6 +922,7 @@ export class App extends Container {
 	}
 
 	private async handleSubmit(text: string): Promise<void> {
+		this.viewport.scrollToBottom();
 		// Both call sites fire this as a floating promise (`void`). Any
 		// throw in the early branches — slash dispatch, @path attachment
 		// resolution, !shell escape — would otherwise reject silently and
@@ -1204,11 +1254,11 @@ export class App extends Container {
 			const next = createAgent({ cwd: this.bundle.toolContext.cwd, resume: true, sessionId });
 			this.adoptBundle(next);
 			// Replace the on-screen transcript with the resumed session's.
-			this.transcript.clear();
 			this.messages.length = 0;
 			const resumedMessages = visibleMessages(next.resumedMessages);
 			this.messages.push(...resumedMessages);
-			for (const m of resumedMessages) this.transcript.appendMessage(m);
+			seedToolExecutions(this.tools, resumedMessages);
+			this.transcript.load(resumedMessages);
 			const when = next.resumedFrom ? new Date(next.resumedFrom.updatedAt).toLocaleString() : "unknown time";
 			this.statusBar.note(`Resumed session from ${when} (${resumedMessages.length} messages).`);
 			this.tui?.requestRender();
@@ -1480,6 +1530,7 @@ export class App extends Container {
 				break;
 			case "agent_end":
 				this.busy = false;
+				this.refreshAccountUsage();
 				this.scheduleSuggestion();
 				this.status = "idle";
 				this.statusBar.setStatus("idle");
@@ -1582,6 +1633,7 @@ class StatusBar extends Container {
 	private ctxPercent = 0;
 	private cost = 0;
 	private billingText: string | undefined;
+	private accountUsage: { pct: number | null; remaining: number } | undefined;
 	private tokRate: number | undefined;
 	private throbberTick = 0;
 	/** Active cycling verb shown while currentStatus is "thinking". */
@@ -1645,6 +1697,12 @@ class StatusBar extends Container {
 		this.line.setText(this.format());
 		this.line.invalidate();
 	}
+	/** Account-wide credit usage from the Codebase balance API; undefined hides it. */
+	setAccountUsage(usage: { pct: number | null; remaining: number } | undefined): void {
+		this.accountUsage = usage;
+		this.line.setText(this.format());
+		this.line.invalidate();
+	}
 	/** Advance the throbber to the next frame. Called by App on the spinner timer while busy. */
 	tickThrobber(): void {
 		this.throbberTick = (this.throbberTick + 1) % THROBBER_FRAMES.length;
@@ -1677,38 +1735,44 @@ class StatusBar extends Container {
 		const throb = isBusy ? `${ansi.cyan(THROBBER_FRAMES[this.throbberTick])} ` : "";
 		const label = this.currentStatus === "thinking" ? this.verb : this.currentStatus;
 		const statusLabel = isBusy ? ansi.cyan(label) : ansi.dim(label);
-		const bar = ctxBar(this.ctxPercent);
-		const ctxText = colorByThreshold(`${bar} ${this.ctxPercent}%`, this.ctxPercent);
 		const tokPart = this.tokRate !== undefined ? ` · ${this.tokRate} tok/s` : "";
 		const costPart = this.billingText
 			? ` · ${this.billingText}`
 			: this.showCost
 				? ` · $${formatCost(this.cost)}`
 				: "";
-		// Model name reads at default brightness as the anchor; the rest of
-		// the meta recedes to dim so the line is glanceable, not a wall.
-		const meta = ansi.dim(`${this.cwdLabel} · ctx ${ctxText}${tokPart}${costPart}`);
+		// Model name reads at default brightness as the anchor; labels and the
+		// rest of the meta recede to dim, the two meters keep their own colors.
+		const sep = ansi.dim(" · ");
+		const parts = [ansi.dim(this.cwdLabel), meter("Context", this.ctxPercent, ansi.green)];
+		const usage = this.accountUsage;
+		if (usage) {
+			parts.push(
+				usage.pct === null
+					? ansi.dim(`${usage.remaining.toLocaleString()} credits left`)
+					: meter("Usage", usage.pct, ansi.blue),
+			);
+		}
+		const meta = parts.join(sep) + ansi.dim(`${tokPart}${costPart}`);
 		return `${throb}${statusLabel}    ${this.modelName}  ${meta}`;
 	}
 }
 
-/** 6-cell eighth-block meter used for the ctx % bar. Mirrors the ink-era version exactly. */
-function ctxBar(pct: number): string {
-	const cells = 6;
-	const totalEighths = Math.round((pct / 100) * cells * 8);
-	const full = Math.floor(totalEighths / 8);
-	const remainder = totalEighths - full * 8;
-	const partials = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
-	let out = "█".repeat(Math.min(full, cells));
-	if (full < cells && remainder > 0) out += partials[remainder] ?? "";
-	while (out.length < cells) out += "░";
-	return out;
+/**
+ * 10-cell meter for the status bar. Whole blocks only: partial eighth
+ * blocks are left-aligned in their cell and read as a gap before the
+ * empty cells. Any non-zero value shows at least one filled cell.
+ */
+function meterBar(pct: number): string {
+	const cells = 10;
+	const filled = pct <= 0 ? 0 : Math.min(cells, Math.max(1, Math.round((pct / 100) * cells)));
+	return "█".repeat(filled) + "░".repeat(cells - filled);
 }
 
-function colorByThreshold(text: string, pct: number): string {
-	if (pct >= 90) return ansi.red(text);
-	if (pct >= 75) return ansi.yellow(text);
-	return text;
+/** "Label ▊░░░░░ 12%": dim label, bar + percent in `color`, turning yellow at 75% and red at 90%. */
+function meter(label: string, pct: number, color: (text: string) => string): string {
+	const paint = pct >= 90 ? ansi.red : pct >= 75 ? ansi.yellow : color;
+	return `${ansi.dim(label)} ${paint(`${meterBar(pct)} ${pct}%`)}`;
 }
 
 function formatCost(value: number): string {
@@ -1724,6 +1788,12 @@ function formatCost(value: number): string {
  * rebuilt per agent event so tool-call blocks stay in sync with the
  * shared tools Map.
  */
+/** Balance fetches after turns are spaced at least this far apart. */
+const ACCOUNT_USAGE_MIN_INTERVAL_MS = 30_000;
+
+/** How many resumed messages the transcript renders; the agent still gets the full history. */
+const RESUME_DISPLAY_LIMIT = 100;
+
 class TranscriptView extends Container {
 	private readonly history: Container;
 	private streamingView: MessageView | undefined;
@@ -1739,9 +1809,31 @@ class TranscriptView extends Container {
 		this.registry = registry;
 		this.history = new Container();
 		this.addChild(this.history);
-		for (const m of initialMessages) {
-			this.history.addChild(buildMessageView(m, this.tools, false, this.copyOpts()));
+		this.load(initialMessages);
+	}
+
+	/** Show a resumed conversation: the last RESUME_DISPLAY_LIMIT messages, with a note for the rest. */
+	load(messages: AgentMessage[]): void {
+		this.history.clear();
+		const shown = recentMessages(messages, RESUME_DISPLAY_LIMIT);
+		const hidden = messages.length - shown.length;
+		if (hidden > 0) {
+			this.history.addChild(
+				new Text(ansi.dim(`↑ ${hidden} earlier message${hidden === 1 ? "" : "s"} not shown`), 2, 0),
+			);
 		}
+		for (const m of shown) this.add(m);
+		this.history.invalidate();
+	}
+
+	/** Add a finalized message; one-line results (read summaries) join the previous message with no gap. */
+	private add(message: AgentMessage): void {
+		const prev = this.history.children[this.history.children.length - 1];
+		if (attachesToPrevious(message) && prev instanceof MessageView) {
+			prev.appendBlocks(buildMessageBlocks(message, this.tools, message.role, this.copyOpts()));
+			return;
+		}
+		this.history.addChild(buildMessageView(message, this.tools, false, this.copyOpts()));
 	}
 
 	private copyOpts(): CopyBoxOptions {
@@ -1755,13 +1847,18 @@ class TranscriptView extends Container {
 	}
 
 	appendMessage(message: AgentMessage): void {
-		this.history.addChild(buildMessageView(message, this.tools, false, this.copyOpts()));
+		this.add(message);
 		this.history.invalidate();
 	}
 
 	clear(): void {
 		this.history.clear();
 		this.history.invalidate();
+	}
+
+	/** Finalized messages then the in-flight one, oldest first — the scroll viewport renders these individually. */
+	blocks(): Component[] {
+		return this.streamingView ? [...this.history.children, this.streamingView] : this.history.children;
 	}
 
 	setStreaming(message: AgentMessage | undefined): void {

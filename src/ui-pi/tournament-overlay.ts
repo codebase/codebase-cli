@@ -1,5 +1,6 @@
 import { Container, SelectList, Text } from "@earendil-works/pi-tui";
 import type { TournamentOutcome } from "../agent/tournament.js";
+import { frame, frameInnerWidth } from "./overlay-frame.js";
 import { ansi, selectListTheme } from "./theme.js";
 
 /**
@@ -14,8 +15,8 @@ export class TournamentOverlay extends Container {
 	constructor(outcome: TournamentOutcome, onPick: (branchId: string) => void, onCancel: () => void) {
 		super();
 
-		this.addChild(new Text(ansi.bold("Tournament results"), 1, 0));
-		this.addChild(new Text(ansi.dim("↑↓ choose · Enter merge · Esc discard all"), 1, 0));
+		this.addChild(new Text(ansi.bold("Tournament results"), 0, 0));
+		this.addChild(new Text(ansi.dim("↑↓ choose · Enter merge · Esc discard all"), 0, 0));
 
 		// Order by the judge's ranking; unranked/failed attempts fall to the end.
 		const order = new Map(outcome.verdict.ranking.map((r, i) => [r.id, i]));
@@ -46,5 +47,9 @@ export class TournamentOverlay extends Container {
 
 	getFocusTarget(): SelectList {
 		return this.list;
+	}
+
+	override render(width: number): string[] {
+		return frame(super.render(frameInnerWidth(width)), width);
 	}
 }

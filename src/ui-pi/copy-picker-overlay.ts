@@ -1,5 +1,6 @@
 import { type Component, Container, SelectList, Text } from "@earendil-works/pi-tui";
 import type { CopyEntry } from "./copy-targets.js";
+import { frame, frameInnerWidth } from "./overlay-frame.js";
 import { ansi, selectListTheme } from "./theme.js";
 
 /** Most recent boxes shown in the picker; older ones drop off the list. */
@@ -17,7 +18,7 @@ export class CopyPickerOverlay extends Container {
 	constructor(entries: readonly CopyEntry[], onPick: (entry: CopyEntry) => void, onCancel: () => void) {
 		super();
 		const recent = [...entries].reverse().slice(0, MAX_SHOWN);
-		this.addChild(new Text(ansi.bold(ansi.cyan("Copy which?")), 1, 0));
+		this.addChild(new Text(ansi.bold(ansi.cyan("Copy which?")), 0, 0));
 
 		const items = recent.map((e) => ({
 			value: String(e.id),
@@ -32,11 +33,15 @@ export class CopyPickerOverlay extends Container {
 		};
 		this.list.onCancel = () => onCancel();
 		this.addChild(this.list);
-		this.addChild(new Text(ansi.dim("↑↓ Enter to copy · Esc to cancel"), 1, 1));
+		this.addChild(new Text(ansi.dim("↑↓ Enter to copy · Esc to cancel"), 0, 1));
 	}
 
 	getFocusTarget(): Component {
 		return this.list;
+	}
+
+	override render(width: number): string[] {
+		return frame(super.render(frameInnerWidth(width)), width);
 	}
 }
 

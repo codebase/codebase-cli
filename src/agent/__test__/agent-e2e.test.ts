@@ -135,6 +135,159 @@ describe("agent bundle end-to-end", () => {
 		expect(stored.messages[1].role).toBe("assistant");
 	});
 
+	it("session keeps every turn, not just the latest run", async () => {
+		faux.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+		const opts = {
+			cwd,
+			configOverride: { model: faux.getModel(), apiKey: "test-key", source: "explicit" as const },
+			autoApprove: true,
+		};
+		const bundle = createAgent(opts);
+		await bundle.agent.prompt("one");
+		await bundle.agent.prompt("two");
+		expect(bundle.sessions.load(faux.getModel().id)?.messages).toHaveLength(4);
+
+		// A resumed session keeps its history when the next turn saves.
+		faux.setResponses([fauxAssistantMessage("third reply")]);
+		const resumed = createAgent({ ...opts, resume: true });
+		expect(resumed.resumedMessages).toHaveLength(4);
+		await resumed.agent.prompt("three");
+		expect(resumed.sessions.load(faux.getModel().id)?.messages).toHaveLength(6);
+	});
+
+	it("compacts once per threshold crossing, not on every later request", async () => {
+		faux.unregister();
+		faux = registerFauxProvider({
+			provider: "faux",
+			models: [{ id: "faux-small", name: "Faux Small", contextWindow: 20_270 }],
+		});
+		const firstMessages: string[] = [];
+		faux.setResponses(
+			Array.from({ length: 60 }, () => (context: Context) => {
+				const first = context.messages[0];
+				firstMessages.push(typeof first?.content === "string" ? first.content : JSON.stringify(first?.content));
+				return fauxAssistantMessage("ok");
+			}),
+		);
+		const opts = {
+			cwd,
+			configOverride: { model: faux.getModel(), apiKey: "test-key", source: "explicit" as const },
+			autoApprove: true,
+		};
+		const bundle = createAgent(opts);
+		let compactions = 0;
+		bundle.compactionMonitor.subscribe((s) => {
+			if (s.active) compactions++;
+		});
+
+		for (let i = 0; i < 10; i++) await bundle.agent.prompt(`big ${i} ${"x ".repeat(300)}`);
+		const afterCrossing = compactions;
+		for (let i = 0; i < 4; i++) await bundle.agent.prompt(`small ${i}`);
+
+		expect(afterCrossing).toBe(1);
+		expect(compactions).toBe(afterCrossing);
+
+		// After a restart the saved summary is reused: no new compaction, and
+		// the first request already starts from the summary, not the full history.
+		const resumed = createAgent({ ...opts, resume: true });
+		let resumedCompactions = 0;
+		resumed.compactionMonitor.subscribe((s) => {
+			if (s.active) resumedCompactions++;
+		});
+		firstMessages.length = 0;
+		await resumed.agent.prompt("after restart");
+		expect(resumedCompactions).toBe(0);
+		expect(firstMessages[0]).toContain("[Conversation compacted");
+	});
+
+	it("never caches a failed summary: keeps full context, retries, and resumes clean", async () => {
+		faux.unregister();
+		faux = registerFauxProvider({
+			provider: "faux",
+			models: [{ id: "faux-small", name: "Faux Small", contextWindow: 20_270 }],
+		});
+		const firstMessages: string[] = [];
+		let summaryCalls = 0;
+		faux.setResponses(
+			Array.from({ length: 80 }, () => (context: Context) => {
+				if (context.systemPrompt?.startsWith("Summarize the prior conversation")) {
+					summaryCalls++;
+					throw new Error("summarizer down");
+				}
+				const first = context.messages[0];
+				firstMessages.push(typeof first?.content === "string" ? first.content : JSON.stringify(first?.content));
+				return fauxAssistantMessage("ok");
+			}),
+		);
+		const opts = {
+			cwd,
+			configOverride: { model: faux.getModel(), apiKey: "test-key", source: "explicit" as const },
+			autoApprove: true,
+		};
+		const bundle = createAgent(opts);
+		for (let i = 0; i < 10; i++) await bundle.agent.prompt(`big ${i} ${"x ".repeat(300)}`);
+		const failedAttempts = summaryCalls;
+		await bundle.agent.prompt("small after failure");
+
+		expect(failedAttempts).toBeGreaterThan(0);
+		// Not memoized, so the next request tries again instead of trusting the failure.
+		expect(summaryCalls).toBeGreaterThan(failedAttempts);
+		// The full context (earliest user constraint included) was still sent.
+		expect(firstMessages.at(-1)).toContain("big 0");
+		expect(firstMessages.some((m) => m.includes("summarization failed"))).toBe(false);
+
+		const saved = bundle.sessions.load(faux.getModel().id);
+		expect(saved?.compaction).toBeUndefined();
+
+		firstMessages.length = 0;
+		const resumed = createAgent({ ...opts, resume: true });
+		await resumed.agent.prompt("after restart");
+		expect(firstMessages[0]).toContain("big 0");
+	});
+
+	it("never caches a summary from an aborted run, and resumes with the full history", async () => {
+		faux.unregister();
+		faux = registerFauxProvider({
+			provider: "faux",
+			models: [{ id: "faux-small", name: "Faux Small", contextWindow: 20_270 }],
+		});
+		const firstMessages: string[] = [];
+		let abortDuringSummary = false;
+		let summaries = 0;
+		const opts = {
+			cwd,
+			configOverride: { model: faux.getModel(), apiKey: "test-key", source: "explicit" as const },
+			autoApprove: true,
+		};
+		const bundle = createAgent(opts);
+		faux.setResponses(
+			Array.from({ length: 80 }, () => (context: Context) => {
+				if (context.systemPrompt?.startsWith("Summarize the prior conversation")) {
+					summaries++;
+					// The user hits Ctrl+C while the summary is being written.
+					if (abortDuringSummary) bundle.agent.abort();
+					return fauxAssistantMessage(`summary #${summaries}`);
+				}
+				const first = context.messages[0];
+				firstMessages.push(typeof first?.content === "string" ? first.content : JSON.stringify(first?.content));
+				return fauxAssistantMessage("ok");
+			}),
+		);
+		for (let i = 0; i < 9; i++) await bundle.agent.prompt(`big ${i} ${"x ".repeat(300)}`);
+		abortDuringSummary = true;
+		await bundle.agent.prompt(`big 9 ${"x ".repeat(300)}`).catch(() => undefined);
+
+		expect(summaries).toBe(1);
+		expect(bundle.sessions.load(faux.getModel().id)?.compaction).toBeUndefined();
+
+		abortDuringSummary = false;
+		firstMessages.length = 0;
+		const resumed = createAgent({ ...opts, resume: true });
+		await resumed.agent.prompt("after restart");
+		// A fresh compaction may run after resume, but the aborted summary (#1) is never reused.
+		expect(firstMessages[0]).not.toContain("summary #1");
+	});
+
 	it("compaction monitor stays inactive when transcript is short", async () => {
 		faux.setResponses([fauxAssistantMessage("short reply")]);
 		const bundle = createAgent({

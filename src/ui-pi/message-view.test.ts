@@ -1,7 +1,18 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import type { ToolExecution } from "../types.js";
-import { buildMessageBlocks, CollapsedReadGroup, PlainText, ToolCallLine } from "./message-view.js";
+import {
+	attachesToPrevious,
+	buildMessageBlocks,
+	CollapsedReadGroup,
+	formatReadSummary,
+	PlainText,
+	seedToolExecutions,
+	ToolCallLine,
+} from "./message-view.js";
 
 const NO_TOOLS = new Map<string, ToolExecution>();
 
@@ -162,5 +173,106 @@ describe("CollapsedReadGroup", () => {
 		const lines = group.render(80);
 		expect(lines.length).toBeGreaterThanOrEqual(3);
 		expect(lines[0]).toContain("Read 2 files");
+	});
+});
+
+describe("formatReadSummary", () => {
+	const text = (s: string) => [{ type: "text", text: s }];
+
+	it("shows how many lines and which range for a partial read", () => {
+		const details = { totalLines: 75, returnedLines: 50, startLine: 20, endLine: 69 };
+		expect(formatReadSummary(details, text(""))).toBe("50 lines · 20–69 of 75");
+	});
+
+	it("marks a whole-file read", () => {
+		const details = { totalLines: 52, returnedLines: 52, startLine: 1, endLine: 52 };
+		expect(formatReadSummary(details, text(""))).toBe("52 lines · 1–52 (whole file)");
+	});
+
+	it("recovers the range from numbered output in older sessions", () => {
+		const details = { totalLines: 75, returnedLines: 2 };
+		expect(formatReadSummary(details, text("    50→a\n    51→b\n... (showing lines 50-51 of 75)"))).toBe(
+			"2 lines · 50–51 of 75",
+		);
+	});
+
+	it("handles empty files and images", () => {
+		expect(formatReadSummary({ totalLines: 0, returnedLines: 0 }, text(""))).toBe("Empty file");
+		expect(formatReadSummary({ isImage: true }, [])).toBe("Read image");
+	});
+});
+
+describe("attachesToPrevious", () => {
+	const result = (toolName: string, isError: boolean): AgentMessage => ({
+		role: "toolResult",
+		toolCallId: "t1",
+		toolName,
+		content: [],
+		isError,
+		timestamp: 0,
+	});
+
+	it("joins successful reads to their tool call, nothing else", () => {
+		expect(attachesToPrevious(result("read_file", false))).toBe(true);
+		expect(attachesToPrevious(result("read_file", true))).toBe(false);
+		expect(attachesToPrevious(result("shell", false))).toBe(false);
+	});
+});
+
+describe("file-edit previews wait for confirmed completion", () => {
+	const strip = (s: string) => s.replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "").replace(/\x1b\[[0-9;]*m/g, "");
+	const done = (id: string, name: string, args: unknown): ToolExecution => ({
+		id,
+		name,
+		args,
+		status: "done",
+		startedAt: 0,
+	});
+
+	it("does not cache a streaming preview: the completed write shows the final content", () => {
+		const id = "stream-write-1";
+		const streaming = new ToolCallLine(id, "write_file", { path: "a.txt", content: "first" }, NO_TOOLS);
+		expect(strip(streaming.render(80).join("\n"))).not.toContain("Wrote");
+
+		const final = { path: "a.txt", content: "first\nsecond\nthird\n" };
+		const tools = new Map([[id, done(id, "write_file", final)]]);
+		const out = strip(new ToolCallLine(id, "write_file", final, tools).render(80).join("\n"));
+		expect(out).toContain("Wrote 3 lines");
+		expect(out).toContain("3 + third");
+	});
+
+	it("does not read the target file for an edit that hasn't run yet", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pending-edit-"));
+		const file = join(dir, "f.txt");
+		writeFileSync(file, "one\ntwo\n");
+		const id = "pending-edit-1";
+		const args = { path: file, old_string: "two", new_string: "TWO" };
+		expect(strip(new ToolCallLine(id, "edit_file", args, NO_TOOLS).render(80).join("\n"))).not.toContain("Update(");
+
+		writeFileSync(file, "one\nTWO\n");
+		const tools = new Map([[id, done(id, "edit_file", args)]]);
+		const out = strip(new ToolCallLine(id, "edit_file", args, tools).render(80).join("\n"));
+		expect(out).toContain("2 + TWO");
+	});
+
+	it("seeds executions for resumed calls from their saved results", () => {
+		const tools = new Map<string, ToolExecution>();
+		const call = (id: string) => ({ type: "toolCall" as const, id, name: "write_file", arguments: { path: "x" } });
+		const result = (id: string, isError: boolean): AgentMessage => ({
+			role: "toolResult",
+			toolCallId: id,
+			toolName: "write_file",
+			content: [],
+			isError,
+			timestamp: 1,
+		});
+		seedToolExecutions(tools, [
+			assistantBlocks([call("ok"), call("bad"), call("never-ran")]),
+			result("ok", false),
+			result("bad", true),
+		]);
+		expect(tools.get("ok")?.status).toBe("done");
+		expect(tools.get("bad")?.status).toBe("error");
+		expect(tools.has("never-ran")).toBe(false);
 	});
 });

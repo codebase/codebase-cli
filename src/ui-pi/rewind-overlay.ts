@@ -1,5 +1,6 @@
 import { Container, SelectList, Text } from "@earendil-works/pi-tui";
 import type { RewindPoint } from "../agent/conversation-rewind.js";
+import { frame, frameInnerWidth } from "./overlay-frame.js";
 import { ansi, selectListTheme } from "./theme.js";
 
 /**
@@ -13,8 +14,8 @@ export class RewindOverlay extends Container {
 	constructor(points: RewindPoint[], onSelect: (point: RewindPoint) => void, onCancel: () => void) {
 		super();
 
-		this.addChild(new Text(ansi.bold("Rewind conversation"), 1, 0));
-		this.addChild(new Text(ansi.dim("↑↓ choose · Enter rewind to before · Esc cancel"), 1, 0));
+		this.addChild(new Text(ansi.bold("Rewind conversation"), 0, 0));
+		this.addChild(new Text(ansi.dim("↑↓ choose · Enter rewind to before · Esc cancel"), 0, 0));
 
 		// Newest first so the most recent prompt is at the top, where the
 		// cursor starts — the common case is "undo my last message".
@@ -37,5 +38,9 @@ export class RewindOverlay extends Container {
 
 	getFocusTarget(): SelectList {
 		return this.list;
+	}
+
+	override render(width: number): string[] {
+		return frame(super.render(frameInnerWidth(width)), width);
 	}
 }

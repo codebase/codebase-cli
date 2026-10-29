@@ -65,6 +65,20 @@ export function visibleMessages(messages: AgentMessage[]): AgentMessage[] {
 	return out;
 }
 
+/**
+ * The last `limit` messages for display, widened back to the start of
+ * that user turn so the transcript never opens on a stray tool result.
+ * Falls back to the plain cut when that turn alone exceeds the limit.
+ */
+export function recentMessages(messages: AgentMessage[], limit: number): AgentMessage[] {
+	if (messages.length <= limit) return messages;
+	const cut = messages.length - limit;
+	for (let i = cut; i < messages.length; i++) {
+		if (messages[i].role === "user") return messages.slice(i);
+	}
+	return messages.slice(cut);
+}
+
 function stableJson(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
 	if (value && typeof value === "object") {

@@ -7,6 +7,7 @@ import { CredentialsStore } from "../auth/credentials.js";
 import { TokenManager } from "../auth/token-manager.js";
 import { CheckpointStore } from "../checkpoint/store.js";
 import { CompactionEngine } from "../compaction/engine.js";
+import { CompactionMemo } from "../compaction/memo.js";
 import { CompactionMonitor } from "../compaction/monitor.js";
 import { getOutputStyle } from "../config/output-styles.js";
 import { ConfigStore } from "../config/store.js";
@@ -238,8 +239,10 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 	// them at 128k and trigger compaction at ~96k on a 200k-context route.
 	const compaction = new CompactionEngine({ glue, modelId: model.id, contextWindow: model.contextWindow });
 	const compactionMonitor = new CompactionMonitor();
+	const compactionMemo = new CompactionMemo();
 	const sessions = new SessionStore({ cwd });
 	const resumed = opts.sessionId ? sessions.loadById(opts.sessionId) : opts.resume ? sessions.load(model.id) : null;
+	if (!opts.initialMessages) compactionMemo.restore(resumed?.compaction, resumed?.messages ?? []);
 	const memory = new MemoryStore({ cwd, sourceSessionId: sessions.id });
 
 	// Background memory extraction: a cheap-model pass mines settled turns
@@ -424,13 +427,16 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		getApiKey,
 		streamFn,
 		transformContext: async (messages, signal) => {
-			if (!compaction.needsCompaction(messages)) return withRelevantMemoryReminder(memory, messages);
+			// Reuse the last summary for history it already covers; only the
+			// newer messages count toward the threshold.
+			const view = compactionMemo.apply(messages);
+			if (!compaction.needsCompaction(view)) return withRelevantMemoryReminder(memory, view);
 
 			// Stage 1 — microcompaction: clear stale tool-result content
 			// (old reads, grep dumps, command output) without a summary
 			// round-trip. Cheap. If that alone drops us back under the
 			// threshold, we're done and skip the expensive summarize path.
-			const micro = compaction.microcompact(messages);
+			const micro = compaction.microcompact(view);
 			if (micro.clearedCount > 0 && !compaction.needsCompaction(micro.messages)) {
 				return withRelevantMemoryReminder(memory, micro.messages);
 			}
@@ -447,6 +453,16 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 					signal,
 				);
 				const result = await compaction.compact(working, signal);
+				if (result.details.summaryFailed || signal?.aborted) {
+					// Never cache or persist a failed summary. Keep the full context
+					// while it still fits (the next request retries); truncate only
+					// when it can't be sent at all.
+					return withRelevantMemoryReminder(
+						memory,
+						compaction.fitsContextWindow(working) ? working : result.messages,
+					);
+				}
+				compactionMemo.record(messages, view, result.messages, result.details.collapsedMessageCount);
 				await hooks.dispatch(
 					"PostCompact",
 					{
@@ -522,12 +538,15 @@ export function createAgent(opts: CreateAgentOptions = {}): AgentBundle {
 		if (event.type !== "agent_end") return;
 		if (opts.persistSession === false) return;
 		try {
-			const messages = event.messages.length > 0 ? event.messages : (resumed?.messages ?? []);
+			// event.messages holds only this run's new messages; saving those
+			// overwrote the session with just the latest exchange.
+			const messages = agent.state.messages;
 			if (messages.length === 0) return;
 			sessions.save({
 				modelId: model.id,
 				title: resumed?.title ?? null,
 				messages,
+				compaction: compactionMemo.snapshot(),
 				usage: resumed?.usage ?? {
 					input: 0,
 					output: 0,

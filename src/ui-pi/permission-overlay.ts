@@ -1,5 +1,6 @@
 import { Container, SelectList, Text } from "@earendil-works/pi-tui";
 import type { PermissionRequest, ResponseChoice } from "../permissions/store.js";
+import { frame, frameInnerWidth } from "./overlay-frame.js";
 import { ansi, selectListTheme } from "./theme.js";
 
 /**
@@ -10,6 +11,7 @@ import { ansi, selectListTheme } from "./theme.js";
  */
 export class PermissionOverlay extends Container {
 	private readonly list: SelectList;
+	private readonly borderColor: (text: string) => string;
 
 	constructor(request: PermissionRequest, onRespond: (choice: ResponseChoice) => void) {
 		super();
@@ -17,21 +19,22 @@ export class PermissionOverlay extends Container {
 		const risk = request.risk;
 		const riskColor = risk === "high" ? ansi.red : ansi.yellow;
 		const riskLabel = risk === "high" ? "HIGH RISK" : risk === "medium" ? "REVIEW" : "LOW RISK";
+		this.borderColor = riskColor;
 
-		this.addChild(new Text(`${riskColor(ansi.bold(riskLabel))} · permission needed`, 1, 0));
-		this.addChild(new Text(`${ansi.bold(request.tool)}  ${request.summary}`, 1, 0));
+		this.addChild(new Text(`${riskColor(ansi.bold(riskLabel))} · permission needed`, 0, 0));
+		this.addChild(new Text(`${ansi.bold(request.tool)}  ${request.summary}`, 0, 0));
 		if (request.reason) {
-			this.addChild(new Text(ansi.dim(request.reason), 1, 0));
+			this.addChild(new Text(ansi.dim(request.reason), 0, 0));
 		}
 		if (request.detail) {
-			this.addChild(new Text(ansi.dim(truncate(request.detail, 600)), 1, 0));
+			this.addChild(new Text(ansi.dim(truncate(request.detail, 600)), 0, 0));
 		}
 		if (request.trustScope) {
-			this.addChild(new Text(ansi.dim(`Trust scope: ${request.trustScope}`), 1, 0));
+			this.addChild(new Text(ansi.dim(`Trust scope: ${request.trustScope}`), 0, 0));
 		}
 		if (request.guidance?.length) {
 			for (const line of request.guidance.slice(0, 4)) {
-				this.addChild(new Text(ansi.dim(line), 1, 0));
+				this.addChild(new Text(ansi.dim(line), 0, 0));
 			}
 		}
 
@@ -52,7 +55,11 @@ export class PermissionOverlay extends Container {
 		this.list.onSelect = (item) => onRespond(item.value as ResponseChoice);
 		this.list.onCancel = () => onRespond("deny");
 		this.addChild(this.list);
-		this.addChild(new Text(ansi.dim("↑↓ Enter to confirm · Esc denies"), 1, 0));
+		this.addChild(new Text(ansi.dim("↑↓ Enter to confirm · Esc denies"), 0, 0));
+	}
+
+	override render(width: number): string[] {
+		return frame(super.render(frameInnerWidth(width)), width, this.borderColor);
 	}
 
 	/** Focus target for the TUI — the SelectList consumes arrow keys + Enter. */

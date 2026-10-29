@@ -445,7 +445,8 @@ describe("runHeadless", () => {
 				stopReason: "toolUse",
 			}),
 			fauxAssistantMessage("Done."),
-			fauxAssistantMessage("Reliable receipt repaired. Verified with npm test."),
+			// The repair turn answers without naming the verification command.
+			fauxAssistantMessage("Reliable receipt repaired."),
 		]);
 		const { capture, write } = makeCapture();
 		const exitCode = await runHeadless({

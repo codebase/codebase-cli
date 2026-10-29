@@ -26,3 +26,6 @@ Thumbs.db
 
 # stray compiled binary (v1 Go artifact name)
 /cli
+
+# local changelog notes
+/CHANGELOG.md

@@ -32,6 +32,9 @@ export interface ReadFileDetails {
 	bytes: number;
 	totalLines: number;
 	returnedLines: number;
+	/** 1-based inclusive range returned; 0/0 for images and empty reads. */
+	startLine: number;
+	endLine: number;
 	hasBOM: boolean;
 	eol: "\n" | "\r\n" | "";
 	isPartialView: boolean;
@@ -99,6 +102,8 @@ export function createReadFile(ctx: ToolContext): AgentTool<typeof Params, ReadF
 						bytes: stat.size,
 						totalLines: 0,
 						returnedLines: 0,
+						startLine: 0,
+						endLine: 0,
 						hasBOM: false,
 						eol: "",
 						isPartialView: false,
@@ -158,6 +163,8 @@ export function createReadFile(ctx: ToolContext): AgentTool<typeof Params, ReadF
 					bytes: stat.size,
 					totalLines,
 					returnedLines: slice.length,
+					startLine: slice.length > 0 ? startIdx + 1 : 0,
+					endLine: slice.length > 0 ? startIdx + slice.length : 0,
 					hasBOM,
 					eol,
 					isPartialView,

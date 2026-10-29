@@ -1,4 +1,5 @@
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
+import { highlightCode } from "./syntax.js";
 
 /**
  * ANSI escape helpers. Pi-tui doesn't ship a built-in theme — components
@@ -35,6 +36,7 @@ export const markdownTheme: MarkdownTheme = {
 	linkUrl: (text) => ansi.dim(ansi.underline(text)),
 	code: (text) => ansi.cyan(text),
 	codeBlock: (text) => text,
+	highlightCode,
 	codeBlockBorder: (text) => ansi.dim(text),
 	quote: (text) => ansi.dim(text),
 	quoteBorder: (text) => ansi.dim(text),

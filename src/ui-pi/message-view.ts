@@ -1,8 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type Component, Markdown, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { stripRuntimeMarkup } from "../agent/visible-messages.js";
+import type { ReadFileDetails } from "../tools/read-file.js";
 import type { ToolExecution } from "../types.js";
-import { type DiffHunk, type DiffInfo, diffSummary } from "../ui/diff-summary.js";
 import { splitMarkdownSegments } from "../ui/markdown-split.js";
 import { truncateOutput } from "../ui/output-truncate.js";
 import { displayPath } from "../ui/paths.js";
@@ -17,6 +17,8 @@ import {
 } from "../ui/tool-labels.js";
 import { CopyBox } from "./copy-box.js";
 import type { CopyRegistry } from "./copy-targets.js";
+import { FILE_EDIT_TOOLS, renderFileEdit } from "./edit-diff-view.js";
+import { detectLanguage } from "./syntax.js";
 import { ansi, markdownTheme } from "./theme.js";
 
 const wrap = (text: string, width: number) => wrapTextWithAnsi(text, width);
@@ -46,6 +48,10 @@ export class MessageView implements Component {
 		this.blocks = blocks;
 	}
 
+	appendBlocks(blocks: Component[]): void {
+		this.blocks = [...this.blocks, ...blocks];
+	}
+
 	render(width: number): string[] {
 		// User turns get a bold accent bar; agent/tool/system turns get a
 		// flat 2-col indent. Both consume 2 columns, so content reflows the same.
@@ -67,9 +73,8 @@ export class MessageView implements Component {
 /**
  * Inline tool-call line. Reads its current status from the shared tools
  * Map every render so the spinner / glyph stay in sync with the agent
- * loop. When complete, also emits an indented diff summary for
- * edit_file / multi_edit / write_file calls — the user gets to see what
- * the agent actually changed without spending a tool turn to diff.
+ * loop. Completed file edits render as a numbered diff block instead
+ * (see edit-diff-view.ts) so the user sees what actually changed.
  */
 const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 
@@ -83,12 +88,23 @@ export class ToolCallLine implements Component {
 
 	render(width: number): string[] {
 		const exec = this.tools.get(this.callId);
-		const status = exec?.status ?? "done";
+		// No execution record yet: the call is still streaming or waiting to
+		// run. Never treat it as done — a file preview built now would read
+		// the file before the edit and stick with partial arguments.
+		if (!exec) {
+			return wrap(`· ${toolActionLabel(this.name, this.args)}`, width).map((l) => ansi.dim(l));
+		}
+		const status = exec.status;
 
 		if (status === "running") {
 			const frame = SPINNER_FRAMES[Math.floor(Date.now() / 90) % SPINNER_FRAMES.length];
 			const label = toolActionLabel(this.name, this.args);
 			return wrap(`${frame} ${label}…`, width).map((l) => ansi.cyan(l));
+		}
+
+		if (status === "done" && FILE_EDIT_TOOLS.has(this.name)) {
+			const edit = renderFileEdit(this.callId, this.name, this.args, width);
+			if (edit) return edit;
 		}
 
 		// Completed tools recede into dim narrative so the eye stays on the
@@ -98,21 +114,36 @@ export class ToolCallLine implements Component {
 		const color = isError ? ansi.red : ansi.dim;
 		const past = toolActionPast(this.name, this.args);
 		const wrapped = wrap(past, Math.max(10, width - 2));
-		const lines = wrapped.map((l, idx) => (idx === 0 ? `${glyph} ${color(l)}` : `  ${color(l)}`));
-
-		// Diff summary for edits — indented under the tool-call line so
-		// the read flows top-to-bottom: "what just happened" then "what
-		// changed." Skipped on errors since the tool didn't apply.
-		if (!isError) {
-			const diff = diffSummary(this.name, this.args);
-			if (diff) {
-				for (const dl of renderDiff(diff, Math.max(20, width - 2))) lines.push(dl);
-			}
-		}
-		return lines;
+		return wrapped.map((l, idx) => (idx === 0 ? `${glyph} ${color(l)}` : `  ${color(l)}`));
 	}
 
 	invalidate(): void {}
+}
+
+/**
+ * Record executions for tool calls in a loaded (resumed / rewound) transcript,
+ * from their saved results, so completed calls render as done and calls that
+ * never got a result stay pending.
+ */
+export function seedToolExecutions(tools: Map<string, ToolExecution>, messages: readonly AgentMessage[]): void {
+	const calls = new Map<string, { name: string; args: unknown }>();
+	for (const m of messages) {
+		if (m.role === "assistant" && Array.isArray(m.content)) {
+			for (const block of m.content) {
+				if (block.type === "toolCall") calls.set(block.id, { name: block.name, args: block.arguments });
+			}
+		} else if (m.role === "toolResult" && !tools.has(m.toolCallId)) {
+			const call = calls.get(m.toolCallId);
+			tools.set(m.toolCallId, {
+				id: m.toolCallId,
+				name: call?.name ?? m.toolName,
+				args: call?.args,
+				status: m.isError ? "error" : "done",
+				startedAt: m.timestamp,
+				endedAt: m.timestamp,
+			});
+		}
+	}
 }
 
 interface CollapsedCall {
@@ -175,51 +206,6 @@ export class CollapsedReadGroup implements Component {
 }
 
 /**
- * Render a DiffInfo block as ANSI-colored lines. Word-level highlighting
- * mirrors the ink path: changed spans get a brighter background so the
- * reader's eye lands on the diff, not the unchanged context.
- */
-function renderDiff(diff: DiffInfo, width: number): string[] {
-	const out: string[] = [];
-	const counts = diff.truncated
-		? `    +${diff.added} -${diff.removed} (preview truncated)`
-		: `    +${diff.added} -${diff.removed}`;
-	out.push(ansi.dim(counts));
-	const lineWidth = Math.max(20, width - 8);
-	for (const h of diff.hunks) {
-		out.push(renderHunk(h, lineWidth));
-	}
-	return out;
-}
-
-function renderHunk(h: DiffHunk, lineWidth: number): string {
-	const isRemove = h.type === "remove";
-	const sign = isRemove ? "    - " : "    + ";
-	const color = isRemove ? ansi.red : ansi.green;
-	if (h.wordParts && h.wordParts.length > 0) {
-		// Word-level highlight: walk the parts, render plain spans with
-		// the line color and highlighted spans with inverse video on top.
-		const hl = isRemove ? bgRed : bgGreen;
-		let used = 0;
-		const pieces: string[] = [];
-		for (const p of h.wordParts) {
-			const remaining = lineWidth - used;
-			if (remaining <= 0) break;
-			let text = p.text;
-			if (text.length > remaining) text = `${text.slice(0, Math.max(0, remaining - 1))}…`;
-			pieces.push(p.highlight ? hl(color(text)) : color(text));
-			used += text.length;
-			if (text.endsWith("…")) break;
-		}
-		return `${color(sign)}${pieces.join("")}`;
-	}
-	return `${color(sign)}${color(truncate(h.text, lineWidth))}`;
-}
-
-const bgRed = (text: string): string => `\x1b[41m${text}\x1b[49m`;
-const bgGreen = (text: string): string => `\x1b[42m${text}\x1b[49m`;
-
-/**
  * Build the per-message child components from an AgentMessage's content.
  * Pulled out so the streaming-message swap and the final-message append
  * both produce structurally identical output.
@@ -251,10 +237,15 @@ export function buildMessageBlocks(
 	// tail using the per-tool cap from output-truncate. Errors render
 	// in full red since the user needs the whole failure to debug.
 	if (role === "toolResult") {
-		const m = message as { toolName?: string; isError?: boolean; content: unknown[] };
+		const m = message as { toolName?: string; isError?: boolean; details?: unknown; content: unknown[] };
 		// present_copy already rendered its box from the assistant toolCall;
 		// suppress the redundant ack row here.
 		if (m.toolName === "present_copy") return out;
+		// A successful read shows which lines were read, never the file itself.
+		if (m.toolName === "read_file" && !m.isError) {
+			out.push(new PlainText(ansi.dim(`⎿  ${formatReadSummary(m.details, message.content)}`)));
+			return out;
+		}
 		const text = message.content
 			.map((block) => {
 				if (typeof block === "object" && block !== null) {
@@ -322,7 +313,7 @@ export function buildMessageBlocks(
 								new CopyBox(
 									copy.registry as CopyRegistry,
 									`${copy.keyPrefix}:b${i}:s${s}`,
-									seg.lang || "code",
+									seg.lang || detectLanguage(seg.text) || "code",
 									seg.text,
 								),
 							);
@@ -362,6 +353,30 @@ export function buildMessageBlocks(
 		i++;
 	}
 	return out;
+}
+
+/** Results that render as a one-line summary under their tool call, without a blank line between. */
+export function attachesToPrevious(message: AgentMessage): boolean {
+	const m = message as { role: string; toolName?: string; isError?: boolean };
+	return m.role === "toolResult" && m.toolName === "read_file" && !m.isError;
+}
+
+/** "50 lines · 20–69 of 75" for a read_file result, from its details (or, for older sessions, its numbered output). */
+export function formatReadSummary(details: unknown, content: unknown[]): string {
+	const d = (details ?? {}) as Partial<ReadFileDetails>;
+	if (d.isImage) return "Read image";
+	const text = content
+		.map((block) => (block && typeof block === "object" && "text" in block ? String(block.text) : ""))
+		.join("");
+	const numbered = text.split("\n").filter((line) => /^\s*\d+→/.test(line));
+	const count = d.returnedLines ?? numbered.length;
+	if (count === 0) return "Empty file";
+	const start = d.startLine || Number(/^\s*(\d+)→/.exec(numbered[0] ?? "")?.[1] ?? 1);
+	const end = d.endLine || start + count - 1;
+	const lines = `${count} line${count === 1 ? "" : "s"}`;
+	const total = d.totalLines;
+	if (total !== undefined && start === 1 && end >= total) return `${lines} · 1–${end} (whole file)`;
+	return `${lines} · ${start}–${end}${total !== undefined ? ` of ${total}` : ""}`;
 }
 
 /**

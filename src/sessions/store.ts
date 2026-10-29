@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
+import type { CompactionSnapshot } from "../compaction/memo.js";
 
 export const SESSION_MAX_AGE_DAYS = 30;
 export const SESSION_FORMAT_VERSION = 1;
@@ -26,6 +27,8 @@ export interface SessionData {
 	messages: AgentMessage[];
 	usage: Usage;
 	updatedAt: number;
+	/** Latest compaction summary over the head of `messages`, reused on resume. */
+	compaction?: CompactionSnapshot;
 }
 
 export interface SessionSummary {

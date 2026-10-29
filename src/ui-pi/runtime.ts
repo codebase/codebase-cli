@@ -2,6 +2,7 @@ import { ProcessTerminal, TUI } from "@earendil-works/pi-tui";
 import { ConfigError } from "../agent/config.js";
 import { App } from "./app.js";
 import { FirstRunWizard } from "./first-run-wizard.js";
+import { ENTER_FULLSCREEN, EXIT_FULLSCREEN, fullscreenEnabled } from "./scroll-viewport.js";
 
 /**
  * Entry point for the pi-tui render path (the default; CODEBASE_REACT_TUI=1
@@ -51,6 +52,17 @@ export async function runPiTuiApp(): Promise<void> {
 		}
 	}
 
+	// Full-screen: conversation scrolls inside the alternate screen while the
+	// footer stays pinned. Restore the terminal even on a hard exit.
+	const fullscreen = fullscreenEnabled();
+	const leaveFullscreen = (): void => {
+		process.stdout.write(EXIT_FULLSCREEN);
+	};
+	if (fullscreen) {
+		terminal.write(ENTER_FULLSCREEN);
+		process.once("exit", leaveFullscreen);
+	}
+
 	tui.addChild(app);
 	app.attachToTui(tui);
 	// Force a paint now so the welcome banner appears immediately after
@@ -74,6 +86,10 @@ export async function runPiTuiApp(): Promise<void> {
 			// dispose throwing shouldn't block tui.stop(); fall through.
 		}
 		tui.stop();
+		if (fullscreen) {
+			leaveFullscreen();
+			process.removeListener("exit", leaveFullscreen);
+		}
 		await terminal.drainInput().catch(() => undefined);
 	}
 }

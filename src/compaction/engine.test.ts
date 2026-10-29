@@ -221,6 +221,54 @@ describe("CompactionEngine", () => {
 		];
 		const result = await engine.compact(messages);
 		expect(result.details.summary).toMatch(/summarization failed/);
+		expect(result.details.summaryFailed).toBe(true);
+	});
+
+	it("treats an empty summary (how pi-ai reports a failed request) as failed", async () => {
+		const engine = new CompactionEngine({ glue: fakeGlue(""), modelId: "claude-sonnet-4-6", keepRecent: 1 });
+		const messages = [
+			userMessage("a"),
+			assistantMessage("b"),
+			userMessage("c"),
+			assistantMessage("d"),
+			userMessage("e"),
+		];
+		const result = await engine.compact(messages);
+		expect(result.details.summaryFailed).toBe(true);
+	});
+
+	it("treats a summary from an aborted request as failed", async () => {
+		const controller = new AbortController();
+		const glue = {
+			fast: vi.fn(async () => ""),
+			smart: vi.fn(async () => {
+				controller.abort();
+				return "partial summary";
+			}),
+		} as unknown as GlueClient;
+		const engine = new CompactionEngine({ glue, modelId: "claude-sonnet-4-6", keepRecent: 1 });
+		const messages = [
+			userMessage("a"),
+			assistantMessage("b"),
+			userMessage("c"),
+			assistantMessage("d"),
+			userMessage("e"),
+		];
+		const result = await engine.compact(messages, controller.signal);
+		expect(result.details.summaryFailed).toBe(true);
+	});
+
+	it("marks a successful summary as not failed", async () => {
+		const engine = new CompactionEngine({ glue: fakeGlue("summary"), modelId: "claude-sonnet-4-6", keepRecent: 1 });
+		const messages = [
+			userMessage("a"),
+			assistantMessage("b"),
+			userMessage("c"),
+			assistantMessage("d"),
+			userMessage("e"),
+		];
+		const result = await engine.compact(messages);
+		expect(result.details.summaryFailed).toBe(false);
 	});
 
 	it("microcompact clears stale tool-result content without a glue call", () => {

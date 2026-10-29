@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Test Page</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 2rem auto;
+      max-width: 40rem;
+      padding: 0 1rem;
+      line-height: 1.5;
+    }
+
+    h1 {
+      border-bottom: 2px solid #333;
+      padding-bottom: 0.25rem;
+    }
+
+    button {
+      font: inherit;
+      padding: 0.4rem 0.8rem;
+    }
+
+    input {
+      font: inherit;
+      padding: 0.4rem 0.6rem;
+      width: 100%;
+    }
+
+    label {
+      display: block;
+      margin-top: 1.5rem;
+      font-weight: 600;
+    }
+
+    #output {
+      margin-top: 0.5rem;
+      min-height: 1.5rem;
+      color: #444;
+    }
+  </style>
+</head>
+<body>
+  <h1>HTML Test Page</h1>
+  <p>This is a minimal page for manual testing in <code>testing/</code>.</p>
+
+  <button id="counter" type="button">Clicked 0 times</button>
+  <div id="output" role="status" aria-live="polite"></div>
+
+  <label for="echo">Echo input</label>
+  <input id="echo" type="text" placeholder="Whatever you type shows up below…" autocomplete="off">
+  <p id="echo-output" role="status" aria-live="polite"></p>
+
+  <script>
+    const button = document.getElementById('counter');
+    const output = document.getElementById('output');
+    let clicks = 0;
+
+    button.addEventListener('click', () => {
+      clicks += 1;
+      button.textContent = `Clicked ${clicks} time${clicks === 1 ? '' : 's'}`;
+      output.textContent = clicks >= 5 ? 'Nice clicking streak.' : '';
+    });
+
+    const echoInput = document.getElementById('echo');
+    const echoOutput = document.getElementById('echo-output');
+
+    echoInput.addEventListener('input', () => {
+      echoOutput.textContent = echoInput.value;
+    });
+  </script>
+</body>
+</html>

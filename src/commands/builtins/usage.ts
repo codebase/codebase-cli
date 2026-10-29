@@ -4,7 +4,7 @@ import type { Command } from "../types.js";
 
 const API_BASE = (process.env.CODEBASE_AUTH_BASE_URL ?? "https://codebase.design").replace(/\/+$/, "");
 
-interface Balance {
+export interface Balance {
 	creditsRemaining?: number;
 	anyBuildsRemaining?: number;
 	cheapBuildsRemaining?: number;
@@ -31,14 +31,17 @@ export const usage: Command = {
 	},
 };
 
-export async function fetchUsageReport(): Promise<string> {
+export type BalanceResult = { ok: true; balance: Balance } | { ok: false; message: string };
+
+/** GET the signed-in Codebase account's credit balance. Never throws. */
+export async function fetchBalance(): Promise<BalanceResult> {
 	const store = new CredentialsStore();
 	let creds = store.load();
 	if (!creds) {
-		return "Not signed in. Run `codebase auth login` first.";
+		return { ok: false, message: "Not signed in. Run `codebase auth login` first." };
 	}
 	if (creds.source !== "codebase") {
-		return "Usage is only tracked for Codebase accounts (you're using a BYOK/manual key).";
+		return { ok: false, message: "Usage is only tracked for Codebase accounts (you're using a BYOK/manual key)." };
 	}
 	try {
 		await ensureFreshCredentials();
@@ -52,26 +55,32 @@ export async function fetchUsageReport(): Promise<string> {
 			headers: { Authorization: `Bearer ${creds.accessToken}` },
 		});
 		if (res.status === 401) {
-			return "Session expired — run `codebase auth login` again.";
+			return { ok: false, message: "Session expired — run `codebase auth login` again." };
 		}
 		if (!res.ok) {
-			return `Couldn't fetch usage (HTTP ${res.status}).`;
+			return { ok: false, message: `Couldn't fetch usage (HTTP ${res.status}).` };
 		}
-		const b = (await res.json()) as Balance;
-		const formatted = formatUsageBalance(b);
-		const lines = [`Plan: ${formatted.planName}`, formatted.creditLine];
-		if (formatted.pct != null) {
-			lines.push(
-				`${bar(formatted.pct)} ${formatted.pct}%${formatted.days != null ? `  ·  resets in ${formatted.days}d` : ""}`,
-			);
-		} else {
-			lines.push("Monthly allowance was not returned yet; showing remaining credits only.");
-		}
-		lines.push(...formatTurnQuotas(b));
-		return lines.join("\n");
+		return { ok: true, balance: (await res.json()) as Balance };
 	} catch (err) {
-		return `Couldn't fetch usage: ${(err as Error).message}`;
+		return { ok: false, message: `Couldn't fetch usage: ${(err as Error).message}` };
 	}
+}
+
+export async function fetchUsageReport(): Promise<string> {
+	const result = await fetchBalance();
+	if (!result.ok) return result.message;
+	const b = result.balance;
+	const formatted = formatUsageBalance(b);
+	const lines = [`Plan: ${formatted.planName}`, formatted.creditLine];
+	if (formatted.pct != null) {
+		lines.push(
+			`${bar(formatted.pct)} ${formatted.pct}%${formatted.days != null ? `  ·  resets in ${formatted.days}d` : ""}`,
+		);
+	} else {
+		lines.push("Monthly allowance was not returned yet; showing remaining credits only.");
+	}
+	lines.push(...formatTurnQuotas(b));
+	return lines.join("\n");
 }
 
 export function formatTurnQuotas(b: Balance): string[] {
@@ -93,6 +102,7 @@ export function formatUsageBalance(b: Balance): {
 	days: number | null;
 	pct: number | null;
 	planName: string;
+	remaining: number;
 } {
 	const plan = typeof b.plan === "object" && b.plan !== null ? b.plan : undefined;
 	const allowance = firstNumber(
@@ -112,6 +122,7 @@ export function formatUsageBalance(b: Balance): {
 			days,
 			pct: null,
 			planName,
+			remaining,
 		};
 	}
 	const used = Math.max(0, allowance - remaining);
@@ -121,6 +132,7 @@ export function formatUsageBalance(b: Balance): {
 		days,
 		pct,
 		planName,
+		remaining,
 	};
 }
 

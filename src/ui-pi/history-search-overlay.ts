@@ -1,5 +1,6 @@
 import { type Component, Container, Input, Text } from "@earendil-works/pi-tui";
 import { displayLine, filterHistory, searchCandidates } from "../ui/history-search-core.js";
+import { frame, frameInnerWidth } from "./overlay-frame.js";
 import { ansi } from "./theme.js";
 
 const MAX_SHOWN = 8;
@@ -51,22 +52,26 @@ export class HistorySearchOverlay extends Container {
 
 	private rebuild(): void {
 		this.clear();
-		this.addChild(new Text(ansi.bold(ansi.cyan("(reverse-i-search)")), 1, 0));
+		this.addChild(new Text(ansi.bold(ansi.cyan("(reverse-i-search)")), 0, 0));
 		this.addChild(this.input);
 		const matches = this.matches();
 		this.cursor = Math.min(this.cursor, Math.max(0, matches.length - 1));
 		if (matches.length === 0) {
-			this.addChild(new Text(ansi.dim("  no matching prompts"), 1, 0));
+			this.addChild(new Text(ansi.dim("  no matching prompts"), 0, 0));
 		} else {
 			const start = Math.max(0, Math.min(this.cursor - 2, matches.length - MAX_SHOWN));
 			for (let i = start; i < Math.min(start + MAX_SHOWN, matches.length); i++) {
 				const selected = i === this.cursor;
 				const line = displayLine(matches[i]);
-				this.addChild(new Text(selected ? `${ansi.cyan("▸ ")}${ansi.bold(line)}` : ansi.dim(`  ${line}`), 1, 0));
+				this.addChild(new Text(selected ? `${ansi.cyan("▸ ")}${ansi.bold(line)}` : ansi.dim(`  ${line}`), 0, 0));
 			}
 		}
-		this.addChild(new Text(ansi.dim("Enter to use · ↑↓/Ctrl-R to move · Esc to cancel"), 1, 1));
+		this.addChild(new Text(ansi.dim("Enter to use · ↑↓/Ctrl-R to move · Esc to cancel"), 0, 1));
 		this.invalidate();
+	}
+
+	override render(width: number): string[] {
+		return frame(super.render(frameInnerWidth(width)), width);
 	}
 }
 

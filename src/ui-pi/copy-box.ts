@@ -1,5 +1,6 @@
-import { type Component, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { CopyRegistry } from "./copy-targets.js";
+import { highlightCode } from "./syntax.js";
 import { ansi } from "./theme.js";
 
 /**
@@ -12,6 +13,8 @@ import { ansi } from "./theme.js";
  * text is always the full registered `content`, never what's painted.
  */
 export class CopyBox implements Component {
+	private highlighted: string[] | undefined;
+
 	constructor(
 		private readonly registry: CopyRegistry,
 		/** Stable dedupe key so the entry survives re-renders (e.g. "msg-3:block-1"). */
@@ -32,22 +35,17 @@ export class CopyBox implements Component {
 			ansi.dim("╭─ ") + ansi.bold(this.label) + ansi.dim(` ${"─".repeat(fillLen)} `) + hint + ansi.dim(" ╮");
 
 		const lines: string[] = [top];
-		const inner = Math.max(10, w - 2);
-		const bar = ansi.dim("│ ");
-		for (const raw of this.content.split("\n")) {
-			const shown = visibleWidth(raw) > inner ? `${sliceToWidth(raw, inner - 1)}…` : raw;
-			lines.push(`${bar}${shown}`);
+		const inner = Math.max(10, w - 4);
+		const bar = ansi.dim("│");
+		this.highlighted ??= highlightCode(this.content.replace(/\t/g, "    "), this.label);
+		for (const raw of this.highlighted) {
+			const shown = truncateToWidth(raw, inner, "…");
+			const pad = " ".repeat(Math.max(0, inner - visibleWidth(shown)));
+			lines.push(`${bar} ${shown}\x1b[0m${pad} ${bar}`);
 		}
-		lines.push(ansi.dim(`╰${"─".repeat(Math.max(0, w - 1))}╯`));
+		lines.push(ansi.dim(`╰${"─".repeat(Math.max(0, w - 2))}╯`));
 		return lines;
 	}
 
 	invalidate(): void {}
-}
-
-/** Truncate a plain string to a visible width (no ANSI in code-box content). */
-function sliceToWidth(text: string, maxWidth: number): string {
-	if (visibleWidth(text) <= maxWidth) return text;
-	const rows = wrapTextWithAnsi(text, maxWidth);
-	return rows[0] ?? text.slice(0, maxWidth);
 }

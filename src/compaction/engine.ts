@@ -61,6 +61,11 @@ export class CompactionEngine {
 		return Math.floor(window * this.thresholdRatio);
 	}
 
+	/** Whether `messages` fit the model's whole context window (not just the compaction threshold). */
+	fitsContextWindow(messages: AgentMessage[]): boolean {
+		return estimateTotalTokens(messages) < (this.explicitContextWindow ?? contextWindow(this.modelId));
+	}
+
 	needsCompaction(messages: AgentMessage[]): boolean {
 		return estimateTotalTokens(messages) >= this.threshold();
 	}
@@ -84,7 +89,14 @@ export class CompactionEngine {
 		if (messages.length <= this.keepRecent) {
 			return {
 				messages,
-				details: { readFiles: [], modifiedFiles: [], summary: "", truncatedTokens: 0, collapsedMessageCount: 0 },
+				details: {
+					readFiles: [],
+					modifiedFiles: [],
+					summary: "",
+					truncatedTokens: 0,
+					collapsedMessageCount: 0,
+					summaryFailed: false,
+				},
 			};
 		}
 
@@ -92,7 +104,14 @@ export class CompactionEngine {
 		if (splitIdx <= 0) {
 			return {
 				messages,
-				details: { readFiles: [], modifiedFiles: [], summary: "", truncatedTokens: 0, collapsedMessageCount: 0 },
+				details: {
+					readFiles: [],
+					modifiedFiles: [],
+					summary: "",
+					truncatedTokens: 0,
+					collapsedMessageCount: 0,
+					summaryFailed: false,
+				},
 			};
 		}
 
@@ -104,7 +123,9 @@ export class CompactionEngine {
 		details.truncatedTokens = truncatedTokens;
 		details.collapsedMessageCount = older.length;
 
-		details.summary = await this.summarize(older, signal);
+		const summarized = await this.summarize(older, signal);
+		details.summary = summarized.text;
+		details.summaryFailed = summarized.failed;
 
 		const summaryMessage: AgentMessage = {
 			role: "user",
@@ -139,14 +160,20 @@ export class CompactionEngine {
 		return { messages: [summaryMessage, ackMessage, ...recent], details };
 	}
 
-	private async summarize(older: AgentMessage[], signal?: AbortSignal): Promise<string> {
+	private async summarize(older: AgentMessage[], signal?: AbortSignal): Promise<{ text: string; failed: boolean }> {
 		const transcript = older.map(serializeForSummary).join("\n\n");
 		try {
-			const out = await this.glue.smart(transcript, SUMMARY_SYSTEM_PROMPT, signal);
-			return out.trim();
+			const out = (await this.glue.smart(transcript, SUMMARY_SYSTEM_PROMPT, signal)).trim();
+			// pi-ai reports a failed request as an empty reply rather than throwing.
+			if (!out)
+				return {
+					text: "(summarization failed: empty response; transcript truncated without a summary)",
+					failed: true,
+				};
+			return { text: out, failed: signal?.aborted === true };
 		} catch (err) {
 			const reason = err instanceof Error ? err.message : String(err);
-			return `(summarization failed: ${reason}; transcript truncated without a summary)`;
+			return { text: `(summarization failed: ${reason}; transcript truncated without a summary)`, failed: true };
 		}
 	}
 }
@@ -204,6 +231,7 @@ export function extractFileOps(messages: AgentMessage[]): CompactionDetails {
 		summary: "",
 		truncatedTokens: 0,
 		collapsedMessageCount: 0,
+		summaryFailed: false,
 	};
 }
 

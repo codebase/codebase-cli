@@ -40,6 +40,10 @@ export const compact: Command = {
 			ctx.emit("nothing to compact yet — transcript is short.");
 			return { handled: true };
 		}
+		if (result.details.summaryFailed) {
+			ctx.emit(`compaction failed, transcript left unchanged: ${result.details.summary}`);
+			return { handled: true };
+		}
 		ctx.bundle.agent.state.messages = result.messages;
 		ctx.emit(
 			`compacted ${result.details.collapsedMessageCount} messages (~${result.details.truncatedTokens} tokens). ` +
